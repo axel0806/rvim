@@ -33,6 +33,27 @@ pub enum Hl {
     Visual,
     /// `~` and `@` filler rows.
     NonText,
+    /// The match a `:s` `c` flag prompt asks about (Vim's IncSearch).
+    IncSearch,
+}
+
+/// Linear cell ranges on `line` covered by the match a `c` flag prompt asks
+/// about (line breaks inside the match are not drawn).
+fn confirm_cells(ed: &Editor, line: usize, lay: &Layout) -> Vec<(usize, usize)> {
+    let Some((s, e)) = ed.confirm_match() else {
+        return Vec::new();
+    };
+    if line < s.line || line > e.line {
+        return Vec::new();
+    }
+    let len = lay.starts.len() - 1;
+    let from = if line == s.line { s.col.min(len) } else { 0 };
+    let to = if line == e.line { e.col.min(len) } else { len };
+    if to > from {
+        vec![(lay.starts[from], lay.starts[to])]
+    } else {
+        Vec::new()
+    }
 }
 
 /// Linear cell ranges (within the wrapped line) covered by the Visual area on
@@ -217,6 +238,13 @@ pub fn frame(ed: &Editor) -> Frame {
                 }
             }
         }
+        for (c0, c1) in confirm_cells(ed, line, &lay) {
+            for c in c0..c1 {
+                if base + c / width < text_height {
+                    hl[base + c / width][c % width] = Hl::IncSearch;
+                }
+            }
+        }
         for r in 0..need {
             if rows.len() == text_height {
                 break;
@@ -338,6 +366,7 @@ mod tests {
                     .map(|h| match h {
                         Hl::Visual => 'V',
                         Hl::NonText => '~',
+                        Hl::IncSearch => 'I',
                         Hl::Normal => '.',
                     })
                     .collect()

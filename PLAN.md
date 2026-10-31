@@ -15,7 +15,7 @@ clean at the last commit.
 | Milestone | State |
 |---|---|
 | 1 Core, 2 Vim grammar | Done |
-| 3 Search and Ex | ~95%. Left: `:s` flag `c` and `\=` |
+| 3 Search and Ex | ~97%. Left: `:s` `\=` expressions; `<C-e>`/`<C-y>` in the `c` prompt do not scroll yet |
 | 4 Foundation | ~70%. Left: the Document/Window/Editor split (the biggest item; see "Foundation"), kitty keyboard protocol, cell-level diff redraw, `:setlocal`/`:setglobal`, recovery on terminal close (SIGHUP) |
 | 5 Windows and buffers | ~25%. Done: macros (`q`, `@`, `@@`, `@:`), lowercase marks (`m{a-z}`, `'a`, `` `a ``, `:k`, `:mark`, `'a` addresses), scrolling (`<C-e> <C-y> <C-f> <C-b> <C-d> <C-u> zt zz zb z<CR> z. z- H M L`, counts, `scrolloff`, wrapped lines). Left: splits, buffer list, the other marks (uppercase, `''`, `'[`/`']`, `'<`/`'>` motions), jumplist, swap files |
 | 6 Modern editing experience | 0%. Not started (hlsearch, incsearch, syntax, line numbers, config file, palette, mouse) |
@@ -30,16 +30,15 @@ work), panic recovery files (`recovery.rs`), the channel-based event loop
 (`event.rs`), `:` command-line editing and history (`cmdline.rs`), `&`/`g&`,
 macros (`macros.rs`), `/` and `?` prompts with the same editing keys, `<C-r>`
 and history (also in `cmdline.rs`), `gn`/`gN` (`current_search()` in
-`search.rs`), `:r`. Search-prompt editing and history landed in commit
-e556a0b. Lowercase marks `a`-`z` (kept in `buffer.rs`, followed through edits
-by the buffer's line methods, saved and restored by undo in `undo.rs`), and the
-scrolling commands with `scrolloff` (`scroll.rs`; the window's top line now
-lives in `Editor`).
+`search.rs`), `:r`, the `c` flag of `:s` (Confirm mode, `ex.rs`). Search-prompt
+editing and history landed in commit e556a0b. Lowercase marks `a`-`z` (kept
+in `buffer.rs`, followed through edits by the buffer's line methods, saved and
+restored by undo in `undo.rs`), and the scrolling commands with `scrolloff`
+(`scroll.rs`; the window's top line now lives in `Editor`).
 
 **In progress** (as of 2026-11-01; maintained by the orchestrator, and an
 entry is removed when its branch lands on main):
 
-- `:s` flag `c` (confirm): being built by a Haiku agent (branch name pending).
 - Jumplist (`<C-o>`, `<C-i>`/`<Tab>`, `''`, ``` `` ```, `:jumps`, context mark):
   being built by a Haiku agent (branch name pending).
 - Indent options (`tabstop`, `softtabstop`, `smarttab`, `shiftround`): being built by a Haiku agent (branch name pending).
@@ -90,6 +89,18 @@ milestone lands; `.github/workflows/release.yml` builds the binaries.
   mode Vim types the following keys into the prompt instead of cancelling
   (`/qux<Esc>x` gives the pattern `quxx`). Cancel behaviour is tested in
   `tests/search_prompt.rs`. `<Esc>` in Normal and Visual mode is compared.
+- `:s///c` prompts in silent Ex mode (`-es`) read one line per answer: the
+  first character counts and the rest of the line is dropped. So answers are
+  sent with `<CR>` after each one (a terminal Vim ignores `<CR>` at the
+  prompt too, and so does rvim). A `<CR>` after the answer that finishes the
+  `:s` is a Normal key in rvim but consumed by Vim, so such cases end there.
+  Vim treats end of input at a prompt as `q`, and `:g` then asks on the next
+  line; the harness answers `<Esc>` to every prompt still waiting. Keys typed
+  after a finished `:s` (`u`, `x`, `.`) are not compared: they are in
+  `tests/confirm_prompt.rs`. Vim's cursor after `:s///c`: a substitution puts
+  it at column 0 of its line, a declined match on its match, a quit keeps the
+  prompt's position, and `a` (or no `c`) ends at the first non-blank.
+  Errors do not stop the other `|` commands of a line (E486 included).
 - Every behaviour needs cases in `tests/compat_*.rs`; when Vim and rvim
   differ, rvim is wrong. Verify with `RVIM_REQUIRE_VIM=1 cargo test`, then
   `cargo clippy --all-targets && cargo fmt --check`.
@@ -121,7 +132,7 @@ and the Vim contract").
 | `text.rs` | Display widths and virtual columns (tabstop 8, `^X` control chars, wide chars) |
 | `motion.rs` | Positions and motions; word motions are ports of Vim's `fwd_word`/`bck_word`/`end_word` with its `inc`/`dec` cursor walk and `utf_class` table |
 | `editor.rs` | Mode state machine (Normal, Insert, Command-line), counts, desired column (`curswant`) |
-| `ex.rs` | Ex commands: ranges (`%`, `.`, `$`, marks `'<` `'>` and `'a`, `/pat/`, `;`), file commands, `:k`/`:mark`, `:d :y :pu :m :t :j :> :<`, `:s` (port of `do_sub`), `:g`/`:v`, `:normal`, `:set` |
+| `ex.rs` | Ex commands: ranges (`%`, `.`, `$`, marks `'<` `'>` and `'a`, `/pat/`, `;`), file commands, `:k`/`:mark`, `:d :y :pu :m :t :j :> :<`, `:s` (port of `do_sub`; the `c` prompt keeps the loop state in `SubRun` between keys), `:g`/`:v` and command lines as queued `ExTask`s, `:normal`, `:set` |
 | `normal.rs`, `ops.rs`, `textobject.rs`, `register.rs`, `undo.rs` | Normal/Visual parsing and motions, operators, text objects, registers, undo tree |
 | `regex.rs` | Vim regex (`\v \m \M \V`, `\{}`, look-around, `\zs`, `\_x`, collections, `\%` items) as a backtracking matcher over buffer lines |
 | `search.rs` | Port of `searchit()` / `do_search()` (offsets, `;`, `cpo-c`, wrapscan), `*`/`#` word lookup |
@@ -180,8 +191,11 @@ What the revised milestones fix, as the code stands today:
    takes the patterns of `:s`, `:g`, `:v`, `*`, `#` and Ex addresses, as in
    Vim). Done since: `gn`/`gN` in Normal, Visual and operator-pending mode
    (with `.` repeat as typed, like Vim's `prep_redo` for `gn`), and
-   `:[range]r[ead] {file}` (`:r !cmd` is not done). Left: `:s` flags `c` and
-   `\=` expressions.
+   `:[range]r[ead] {file}` (`:r !cmd` is not done). Done since: the `c` flag
+   of `:s`, `:&` and `:g` (Confirm mode: `y n a q l <Esc>`, one undo step,
+   the match highlighted with `view::Hl::IncSearch`; the design is in the
+   "Working notes"). Left: `:s` `\=` expressions, and the `<C-e>`/`<C-y>`
+   scrolling of the prompt (its keys are not handled yet).
    Marks in Ex addresses (`'a`) are done with the marks (milestone 5).
 4. **Foundation (in progress).** Done: bracketed paste, Alt/F-keys/Insert/Shift-Tab, Visual area drawn via highlight groups, row-level diff redraw, options registry (`autoindent`, `expandtab`, `shiftwidth`), panic recovery files, channel-based event loop with an input thread. Left: the Document/Window/Editor split, kitty keyboard protocol, cell-level diff, `:setlocal`, SIGHUP recovery. Original description: Restructure before adding more features, because windows,
    agents and prediction all depend on it. Order, each step landing with the
@@ -635,8 +649,14 @@ have unit tests (for layout, on the styled `Frame` once milestone 4 lands).
   wraps in Vim but not in rvim (unexplained; see `compat_m3.rs`).
 - After `:%s/\n//` Vim leaves the cursor at the last join point; rvim puts
   it on the first non-blank.
-- `\=` expressions, `:s///c` and the `\n` (NUL) replacement are not
-  implemented. `:p`, `:nu`, `:=` only set a message.
+- `\=` expressions and the `\n` (NUL) replacement are not implemented.
+  `:p`, `:nu`, `:=` only set a message.
+- The `c` flag of `:s` (`ex.rs`, `SubRun`): `<C-e>` and `<C-y>` only ask
+  again (Vim scrolls the window). A declined match over a line break (`n`
+  after `\n`) moves on to the next line, where Vim sometimes offers the same
+  match again; the cases are kept in `tests/compat_m3_confirm.rs` as an
+  ignored test until ported. Keys typed after a finished `:s` cannot be
+  compared with Vim (see the working notes).
 - `:r !cmd` (insert the output of a command) is not implemented; `:r file`
   is. `:r` takes the file's lines as `:e` decodes them (CRLF removed).
 - The frame carries highlight groups per cell (`view::Hl`); only Visual and

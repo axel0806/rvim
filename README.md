@@ -63,8 +63,10 @@ use:
   fixed. Options are global; `:setlocal` and `:setglobal` are not there yet.
 - No config file (`vimrc`), plugins, Vimscript, `:help`, folds, completion,
   spell checking, `:terminal`, or `:!` shell commands.
-- `:s`: no `c` flag (confirm) and no `\=` expressions; the `\n` (NUL)
-  replacement is not implemented. `:p`, `:nu` and `:=` only show a message.
+- `:s`: no `\=` expressions; the `\n` (NUL) replacement is not implemented.
+  The `c` flag asks like Vim, but `<C-e>` and `<C-y>` do not scroll the
+  window, and after a declined match over a line break the next match can
+  differ from Vim. `:p`, `:nu` and `:=` only show a message.
 - Emoji use approximate ranges for word motions, and combining characters are
   separate characters.
 

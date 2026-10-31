@@ -27,6 +27,8 @@ pub enum Mode {
     Replace,
     Visual(VisualMode),
     CmdLine,
+    /// Waiting for the answer to a `c` flag prompt of `:s` (`y n a q l`).
+    Confirm,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -136,6 +138,10 @@ pub struct Editor {
     /// Raw replacement of the last `:s`, for `~` and `:&`.
     pub(crate) last_sub_raw: String,
     pub(crate) sub_flags: crate::ex::SubFlags,
+    /// A `:s` waiting for a `c` flag answer (mode `Confirm`).
+    pub(crate) sub: Option<Box<crate::ex::SubRun>>,
+    /// Ex command lines and `:g` steps still to run, last on top.
+    pub(crate) ex_tasks: Vec<crate::ex::ExTask>,
     pub(crate) opts: Options,
     /// The current line holds only an automatic indent (Vim's `did_ai`).
     pub(crate) did_ai: bool,
@@ -223,6 +229,8 @@ impl Editor {
             cmd_search: None,
             last_sub_raw: String::new(),
             sub_flags: Default::default(),
+            sub: None,
+            ex_tasks: Vec::new(),
             opts: Options::default(),
             did_ai: false,
             global_busy: false,
@@ -396,6 +404,7 @@ impl Editor {
             Mode::Normal | Mode::Visual(_) => self.normal_key(key),
             Mode::Insert | Mode::Replace => self.insert_key(key),
             Mode::CmdLine => self.cmdline_key(key),
+            Mode::Confirm => self.confirm_key(key),
         }
         match self.mode {
             Mode::Normal => self.clamp_normal(),
@@ -437,6 +446,8 @@ impl Editor {
                 let t: String = text.chars().filter(|c| !c.is_control()).collect();
                 self.cmd_insert(&t);
             }
+            // Pasted text is data, not an answer to a `:s` prompt.
+            Mode::Confirm => {}
             Mode::Normal | Mode::Visual(_) => {
                 if !self.pending.is_empty() {
                     // Half-typed command: drop it so the paste cannot complete it.

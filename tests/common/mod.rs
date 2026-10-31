@@ -29,6 +29,15 @@ pub struct Outcome {
 pub fn run_rvim(text: &str, keys: &str) -> Outcome {
     let mut ed = Editor::from_text(text);
     ed.feed(keys);
+    // Silent Ex mode quits a `:s` prompt that gets no more input (as `q`
+    // does), and `:g` then asks again on its next line. So every prompt
+    // still waiting gets an <Esc>, until none does.
+    for _ in 0..10_000 {
+        if ed.mode() != Mode::Confirm {
+            break;
+        }
+        ed.handle_key(Key::Esc);
+    }
     // feedkeys(..., 'x') ends Insert mode as if <Esc> was typed; the harness
     // then sends <Esc> for any other unfinished state.
     if ed.mode() != Mode::Normal || !ed.pending_keys().is_empty() {

@@ -154,6 +154,11 @@ fn set_hl(out: &mut impl Write, hl: Hl) -> io::Result<()> {
         Hl::Normal => queue!(out, SetAttribute(Attribute::Reset), ResetColor),
         Hl::Visual => queue!(out, SetAttribute(Attribute::Reverse)),
         Hl::NonText => queue!(out, SetForegroundColor(Color::Blue)),
+        Hl::IncSearch => queue!(
+            out,
+            SetForegroundColor(Color::Black),
+            crossterm::style::SetBackgroundColor(Color::Yellow)
+        ),
     }
 }
 

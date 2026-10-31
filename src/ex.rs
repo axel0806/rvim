@@ -4,12 +4,12 @@
 //! `:r` reads a file's lines (`:r !cmd` is not supported).
 
 use crate::buffer::Buffer;
-use crate::editor::{Editor, Mode, describe};
+use crate::editor::{Editor, Message, Mode, describe};
 use crate::key::Key;
 use crate::motion::{Pos, first_non_blank};
 use crate::normal::Op;
 use crate::ops::OpArg;
-use crate::regex::Regex;
+use crate::regex::{Match, Regex};
 use crate::search::{SearchFlags, Start, searchit};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -92,21 +92,88 @@ fn split_at_delim(s: &str, delim: char) -> (String, Option<&str>) {
     (out, None)
 }
 
+/// One piece of work of an Ex command line, run from a stack (Vim's
+/// `do_cmdline()` loop and the `:g` loop). A stack, not a loop, so that a
+/// `c` flag prompt of `:s` can stop in the middle and go on after the answer.
+pub(crate) enum ExTask {
+    /// A command line, which may hold several `|`-separated commands.
+    Ex(String),
+    /// `:g`: run `cmd` on the marked lines from index `next` of `buf.tracked`.
+    GlobalLines { cmd: String, next: usize },
+    /// `:g` is over: the cursor and the report of changed lines.
+    GlobalEnd { old_lines: i64 },
+}
+
 impl Editor {
     pub(crate) fn execute_ex(&mut self, cmd: &str) {
-        // `|` separates commands, except after :g and :normal.
-        let mut rest = cmd.to_string();
-        loop {
-            let (this, next) = self.split_bar(&rest);
-            if let Err(msg) = self.execute_one(&this) {
-                return self.error(msg);
-            }
-            match next {
-                Some(n) => rest = n,
-                None => break,
-            }
-            if self.quit {
+        let base = self.ex_tasks.len();
+        self.ex_tasks.push(ExTask::Ex(cmd.to_string()));
+        self.run_ex_tasks(base);
+    }
+
+    /// Runs queued tasks above `base` until none is left or a prompt waits
+    /// for an answer (then `sub` holds the `:s` and the tasks wait).
+    pub(crate) fn run_ex_tasks(&mut self, base: usize) {
+        while self.ex_tasks.len() > base && self.mode != Mode::Confirm {
+            let Some(task) = self.ex_tasks.pop() else {
                 break;
+            };
+            match task {
+                ExTask::Ex(cmd) => {
+                    if self.quit {
+                        continue;
+                    }
+                    // `|` separates commands, except after :g and :normal.
+                    let (this, next) = self.split_bar(&cmd);
+                    // An error is reported, and the rest of the line still
+                    // runs (as in Vim, where only `:try` stops it).
+                    if let Err(msg) = self.execute_one(&this) {
+                        self.error(msg);
+                    }
+                    match (next, self.sub.as_mut()) {
+                        // A `:s` is waiting for an answer: the rest of the
+                        // line runs when it has finished.
+                        (Some(rest), Some(sub)) => sub.rest = Some(rest),
+                        (Some(rest), None) => self.ex_tasks.push(ExTask::Ex(rest)),
+                        (None, _) => {}
+                    }
+                }
+                ExTask::GlobalLines { cmd, next } => {
+                    if self.quit || next >= self.buf.tracked.len() {
+                        continue;
+                    }
+                    self.ex_tasks.push(ExTask::GlobalLines {
+                        cmd: cmd.clone(),
+                        next: next + 1,
+                    });
+                    // Lines deleted by an earlier command are marked usize::MAX.
+                    let l = self.buf.tracked[next];
+                    if l != usize::MAX {
+                        self.cursor = Pos::new(l.min(self.buf.last_line()), 0);
+                        self.ex_tasks.push(ExTask::Ex(cmd));
+                    }
+                }
+                ExTask::GlobalEnd { old_lines } => {
+                    self.global_busy = false;
+                    self.buf.tracked.clear();
+                    if self.global_need_beginline {
+                        self.cursor.col = first_non_blank(&self.buf, self.cursor.line, true);
+                    } else {
+                        let len = self.buf.line_len(self.cursor.line);
+                        if self.cursor.col >= len {
+                            self.cursor.col = len.saturating_sub(1);
+                        }
+                    }
+                    let diff = self.buf.line_count() as i64 - old_lines;
+                    if diff.abs() > 2 {
+                        let what = if diff > 0 {
+                            "more lines"
+                        } else {
+                            "fewer lines"
+                        };
+                        self.info(format!("{} {what}", diff.abs()));
+                    }
+                }
             }
         }
     }
@@ -1000,37 +1067,13 @@ impl Editor {
         self.buf.tracked = marked;
         self.global_busy = true;
         self.global_need_beginline = false;
-        let n = self.buf.tracked.len();
-        for i in 0..n {
-            let l = self.buf.tracked[i];
-            if l == usize::MAX {
-                continue;
-            }
-            self.cursor = Pos::new(l.min(self.buf.last_line()), 0);
-            self.execute_ex(cmd);
-            if self.quit {
-                break;
-            }
-        }
-        self.global_busy = false;
-        self.buf.tracked.clear();
-        if self.global_need_beginline {
-            self.cursor.col = first_non_blank(&self.buf, self.cursor.line, true);
-        } else {
-            let len = self.buf.line_len(self.cursor.line);
-            if self.cursor.col >= len {
-                self.cursor.col = len.saturating_sub(1);
-            }
-        }
-        let diff = self.buf.line_count() as i64 - old_lines;
-        if diff.abs() > 2 {
-            let what = if diff > 0 {
-                "more lines"
-            } else {
-                "fewer lines"
-            };
-            self.info(format!("{} {what}", diff.abs()));
-        }
+        // The lines run as queued tasks, so that a `c` flag prompt can wait
+        // for an answer in the middle (see `run_ex_tasks`).
+        self.ex_tasks.push(ExTask::GlobalEnd { old_lines });
+        self.ex_tasks.push(ExTask::GlobalLines {
+            cmd: cmd.to_string(),
+            next: 0,
+        });
         Ok(())
     }
 
@@ -1181,8 +1224,7 @@ impl Editor {
                 // `:s/pat` without replacement: replaced by nothing.
                 pattern = self.pick_pattern(&pat)?;
                 rep = String::new();
-                rest = "";
-                return self.do_substitute(r, &pattern, &rep, SubFlags::default(), rest);
+                return self.do_substitute(r, &pattern, &rep, SubFlags::default());
             };
             pattern = self.pick_pattern(&pat)?;
             let (mut rp, after2) = split_rep(after, delim);
@@ -1207,7 +1249,7 @@ impl Editor {
                 Some('n') => flags.count_only = true,
                 Some('p' | '#' | 'l') => flags.print = true,
                 Some('r') => flags.use_search = true,
-                Some('c') => {}
+                Some('c') => flags.confirm = true,
                 _ => break,
             }
             rest_chars = &rest_chars[1..];
@@ -1226,7 +1268,7 @@ impl Editor {
             r.line1 = r.line2;
             r.line2 = (r.line2 + cnt - 1).min(self.buf.line_count());
         }
-        self.do_substitute(r, &pattern, &rep, flags, "")
+        self.do_substitute(r, &pattern, &rep, flags)
     }
 
     fn pick_pattern(&mut self, pat: &str) -> ExRes<String> {
@@ -1240,14 +1282,7 @@ impl Editor {
         }
     }
 
-    fn do_substitute(
-        &mut self,
-        r: Range,
-        pattern: &str,
-        rep: &str,
-        flags: SubFlags,
-        _rest: &str,
-    ) -> ExRes<()> {
+    fn do_substitute(&mut self, r: Range, pattern: &str, rep: &str, flags: SubFlags) -> ExRes<()> {
         self.check_range_lines(r)?;
         self.last_pat = Some(pattern.to_string());
         self.search.pat = Some(pattern.to_string());
@@ -1262,216 +1297,380 @@ impl Editor {
         let rep_chars: Vec<char> = rep.chars().collect();
         // The expanded replacement is remembered for `~`.
         self.last_sub = expand_rep_literal(&rep_chars);
-
-        let mut line2 = r.line2;
-        let mut lnum = r.line1 - 1;
-        let mut nsubs = 0usize;
-        let mut nlines = 0usize;
-        let mut last_line: Option<usize> = None;
-        let multiline_pat = re_multiline(pattern);
-        let saved_cursor = self.cursor;
-        while lnum < line2 && lnum < self.buf.line_count() {
-            let Some(mut m) = re.match_line(&self.buf, lnum, 0) else {
-                lnum += 1;
-                continue;
-            };
-            // A line break before \zs: the match starts in a later line.
-            if m.start.0 > lnum {
-                lnum = m.start.0;
-                if lnum >= line2 {
-                    break;
-                }
-            }
-            let mut sub_line: Vec<char> = self.line_vec(lnum);
-            let mut new_start: Option<Vec<char>> = None;
-            let mut out_lines: Vec<String> = Vec::new();
-            let mut copycol = 0usize;
-            let mut matchcol = 0usize;
-            let mut prev_matchcol: i64 = -1;
-            let mut did_sub = false;
-            let mut skip_match = false;
-            loop {
-                let mut do_again = false;
-                let mut nmatch = m.end.0 - m.start.0 + 1;
-                // 1. An empty match right after the previous match does not
-                // count (the strange vi behaviour; also avoids endless loops).
-                let dup =
-                    matchcol as i64 == prev_matchcol && m.end.0 == m.start.0 && matchcol == m.end.1;
-                if dup {
-                    if matchcol >= sub_line.len() {
-                        skip_match = true;
-                    } else {
-                        matchcol += 1;
-                    }
-                } else {
-                    matchcol = m.end.1;
-                    prev_matchcol = matchcol as i64;
-                    // Like Vim, the cursor sits at the start of the line (this
-                    // is also the cursor undo returns to).
-                    self.cursor = Pos::new(lnum, 0);
-                    if flags.count_only {
-                        if nmatch > 1 {
-                            matchcol = sub_line.len();
-                            nmatch = 1;
-                            skip_match = true;
-                        }
-                        nsubs += 1;
-                        did_sub = true;
-                    } else {
-                        // 3. substitute the string.
-                        let out = self.expand_replacement(&rep_chars, &m);
-                        let ns = new_start.get_or_insert_with(Vec::new);
-                        let sc = m.start.1.min(sub_line.len());
-                        if sc >= copycol {
-                            ns.extend(&sub_line[copycol..sc]);
-                        }
-                        for piece in out {
-                            match piece {
-                                RepPiece::Text(c) => ns.push(c),
-                                RepPiece::Break => {
-                                    out_lines.push(ns.iter().collect());
-                                    ns.clear();
-                                }
-                            }
-                        }
-                        nsubs += 1;
-                        did_sub = true;
-                        last_line = Some(lnum + out_lines.len());
-                        if nmatch > 1 {
-                            // The match joined lines: replace them now and
-                            // continue in the joined line.
-                            let last = self.buf.line_count() - 1;
-                            let end_l = m.end.0.min(last);
-                            if m.end.0 > last {
-                                skip_match = true;
-                            }
-                            let tail: Vec<char> = if m.end.0 <= last {
-                                self.line_vec(m.end.0)
-                            } else {
-                                Vec::new()
-                            };
-                            let mut produced = new_start.take().unwrap_or_default();
-                            let plen = produced.len();
-                            produced.extend(&tail[m.end.1.min(tail.len())..]);
-                            let n_old = end_l - lnum + 1;
-                            let mut new_lines = std::mem::take(&mut out_lines);
-                            new_lines.push(produced.iter().collect());
-                            self.u_save(lnum, n_old, false);
-                            // Marks on the joined lines are kept, as in Vim's
-                            // do_sub(): a mark on the first line stays, the
-                            // others move to the joined line.
-                            let last_new = lnum + new_lines.len() - 1;
-                            let moved: Vec<(char, Pos)> = self
-                                .buf
-                                .take_marks_in(lnum, end_l)
-                                .into_iter()
-                                .map(|(c, p)| {
-                                    let at = if p.line == lnum {
-                                        p
-                                    } else if p.line == end_l && p.col >= m.end.1 {
-                                        Pos::new(last_new, plen + p.col - m.end.1)
-                                    } else {
-                                        Pos::new(last_new, plen)
-                                    };
-                                    (c, at)
-                                })
-                                .collect();
-                            // Insert the new lines first so that the buffer
-                            // never becomes empty.
-                            for (i, l) in new_lines.iter().enumerate() {
-                                self.buf.insert_line(lnum + i, l);
-                            }
-                            self.buf.delete_lines(lnum + new_lines.len(), n_old);
-                            for (c, p) in moved {
-                                self.buf.set_mark(c, p);
-                            }
-                            let added = new_lines.len();
-                            line2 = (line2 + added).saturating_sub(n_old);
-                            lnum += added - 1;
-                            last_line = Some(lnum);
-                            sub_line = self.line_vec(lnum);
-                            copycol = 0;
-                            matchcol = plen;
-                            prev_matchcol = plen as i64;
-                            if lnum < line2 {
-                                do_again = true;
-                            }
-                        } else {
-                            copycol = m.end.1;
-                        }
-                    }
-                }
-                // skip:
-                let lastone = skip_match
-                    || !(flags.global || do_again)
-                    || (matchcol >= sub_line.len() && nmatch <= 1 && !multiline_pat);
-                if lastone {
-                    break;
-                }
-                match re.match_line(&self.buf, lnum, matchcol) {
-                    Some(n) if n.start.0 == lnum => m = n,
-                    _ => break,
-                }
-            }
-            if did_sub {
-                nlines += 1;
-                if !flags.count_only {
-                    // Flush the line (the text after the last match is kept).
-                    if let Some(mut ns) = new_start.take() {
-                        if copycol <= sub_line.len() {
-                            ns.extend(&sub_line[copycol..]);
-                        }
-                        self.u_save(lnum, 1, false);
-                        let added = out_lines.len();
-                        self.buf.set_line(lnum, &ns.iter().collect::<String>());
-                        for (i, l) in out_lines.iter().enumerate() {
-                            self.buf.insert_line(lnum + i, l);
-                        }
-                        lnum += added;
-                        line2 += added;
-                        last_line = Some(lnum);
-                    }
-                }
-            }
-            lnum += 1;
-        }
-        let did_sub_any = nsubs > 0;
-        if flags.count_only {
-            self.cursor = saved_cursor;
-            if nsubs > 0 {
-                self.info(format!(
-                    "{nsubs} match{} on {nlines} line{}",
-                    if nsubs == 1 { "" } else { "es" },
-                    if nlines == 1 { "" } else { "s" }
-                ));
-            } else if !flags.no_error {
-                return Err(format!("E486: Pattern not found: {pattern}"));
-            }
-            return Ok(());
-        }
-        if did_sub_any {
-            if let Some(l) = last_line {
-                self.cursor.line = l.min(self.buf.last_line());
-                self.cursor.col = 0;
-            }
-            self.uline = None;
-            if self.global_busy {
-                self.global_need_beginline = true;
-            } else {
-                self.cursor.col = first_non_blank(&self.buf, self.cursor.line, true);
-            }
-            if nsubs > 2 {
-                self.info(format!(
-                    "{nsubs} substitution{} on {nlines} line{}",
-                    if nsubs == 1 { "" } else { "s" },
-                    if nlines == 1 { "" } else { "s" }
-                ));
-            }
-        } else if !self.global_busy && !flags.no_error {
-            return Err(format!("E486: Pattern not found: {pattern}"));
+        let mut st = Box::new(SubRun {
+            pattern: pattern.to_string(),
+            rep: rep.to_string(),
+            rep_chars,
+            ask: flags.confirm && !flags.count_only,
+            re,
+            line2: r.line2,
+            lnum: r.line1 - 1,
+            nsubs: 0,
+            nlines: 0,
+            last_line: None,
+            multiline_pat: re_multiline(pattern),
+            saved_cursor: self.cursor,
+            found: false,
+            got_quit: false,
+            awaiting: false,
+            skip_answer: false,
+            line: None,
+            m: None,
+            rest: None,
+            flags,
+        });
+        if self.sub_drive(&mut st)? {
+            self.sub = Some(st);
         }
         Ok(())
     }
+
+    /// Runs the substitution until it is done (`Ok(false)`) or waits for a
+    /// `c` flag answer (`Ok(true)`: Confirm mode, the prompt and the match
+    /// are set). Port of the loops of Vim's `do_sub()`.
+    fn sub_drive(&mut self, st: &mut SubRun) -> ExRes<bool> {
+        loop {
+            if st.line.is_none() {
+                if st.got_quit || st.lnum >= st.line2 || st.lnum >= self.buf.line_count() {
+                    break;
+                }
+                let Some(m) = st.re.match_line(&self.buf, st.lnum, 0) else {
+                    st.lnum += 1;
+                    continue;
+                };
+                // A line break before \zs: the match starts in a later line.
+                if m.start.0 > st.lnum {
+                    st.lnum = m.start.0;
+                    if st.lnum >= st.line2 {
+                        break;
+                    }
+                }
+                st.line = Some(LineSub::new(self.line_vec(st.lnum)));
+                st.m = Some(m);
+            }
+            // The matches of this line.
+            loop {
+                let m = st.m.clone().expect("current match");
+                st.found = true;
+                // Where the cursor goes if the command ends here (Vim sets it
+                // to the line of each match it looks at).
+                st.last_line = Some(st.lnum);
+                let mut do_again = false;
+                let mut nmatch = m.end.0 - m.start.0 + 1;
+                let action = {
+                    let ln = st.line.as_mut().expect("line state");
+                    // 1. An empty match right after the previous match does
+                    // not count (the strange vi behaviour; also avoids
+                    // endless loops).
+                    let dup = ln.matchcol as i64 == ln.prev_matchcol
+                        && m.end.0 == m.start.0
+                        && ln.matchcol == m.end.1;
+                    if std::mem::take(&mut st.awaiting) {
+                        // The answer to the prompt for this match.
+                        if std::mem::take(&mut st.skip_answer) {
+                            Action::Skip
+                        } else {
+                            Action::Substitute
+                        }
+                    } else if dup {
+                        if ln.matchcol >= ln.sub_line.len() {
+                            ln.skip_match = true;
+                        } else {
+                            ln.matchcol += 1;
+                        }
+                        Action::Skip
+                    } else {
+                        // Normally we continue searching just after the
+                        // previous match.
+                        ln.matchcol = m.end.1;
+                        ln.prev_matchcol = ln.matchcol as i64;
+                        if st.flags.count_only {
+                            if nmatch > 1 {
+                                ln.matchcol = ln.sub_line.len();
+                                nmatch = 1;
+                                ln.skip_match = true;
+                            }
+                            st.nsubs += 1;
+                            ln.did_sub = true;
+                            Action::Skip
+                        } else if st.ask {
+                            // Like Vim, the cursor goes to the match asked about.
+                            st.awaiting = true;
+                            self.cursor = Pos::new(st.lnum, m.start.1);
+                            self.message = Some(Message {
+                                text: format!("replace with {} (y/n/a/q/l/^E/^Y)?", st.rep),
+                                error: false,
+                            });
+                            self.mode = Mode::Confirm;
+                            return Ok(true);
+                        } else {
+                            Action::Substitute
+                        }
+                    }
+                };
+                // 3. Substitute the string. Like Vim, the cursor then sits at
+                // the start of the line (also where undo returns to).
+                if action == Action::Substitute {
+                    self.cursor = Pos::new(st.lnum, 0);
+                    let out = self.expand_replacement(&st.rep_chars, &m);
+                    let ln = st.line.as_mut().expect("line state");
+                    let mut ns = ln.new_start.take().unwrap_or_default();
+                    let sc = m.start.1.min(ln.sub_line.len());
+                    if sc >= ln.copycol {
+                        ns.extend(&ln.sub_line[ln.copycol..sc]);
+                    }
+                    for piece in out {
+                        match piece {
+                            RepPiece::Text(c) => ns.push(c),
+                            RepPiece::Break => {
+                                ln.out_lines.push(ns.iter().collect());
+                                ns.clear();
+                            }
+                        }
+                    }
+                    ln.new_start = Some(ns);
+                    st.nsubs += 1;
+                    ln.did_sub = true;
+                    st.last_line = Some(st.lnum + ln.out_lines.len());
+                    if nmatch > 1 {
+                        // The match joined lines: replace them now and
+                        // continue in the joined line.
+                        let last = self.buf.line_count() - 1;
+                        let end_l = m.end.0.min(last);
+                        if m.end.0 > last {
+                            ln.skip_match = true;
+                        }
+                        let tail: Vec<char> = if m.end.0 <= last {
+                            self.line_vec(m.end.0)
+                        } else {
+                            Vec::new()
+                        };
+                        let mut produced = ln.new_start.take().unwrap_or_default();
+                        let plen = produced.len();
+                        produced.extend(&tail[m.end.1.min(tail.len())..]);
+                        let n_old = end_l - st.lnum + 1;
+                        let mut new_lines = std::mem::take(&mut ln.out_lines);
+                        new_lines.push(produced.iter().collect());
+                        self.u_save_line_start(st.lnum, n_old);
+                        // Marks on the joined lines are kept, as in Vim's
+                        // do_sub(): a mark on the first line stays, the
+                        // others move to the joined line.
+                        let last_new = st.lnum + new_lines.len() - 1;
+                        let moved: Vec<(char, Pos)> = self
+                            .buf
+                            .take_marks_in(st.lnum, end_l)
+                            .into_iter()
+                            .map(|(c, p)| {
+                                let at = if p.line == st.lnum {
+                                    p
+                                } else if p.line == end_l && p.col >= m.end.1 {
+                                    Pos::new(last_new, plen + p.col - m.end.1)
+                                } else {
+                                    Pos::new(last_new, plen)
+                                };
+                                (c, at)
+                            })
+                            .collect();
+                        // Insert the new lines first so that the buffer
+                        // never becomes empty.
+                        for (i, l) in new_lines.iter().enumerate() {
+                            self.buf.insert_line(st.lnum + i, l);
+                        }
+                        self.buf.delete_lines(st.lnum + new_lines.len(), n_old);
+                        for (c, p) in moved {
+                            self.buf.set_mark(c, p);
+                        }
+                        let added = new_lines.len();
+                        st.line2 = (st.line2 + added).saturating_sub(n_old);
+                        st.lnum += added - 1;
+                        st.last_line = Some(st.lnum);
+                        ln.sub_line = self.line_vec(st.lnum);
+                        ln.copycol = 0;
+                        ln.matchcol = plen;
+                        ln.prev_matchcol = plen as i64;
+                        if st.lnum < st.line2 {
+                            do_again = true;
+                        }
+                    } else {
+                        ln.copycol = m.end.1;
+                    }
+                }
+                // skip:
+                let ln = st.line.as_ref().expect("line state");
+                let lastone = ln.skip_match
+                    || st.got_quit
+                    || !(st.flags.global || do_again)
+                    || (ln.matchcol >= ln.sub_line.len() && nmatch <= 1 && !st.multiline_pat);
+                if lastone {
+                    break;
+                }
+                let (lnum, col) = (st.lnum, ln.matchcol);
+                match st.re.match_line(&self.buf, lnum, col) {
+                    Some(n) if n.start.0 == lnum => st.m = Some(n),
+                    _ => break,
+                }
+            }
+            // The line is done: write it back (the text after the last match
+            // is kept).
+            let ln = st.line.take().expect("line state");
+            if ln.did_sub {
+                st.nlines += 1;
+                if !st.flags.count_only
+                    && let Some(mut ns) = ln.new_start
+                {
+                    if ln.copycol <= ln.sub_line.len() {
+                        ns.extend(&ln.sub_line[ln.copycol..]);
+                    }
+                    self.u_save_line_start(st.lnum, 1);
+                    let added = ln.out_lines.len();
+                    self.buf.set_line(st.lnum, &ns.iter().collect::<String>());
+                    for (i, l) in ln.out_lines.iter().enumerate() {
+                        self.buf.insert_line(st.lnum + i, l);
+                    }
+                    st.lnum += added;
+                    st.line2 += added;
+                    st.last_line = Some(st.lnum);
+                }
+            }
+            st.lnum += 1;
+        }
+
+        if st.flags.count_only {
+            self.cursor = st.saved_cursor;
+            if st.nsubs > 0 {
+                self.info(format!(
+                    "{} match{} on {} line{}",
+                    st.nsubs,
+                    if st.nsubs == 1 { "" } else { "es" },
+                    st.nlines,
+                    if st.nlines == 1 { "" } else { "s" }
+                ));
+            } else if !st.found && !st.flags.no_error {
+                return Err(format!("E486: Pattern not found: {}", st.pattern));
+            }
+            return Ok(false);
+        }
+        if st.nsubs > 0 {
+            self.uline = None;
+            if self.global_busy {
+                self.global_need_beginline = true;
+            }
+            // While the prompt is still asking, the cursor stays where the
+            // last answer left it: on the line of the last match, at the start
+            // after a substitution or on the match after `n` (Vim leaves it
+            // there). Without a prompt, the cursor goes to the first non-blank
+            // of the line of the last match, as for `:s` without `c`.
+            if !st.ask
+                && let Some(l) = st.last_line
+            {
+                self.cursor.line = l.min(self.buf.last_line());
+                self.cursor.col = 0;
+                if !self.global_busy {
+                    self.cursor.col = first_non_blank(&self.buf, self.cursor.line, true);
+                }
+            }
+            if st.nsubs > 2 {
+                self.info(format!(
+                    "{} substitution{} on {} line{}",
+                    st.nsubs,
+                    if st.nsubs == 1 { "" } else { "s" },
+                    st.nlines,
+                    if st.nlines == 1 { "" } else { "s" }
+                ));
+            }
+        } else if !st.found && !self.global_busy && !st.flags.no_error {
+            return Err(format!("E486: Pattern not found: {}", st.pattern));
+        }
+        Ok(false)
+    }
+
+    /// An answer to the `c` flag prompt: `y n a q l`, `<Esc>` and `<C-c>`
+    /// (quit). Other keys ask again. Vim's `<C-e>` and `<C-y>` scroll the
+    /// window; rvim keeps no scroll state in the editor yet, so they ask
+    /// again too.
+    pub(crate) fn confirm_key(&mut self, key: Key) {
+        let answer = match key {
+            Key::Char(c @ ('y' | 'n' | 'a' | 'q' | 'l')) => c,
+            Key::Esc | Key::Ctrl('c') => 'q',
+            _ => return,
+        };
+        let Some(mut st) = self.sub.take() else {
+            self.mode = Mode::Normal;
+            return;
+        };
+        self.message = None;
+        match answer {
+            'y' => {}
+            'n' => {
+                st.skip_answer = true;
+                // A match over a line break: go on with the next line.
+                let multi = st.m.as_ref().is_some_and(|m| m.end.0 > m.start.0);
+                if multi && let Some(ln) = st.line.as_mut() {
+                    ln.matchcol = ln.sub_line.len();
+                    ln.skip_match = true;
+                }
+            }
+            'a' => st.ask = false,
+            'q' => {
+                st.got_quit = true;
+                st.skip_answer = true;
+            }
+            // 'l': this match, then stop (Vim sets do_all off and line2 to
+            // this line).
+            _ => {
+                st.flags.global = false;
+                st.line2 = st.lnum;
+            }
+        }
+        self.mode = Mode::Normal;
+        self.sub_resume(st);
+    }
+
+    /// Goes on with a `:s` after its prompt was answered, then the Ex
+    /// command line it was part of.
+    fn sub_resume(&mut self, mut st: Box<SubRun>) {
+        match self.sub_drive(&mut st) {
+            Ok(true) => self.sub = Some(st),
+            result => {
+                if let Err(msg) = result {
+                    self.error(msg);
+                }
+                // As in Vim, an error does not stop the rest of the line.
+                if let Some(rest) = st.rest.take() {
+                    self.ex_tasks.push(ExTask::Ex(rest));
+                }
+                self.run_ex_tasks(0);
+            }
+        }
+        // Waiting keeps the desired column; a finished `:s` moves the cursor.
+        self.keep_curswant = self.sub.is_some();
+    }
+
+    /// The match a `c` flag prompt asks about: start and end (exclusive), for
+    /// the highlight.
+    pub fn confirm_match(&self) -> Option<(Pos, Pos)> {
+        if self.mode != Mode::Confirm {
+            return None;
+        }
+        let m = self.sub.as_ref()?.m.as_ref()?;
+        Some((Pos::new(m.start.0, m.start.1), Pos::new(m.end.0, m.end.1)))
+    }
+
+    /// Vim's `u_save()` for a change at the start of line `first`: the undo
+    /// cursor is at column 0, whatever the cursor does during a prompt.
+    fn u_save_line_start(&mut self, first: usize, count: usize) {
+        let at = self.cursor;
+        self.cursor = Pos::new(first, 0);
+        self.u_save(first, count, false);
+        self.cursor = at;
+    }
+}
+
+/// What to do with the current match.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Action {
+    Substitute,
+    Skip,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1482,6 +1681,71 @@ pub(crate) struct SubFlags {
     pub count_only: bool,
     pub print: bool,
     pub use_search: bool,
+    /// `c`: ask before each substitution.
+    pub confirm: bool,
+}
+
+/// A `:s` in progress: the locals of Vim's `do_sub()`, kept between keys
+/// while a `c` flag prompt waits for an answer.
+pub(crate) struct SubRun {
+    pattern: String,
+    /// The replacement after `~` expansion, as shown in the prompt.
+    rep: String,
+    rep_chars: Vec<char>,
+    flags: SubFlags,
+    re: Regex,
+    line2: usize,
+    lnum: usize,
+    nsubs: usize,
+    nlines: usize,
+    last_line: Option<usize>,
+    multiline_pat: bool,
+    saved_cursor: Pos,
+    /// Vim's `do_ask`: still prompting (`a` turns it off).
+    ask: bool,
+    /// Some match was found (for E486, which is not given for declined ones).
+    found: bool,
+    got_quit: bool,
+    /// The current match waits for an answer; `skip_answer` skips it.
+    awaiting: bool,
+    skip_answer: bool,
+    /// The line being worked on, while inside a line.
+    line: Option<LineSub>,
+    /// The current match.
+    m: Option<Match>,
+    /// The rest of the `|` command line after this `:s`, run when it ends.
+    pub(crate) rest: Option<String>,
+}
+
+/// The state of the line a `:s` is working on (Vim's `sub_firstline` and
+/// the `copycol`/`matchcol` locals).
+struct LineSub {
+    /// The line before any replacement in it.
+    sub_line: Vec<char>,
+    /// The new text up to the last match (`None` until a replacement).
+    new_start: Option<Vec<char>>,
+    /// Complete new lines, when a replacement holds a line break.
+    out_lines: Vec<String>,
+    copycol: usize,
+    matchcol: usize,
+    prev_matchcol: i64,
+    did_sub: bool,
+    skip_match: bool,
+}
+
+impl LineSub {
+    fn new(sub_line: Vec<char>) -> Self {
+        Self {
+            sub_line,
+            new_start: None,
+            out_lines: Vec::new(),
+            copycol: 0,
+            matchcol: 0,
+            prev_matchcol: -1,
+            did_sub: false,
+            skip_match: false,
+        }
+    }
 }
 
 pub(crate) enum RepPiece {
