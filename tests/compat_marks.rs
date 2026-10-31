@@ -9,6 +9,7 @@ const TEXTS: &[&str] = &[
     "abcdef\nab\n  abc\nxyz\nlast line",
     "a\nb\nc\nd\ne",
     "foo bar\n\tbaz qux\nfoo\n  quux foo",
+    "abcdef\nab\nabcdef\nabcdef",
 ];
 
 #[test]
@@ -42,6 +43,10 @@ fn set_and_jump() {
         "llllj:ka<CR>k",
         "llllj'aj",
         "lllljmakkj",
+        // Setting a mark keeps the desired column.
+        "lllljmajix<Esc>",
+        "lllljmajjix<Esc>",
+        "lllljmakkjix<Esc>",
     ];
     check(&cross(TEXTS, &keys));
 }

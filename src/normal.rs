@@ -1466,7 +1466,11 @@ impl Editor {
                 };
                 self.cmd_start(crate::cmdline::PromptKind::Ex, Mode::Normal, &initial);
             }
-            Simple::SetMark(c) => self.buf.set_mark(c, self.cursor),
+            Simple::SetMark(c) => {
+                // Like Vim's nv_mark(): setting a mark keeps the desired column.
+                self.keep_curswant = true;
+                self.buf.set_mark(c, self.cursor);
+            }
             Simple::Record(c) => self.start_recording(c),
             Simple::Macro(c) => self.exec_register(c, count1),
             Simple::Ampersand { all } => self.execute_ex(if all { "%s//~/&" } else { "s" }),
