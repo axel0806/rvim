@@ -7,7 +7,7 @@ a real Vim by the differential harness in `tests/common/mod.rs`.
 
 ## Status: read this first
 
-Last updated 2026-10-31. **rvim is an alpha, roughly 25-30% of this plan.**
+Last updated 2026-11-01. **rvim is an alpha, roughly 25-30% of this plan.**
 Released as `v0.1.0-alpha.1` (that release predates everything below the
 "Since the alpha" line). All tests pass against Vim 9.1 and clippy/fmt are
 clean at the last commit.
@@ -29,7 +29,18 @@ the options registry (`options.rs`: `autoindent`, `expandtab`, `shiftwidth`
 work), panic recovery files (`recovery.rs`), the channel-based event loop
 (`event.rs`), `:` command-line editing and history (`cmdline.rs`), `&`/`g&`,
 macros (`macros.rs`), `/` and `?` prompts with the same editing keys, `<C-r>`
-and history (also in `cmdline.rs`).
+and history (also in `cmdline.rs`). Search-prompt editing and history
+landed in commit e556a0b.
+
+**In progress** (as of 2026-11-01; maintained by the orchestrator, and an
+entry is removed when its branch lands on main):
+
+- Marks (`m`, `'`, `` ` ``, `:k`, `:mark`, `'a` in Ex addresses): agent branch
+  `worktree-agent-a4bb7f1ec2a17e76d`, being built.
+- `gn`/`gN` and `:r`: branch `worktree-agent-a3fbde37de6ad1c4f`, verified,
+  being rebased onto main.
+- Scrolling (`<C-f> <C-b> <C-d> <C-u> <C-e> <C-y> zt zz zb H M L`,
+  `scrolloff`): branch `worktree-agent-aa9509a3085f2e7dc`, being built.
 
 **Suggested order for what is left:** (1) Document/Window split, (2) marks +
 splits + buffers + scrolling, (3) the ACP connector and file-change reload
