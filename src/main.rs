@@ -110,8 +110,10 @@ fn draw(out: &mut impl Write, ed: &Editor, view: &mut View) -> io::Result<()> {
 
 fn convert(k: KeyEvent) -> Option<Key> {
     let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
+    let alt = k.modifiers.contains(KeyModifiers::ALT);
     Some(match k.code {
         KeyCode::Char(c) if ctrl => Key::ctrl(c),
+        KeyCode::Char(c) if alt => Key::Alt(c),
         KeyCode::Char(c) => Key::Char(c),
         KeyCode::Esc => Key::Esc,
         KeyCode::Enter => Key::Enter,
@@ -126,6 +128,9 @@ fn convert(k: KeyEvent) -> Option<Key> {
         KeyCode::End => Key::End,
         KeyCode::PageUp => Key::PageUp,
         KeyCode::PageDown => Key::PageDown,
+        KeyCode::Insert => Key::Insert,
+        KeyCode::BackTab => Key::BackTab,
+        KeyCode::F(n) if (1..=12).contains(&n) => Key::F(n),
         _ => return None,
     })
 }

@@ -76,6 +76,16 @@ fn vim_key_string(keys: &str) -> String {
                     Key::End => "End",
                     Key::PageUp => "PageUp",
                     Key::PageDown => "PageDown",
+                    Key::Insert => "Insert",
+                    Key::BackTab => "S-Tab",
+                    Key::F(n) => {
+                        write!(out, r"\<F{n}>").unwrap();
+                        continue;
+                    }
+                    Key::Alt(c) => {
+                        write!(out, r"\<Esc>{c}").unwrap();
+                        continue;
+                    }
                     Key::Char(_) | Key::Ctrl(_) => unreachable!(),
                 };
                 write!(out, "\\<{name}>").unwrap();

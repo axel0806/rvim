@@ -321,6 +321,22 @@ impl Editor {
     }
 
     pub fn handle_key(&mut self, key: Key) {
+        let key = match key {
+            Key::Alt(c) => {
+                self.handle_key(Key::Esc);
+                return self.handle_key(Key::Char(c));
+            }
+            Key::Insert
+                if self.mode == Mode::Normal
+                    && self
+                        .pending
+                        .iter()
+                        .all(|k| matches!(k, Key::Char(c) if c.is_ascii_digit())) =>
+            {
+                Key::Char('i')
+            }
+            k => k,
+        };
         // Like Vim's w_set_curswant: nearly every command resets the desired
         // column, even if the cursor did not move. Vertical motions and
         // partial commands (counts, prefixes, command-line typing) opt out.
@@ -635,6 +651,29 @@ impl Editor {
     fn insert_key(&mut self, key: Key) {
         match key {
             Key::Esc | Key::Ctrl('c') => return self.finish_insert(),
+            // Unmapped function keys insert their name, as in Vim.
+            Key::F(n) => {
+                // In Replace mode Vim replaces one character and inserts the
+                // rest of the name.
+                let mode = self.mode;
+                for (i, c) in format!("<F{n}>").chars().enumerate() {
+                    if i == 1 {
+                        self.mode = Mode::Insert;
+                    }
+                    self.insert_key(Key::Char(c));
+                }
+                self.mode = mode;
+                return;
+            }
+            Key::BackTab => return self.insert_key(Key::Tab),
+            Key::Insert => {
+                self.mode = if self.mode == Mode::Replace {
+                    Mode::Insert
+                } else {
+                    Mode::Replace
+                };
+                return;
+            }
             Key::Left | Key::Right | Key::Up | Key::Down | Key::Home | Key::End => {
                 // Moving the cursor starts a new insert: the count is dropped
                 // and a new undo step begins (Vim's start_arrow).

@@ -20,6 +20,14 @@ pub enum Key {
     End,
     PageUp,
     PageDown,
+    Insert,
+    /// Shift-Tab.
+    BackTab,
+    /// Function key `F1`..`F12`.
+    F(u8),
+    /// Alt + a character. Terminal Vim receives this as `<Esc>` followed by
+    /// the character when nothing is mapped; the editor does the same.
+    Alt(char),
 }
 
 impl Key {
@@ -73,11 +81,29 @@ fn named_key(name: &str) -> Option<Key> {
         "end" => Key::End,
         "pageup" => Key::PageUp,
         "pagedown" => Key::PageDown,
+        "insert" => Key::Insert,
+        "s-tab" => Key::BackTab,
         "space" => Key::Char(' '),
         "lt" => Key::Char('<'),
         "bar" => Key::Char('|'),
         "bslash" => Key::Char('\\'),
         _ => {
+            if let Some(n) = lower.strip_prefix('f').and_then(|n| n.parse::<u8>().ok())
+                && (1..=12).contains(&n)
+            {
+                return Some(Key::F(n));
+            }
+            if let Some(rest) = lower
+                .strip_prefix("a-")
+                .or_else(|| lower.strip_prefix("m-"))
+            {
+                let mut it = name[2..].chars();
+                let c = it.next()?;
+                if rest.chars().count() != 1 {
+                    return None;
+                }
+                return Some(Key::Alt(c));
+            }
             let rest = lower.strip_prefix("c-")?;
             let mut it = rest.chars();
             let c = it.next()?;
