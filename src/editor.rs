@@ -313,6 +313,23 @@ impl Editor {
         }
     }
 
+    /// The single entry point for everything that happens to the editor.
+    pub fn handle_event(&mut self, ev: crate::event::Event) {
+        use crate::event::Event;
+        match ev {
+            Event::Key(k) => self.handle_key(k),
+            Event::Paste(text) => self.paste(&text),
+            Event::Resize(..) | Event::FocusGained | Event::FocusLost | Event::Timer => {}
+        }
+    }
+
+    /// When the front end should send [`Event::Timer`](crate::event::Event::Timer)
+    /// if nothing else happens first. `None` means no timer is needed (there
+    /// are no mappings with `timeoutlen` yet).
+    pub fn next_deadline(&self) -> Option<std::time::Instant> {
+        None
+    }
+
     pub fn handle_key(&mut self, key: Key) {
         let key = match key {
             Key::Alt(c) => {

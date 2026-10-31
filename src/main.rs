@@ -12,6 +12,8 @@ use rvim::view::{Hl, View};
 use rvim::{Editor, Key, Mode};
 use std::io::{self, Write};
 use std::path::PathBuf;
+use std::sync::mpsc;
+use std::time::Instant;
 
 fn main() -> io::Result<()> {
     let mut args = std::env::args_os().skip(1);
@@ -29,9 +31,21 @@ fn main() -> io::Result<()> {
         default_hook(info);
     }));
 
-    let result = run(&mut ed);
+    // A panic must not lose unsaved text: write it to a recovery file.
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(&mut ed)));
     restore_terminal();
-    result
+    match result {
+        Ok(r) => r,
+        Err(_) => {
+            if ed.buf.modified {
+                match rvim::recovery::write_recovery(&ed.buf, &rvim::recovery::recovery_dir()) {
+                    Ok(p) => eprintln!("rvim crashed. Unsaved text was saved to {}", p.display()),
+                    Err(e) => eprintln!("rvim crashed and could not save the text: {e}"),
+                }
+            }
+            std::process::exit(101);
+        }
+    }
 }
 
 fn restore_terminal() {
@@ -45,27 +59,62 @@ fn restore_terminal() {
     let _ = terminal::disable_raw_mode();
 }
 
+/// Reads the terminal on its own thread and sends editor events. Workers
+/// (file watching, agents, prediction) will clone the sender.
+fn spawn_input(tx: mpsc::Sender<rvim::Event>) {
+    std::thread::spawn(move || {
+        while let Ok(ev) = event::read() {
+            let ev = match ev {
+                Event::Key(k) if k.kind != KeyEventKind::Release => match convert(k) {
+                    Some(key) => rvim::Event::Key(key),
+                    None => continue,
+                },
+                Event::Paste(text) => rvim::Event::Paste(text),
+                Event::Resize(w, h) => rvim::Event::Resize(w, h),
+                Event::FocusGained => rvim::Event::FocusGained,
+                Event::FocusLost => rvim::Event::FocusLost,
+                _ => continue,
+            };
+            if tx.send(ev).is_err() {
+                break;
+            }
+        }
+    });
+}
+
 fn run(ed: &mut Editor) -> io::Result<()> {
     let mut view = View::default();
     let mut screen = Screen::default();
     let mut out = io::BufWriter::new(io::stdout());
+    let (tx, rx) = mpsc::channel();
+    spawn_input(tx);
     while !ed.should_quit() {
         draw(&mut out, ed, &mut view, &mut screen)?;
-        match event::read()? {
-            Event::Key(k) if k.kind != KeyEventKind::Release => {
-                if let Some(key) = convert(k) {
-                    if key == Key::Ctrl('l') {
-                        screen.invalidate();
-                    }
-                    ed.handle_key(key);
-                    if ed.take_bell() {
-                        queue!(out, Print('\x07'))?;
-                    }
-                }
+        // Wait for the first event (or the editor's timer), then take
+        // everything already queued so a burst is drawn once.
+        let first = match ed.next_deadline() {
+            Some(t) => match rx.recv_timeout(t.saturating_duration_since(Instant::now())) {
+                Ok(ev) => ev,
+                Err(mpsc::RecvTimeoutError::Timeout) => rvim::Event::Timer,
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            },
+            None => match rx.recv() {
+                Ok(ev) => ev,
+                Err(_) => break,
+            },
+        };
+        for ev in std::iter::once(first).chain(rx.try_iter().take(4096)) {
+            match ev {
+                rvim::Event::Key(Key::Ctrl('l')) | rvim::Event::Resize(..) => screen.invalidate(),
+                _ => {}
             }
-            Event::Paste(text) => ed.paste(&text),
-            Event::Resize(..) => screen.invalidate(),
-            _ => {}
+            ed.handle_event(ev);
+            if ed.should_quit() {
+                break;
+            }
+        }
+        if ed.take_bell() {
+            queue!(out, Print('\x07'))?;
         }
     }
     Ok(())

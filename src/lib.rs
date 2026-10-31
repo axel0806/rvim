@@ -3,12 +3,14 @@
 
 pub mod buffer;
 pub mod editor;
+pub mod event;
 pub(crate) mod ex;
 pub mod key;
 pub mod motion;
 mod normal;
 mod ops;
 pub mod options;
+pub mod recovery;
 pub mod regex;
 pub mod register;
 mod search;
@@ -18,6 +20,7 @@ mod undo;
 pub mod view;
 
 pub use editor::{Editor, Mode, VisualMode};
+pub use event::Event;
 
 /// Shown by `:version` and at startup. rvim contains code derived from Vim,
 /// and the Vim license (condition II.3) requires telling users that this is

@@ -84,7 +84,7 @@ What the revised milestones fix, as the code stands today:
    Left: command-line editing keys (`<Left>`, `<C-b>`, `<C-r>`, ...) and
    history, `&`/`g&`, `:s` flags `c` and `\=` expressions, `gn`, `:r`, `:k`.
    Marks in Ex addresses (`'a`) move to milestone 5 with the marks.
-4. **Foundation.** Restructure before adding more features, because windows,
+4. **Foundation (in progress).** Done: bracketed paste, Alt/F-keys/Insert/Shift-Tab, Visual area drawn via highlight groups, row-level diff redraw, options registry (`autoindent`, `expandtab`, `shiftwidth`), panic recovery files, channel-based event loop with an input thread. Left: the Document/Window/Editor split, kitty keyboard protocol, cell-level diff, `:setlocal`, SIGHUP recovery. Original description: Restructure before adding more features, because windows,
    agents and prediction all depend on it. Order, each step landing with the
    differential tests green: (a) Document/Window/Editor split, (b) internal
    event loop, (c) styled frame with the Visual area drawn, (d) diff redraw,
@@ -528,7 +528,9 @@ have unit tests (for layout, on the styled `Frame` once milestone 4 lands).
 - The frame carries highlight groups per cell (`view::Hl`); only Visual and
   the `~`/`@` filler use them so far. The terminal redraws only rows that
   changed. Still missing: hlsearch, incsearch, matching parens, syntax.
-- Alt, F-keys and Shift-Tab are ignored; there is no recovery file after a
+- A panic writes unsaved text to a recovery file (`recovery.rs`), but a
+  closed terminal (SIGHUP) does not yet, and there are no swap files.
+- Alt, F-keys and Shift-Tab now work. (Old note: - Alt, F-keys and Shift-Tab are ignored; there is no recovery file after a
   crash. Both are fixed in milestone 4. (Bracketed paste is done: it is
   enabled in `main.rs`, handled by `Editor::paste`, and tested in
   `tests/paste.rs`; step (e) of milestone 4 still needs modifiers and the
