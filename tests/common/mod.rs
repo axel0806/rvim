@@ -13,23 +13,36 @@ use rvim::{Editor, Key, Mode, key::parse_keys};
 use std::fmt::Write as _;
 use std::process::Command;
 
+/// Registers compared after every case.
+pub const REGISTERS: [char; 8] = ['"', '0', '1', '2', '3', '-', 'a', 'b'];
+
+#[derive(Debug, PartialEq, Eq)]
 pub struct Outcome {
     pub lines: Vec<String>,
     /// 1-based line and character column, like Vim's `line('.')`/`charcol('.')`.
     pub cursor: (usize, usize),
+    pub modified: bool,
+    /// Type (`getregtype()`) and lines of each of `REGISTERS`; `None` if empty.
+    pub regs: Vec<Option<(String, Vec<String>)>>,
 }
 
 pub fn run_rvim(text: &str, keys: &str) -> Outcome {
     let mut ed = Editor::from_text(text);
     ed.feed(keys);
-    // feedkeys(..., 'x') ends Insert mode as if <Esc> was typed.
-    if ed.mode() != Mode::Normal {
+    // feedkeys(..., 'x') ends Insert mode as if <Esc> was typed; the harness
+    // then sends <Esc> for any other unfinished state.
+    if ed.mode() != Mode::Normal || !ed.pending_keys().is_empty() {
         ed.handle_key(Key::Esc);
     }
     let c = ed.cursor();
     Outcome {
         lines: ed.buf.lines(),
         cursor: (c.line + 1, c.col + 1),
+        modified: ed.buf.modified,
+        regs: REGISTERS
+            .iter()
+            .map(|&r| ed.register(r).filter(|(_, l)| !l.is_empty()))
+            .collect(),
     }
 }
 
@@ -73,21 +86,40 @@ fn vim_key_string(keys: &str) -> String {
     out
 }
 
+// Each case gets a fresh buffer (undo, "U", marks and "gv" start empty), its
+// text is set with undo disabled so "u" cannot undo the setup, and the
+// registers are cleared. Global state Vim keeps between cases anyway: the
+// last change for ".", the last f/t for ";" and the last Visual size for
+// "1v". Cases must set these up themselves before using them.
 const SCRIPT_BODY: &str = r#"
+let s:regs = ['"', '0', '1', '2', '3', '-', 'a', 'b']
 let s:out = []
 for [s:lines, s:keys] in g:cases
-  silent %delete _
+  let s:old = bufnr('%')
+  enew!
+  exe 'silent! bwipe! ' . s:old
+  for s:r in split('abcdefghijklmnopqrstuvwxyz0123456789-', '\zs')
+    call setreg(s:r, [])
+  endfor
+  call setreg('"', [])
+  set undolevels=-1
   call setline(1, s:lines)
+  set undolevels=1000
   set nomodified
   call cursor(1, 1)
   " silent!: an error message must not abort the remaining cases.
   silent! call feedkeys(s:keys, 'tx')
   if mode() !=# 'n'
-    call feedkeys("\<Esc>", 'tx')
+    silent! call feedkeys("\<Esc>", 'tx')
   endif
   let s:got = getline(1, '$')
-  call add(s:out, '@@ ' . line('.') . ' ' . charcol('.') . ' ' . len(s:got))
+  call add(s:out, '@@ ' . line('.') . ' ' . charcol('.') . ' ' . len(s:got) . ' ' . &modified)
   call extend(s:out, s:got)
+  for s:r in s:regs
+    let s:c = getreg(s:r, 1, 1)
+    call add(s:out, 'R ' . getregtype(s:r) . ' ' . len(s:c))
+    call extend(s:out, s:c)
+  endfor
 endfor
 call writefile(s:out, 'out.txt')
 qa!
@@ -141,9 +173,23 @@ pub fn run_vim(cases: &[(&str, &str)]) -> Option<Vec<Outcome>> {
         let got = (0..nums[2])
             .map(|_| lines.next().unwrap().to_string())
             .collect();
+        let mut regs = Vec::new();
+        for _ in REGISTERS {
+            let h = lines
+                .next()
+                .unwrap()
+                .strip_prefix("R ")
+                .expect("register header");
+            let (kind, n) = h.rsplit_once(' ').unwrap();
+            let n: usize = n.parse().unwrap();
+            let content: Vec<String> = (0..n).map(|_| lines.next().unwrap().to_string()).collect();
+            regs.push((!content.is_empty()).then(|| (kind.to_string(), content)));
+        }
         outcomes.push(Outcome {
             lines: got,
             cursor: (nums[0], nums[1]),
+            modified: nums[3] == 1,
+            regs,
         });
     }
     assert_eq!(outcomes.len(), cases.len(), "Vim output is incomplete");
@@ -156,11 +202,29 @@ pub fn check(cases: &[(&str, &str)]) {
     let mut failures = Vec::new();
     for ((text, keys), want) in cases.iter().zip(want) {
         let got = run_rvim(text, keys);
-        if got.lines != want.lines || got.cursor != want.cursor {
-            failures.push(format!(
-                "text {text:?} keys {keys:?}\n    vim:  {:?} cursor {:?}\n    rvim: {:?} cursor {:?}",
-                want.lines, want.cursor, got.lines, got.cursor
-            ));
+        if got != want {
+            let mut msg = format!("text {text:?} keys {keys:?}");
+            if got.lines != want.lines || got.cursor != want.cursor {
+                msg += &format!(
+                    "\n    vim:  {:?} cursor {:?}\n    rvim: {:?} cursor {:?}",
+                    want.lines, want.cursor, got.lines, got.cursor
+                );
+            }
+            if got.modified != want.modified {
+                msg += &format!(
+                    "\n    modified: vim {} rvim {}",
+                    want.modified, got.modified
+                );
+            }
+            for (i, r) in REGISTERS.iter().enumerate() {
+                if got.regs[i] != want.regs[i] {
+                    msg += &format!(
+                        "\n    reg {r}: vim {:?} rvim {:?}",
+                        want.regs[i], got.regs[i]
+                    );
+                }
+            }
+            failures.push(msg);
         }
     }
     assert!(

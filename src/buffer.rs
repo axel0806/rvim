@@ -18,6 +18,9 @@ pub struct Buffer {
     no_lines: bool,
     /// Bumped on every change, like Vim's b:changedtick.
     pub changedtick: u64,
+    /// Line numbers followed through edits (for `:g`); `usize::MAX` once
+    /// the line was deleted.
+    pub tracked: Vec<usize>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -26,6 +29,34 @@ pub struct FileStats {
     pub bytes: usize,
     /// The file did not end with a newline.
     pub noeol: bool,
+}
+
+/// The text at one point in time, for undo. Cheap to clone (ropes share
+/// structure).
+#[derive(Clone)]
+pub struct Snapshot {
+    rope: Rope,
+    no_lines: bool,
+}
+
+impl Snapshot {
+    pub fn line_count(&self) -> usize {
+        self.rope.len_lines()
+    }
+
+    /// Line `l` without its line break.
+    pub fn line(&self, l: usize) -> RopeSlice<'_> {
+        line_of(&self.rope, l)
+    }
+}
+
+fn line_of(rope: &Rope, l: usize) -> RopeSlice<'_> {
+    let s = rope.line(l);
+    if l + 1 < rope.len_lines() {
+        s.slice(..s.len_chars() - 1)
+    } else {
+        s
+    }
 }
 
 impl Default for Buffer {
@@ -43,6 +74,7 @@ impl Buffer {
             crlf: false,
             no_lines: true,
             changedtick: 0,
+            tracked: Vec::new(),
         }
     }
 
@@ -129,12 +161,68 @@ impl Buffer {
 
     /// Line `l` without its `\n`.
     pub fn line(&self, l: usize) -> RopeSlice<'_> {
-        let s = self.rope.line(l);
-        if l + 1 < self.line_count() {
-            s.slice(..s.len_chars() - 1)
-        } else {
-            s
+        line_of(&self.rope, l)
+    }
+
+    pub fn snapshot(&self) -> Snapshot {
+        Snapshot {
+            rope: self.rope.clone(),
+            no_lines: self.no_lines,
         }
+    }
+
+    /// Restores text from a snapshot (undo/redo). Marks the buffer changed.
+    pub fn restore(&mut self, snap: &Snapshot) {
+        self.rope = snap.rope.clone();
+        self.no_lines = snap.no_lines;
+        self.changedtick += 1;
+    }
+
+    /// The buffer has no lines at all (Vim's ML_EMPTY).
+    pub fn has_no_lines(&self) -> bool {
+        self.no_lines
+    }
+
+    /// Replaces the text of line `l`.
+    pub fn set_line(&mut self, l: usize, text: &str) {
+        let start = self.rope.line_to_char(l);
+        let len = self.line_len(l);
+        self.rope.remove(start..start + len);
+        self.rope.insert(start, text);
+        self.touch();
+    }
+
+    /// Deletes `n` whole lines starting at `l`. Deleting every line leaves
+    /// one empty line and no "real" lines, as in Vim.
+    pub fn delete_lines(&mut self, l: usize, n: usize) {
+        let total = self.line_count();
+        let n = n.min(total - l);
+        if n == 0 {
+            return;
+        }
+        let all = n == total;
+        for t in self.tracked.iter_mut() {
+            if *t == usize::MAX {
+            } else if *t >= l + n {
+                *t -= n;
+            } else if *t >= l {
+                *t = usize::MAX;
+            }
+        }
+        if all {
+            self.rope = Rope::new();
+        } else if l + n < total {
+            let start = self.rope.line_to_char(l);
+            let end = self.rope.line_to_char(l + n);
+            self.rope.remove(start..end);
+        } else {
+            // Deleting the last lines: remove the line break before them.
+            let start = self.rope.line_to_char(l) - 1;
+            let end = self.rope.len_chars();
+            self.rope.remove(start..end);
+        }
+        self.touch();
+        self.no_lines = all;
     }
 
     pub fn line_string(&self, l: usize) -> String {
@@ -154,6 +242,13 @@ impl Buffer {
         self.rope.line_to_char(l) + c
     }
 
+    /// Records a change without changing text (Vim's changed_lines() on
+    /// lines that ended up the same).
+    pub fn mark_changed(&mut self) {
+        self.modified = true;
+        self.changedtick += 1;
+    }
+
     fn touch(&mut self) {
         self.modified = true;
         self.no_lines = false;
@@ -162,6 +257,14 @@ impl Buffer {
 
     /// Inserts `text` (which may contain `\n`) before (l, c).
     pub fn insert(&mut self, l: usize, c: usize, text: &str) {
+        let breaks = text.matches('\n').count();
+        if breaks > 0 {
+            for t in self.tracked.iter_mut() {
+                if *t != usize::MAX && *t > l {
+                    *t += breaks;
+                }
+            }
+        }
         let i = self.index(l, c);
         self.rope.insert(i, text);
         self.touch();
@@ -178,6 +281,11 @@ impl Buffer {
     /// Inserts a new line so that it becomes line `at` (`at` may equal
     /// `line_count()` to append).
     pub fn insert_line(&mut self, at: usize, text: &str) {
+        for t in self.tracked.iter_mut() {
+            if *t != usize::MAX && *t >= at {
+                *t += 1;
+            }
+        }
         if at >= self.line_count() {
             let end = self.rope.len_chars();
             self.rope.insert(end, &format!("\n{text}"));

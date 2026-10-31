@@ -179,8 +179,12 @@ impl View {
         below: usize,
     ) -> (String, bool) {
         let bottom = height.saturating_sub(1);
-        if ed.mode() == Mode::CmdLine {
-            let text = format!(":{}", ed.cmdline());
+        let typed = match ed.mode() {
+            Mode::CmdLine => Some(format!(":{}", ed.cmdline())),
+            Mode::Normal | Mode::Visual(_) => ed.search_prompt(),
+            _ => None,
+        };
+        if let Some(text) = typed {
             let used: usize = text.chars().map(|c| char_width(c, 0)).sum();
             *cursor = (used.min(width - 1), bottom);
             return (pad(truncate(&text, width), width), false);
