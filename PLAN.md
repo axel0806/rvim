@@ -38,6 +38,7 @@ entry is removed when its branch lands on main):
 
 - Marks (`m`, `'`, `` ` ``, `:k`, `:mark`, `'a` in Ex addresses): agent branch
   `worktree-agent-a4bb7f1ec2a17e76d`, being built.
+- `:s` flag `c` (confirm): being built by a Haiku agent (branch name pending).
 - Scrolling (`<C-f> <C-b> <C-d> <C-u> <C-e> <C-y> zt zz zb H M L`,
   `scrolloff`): branch `worktree-agent-aa9509a3085f2e7dc`, being built.
 
