@@ -42,6 +42,7 @@ entry is removed when its branch lands on main):
 - `:s` flag `c` (confirm): being built by a Haiku agent (branch name pending).
 - Jumplist (`<C-o>`, `<C-i>`/`<Tab>`, `''`, ``` `` ```, `:jumps`, context mark):
   being built by a Haiku agent (branch name pending).
+- Indent options (`tabstop`, `softtabstop`, `smarttab`, `shiftround`): being built by a Haiku agent (branch name pending).
 
 **Suggested order for what is left:** (1) Document/Window split, (2) splits +
 buffers + scrolling, (3) the ACP connector and file-change reload
