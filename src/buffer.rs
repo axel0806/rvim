@@ -2,10 +2,20 @@
 //! by `\n` and the file's final newline is not stored (Vim's 'eol' model).
 //! Positions are (line, char) pairs, both zero-based.
 
+use crate::motion::Pos;
 use ropey::{Rope, RopeSlice};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+
+/// The lowercase marks `a` to `z` (Vim's `b_namedm`). A mark that was
+/// deleted with its line is `None`.
+pub type Marks = [Option<Pos>; 26];
+
+/// Index in `Marks` of a lowercase mark name.
+fn mark_index(c: char) -> Option<usize> {
+    c.is_ascii_lowercase().then(|| c as usize - 'a' as usize)
+}
 
 pub struct Buffer {
     rope: Rope,
@@ -21,6 +31,8 @@ pub struct Buffer {
     /// Line numbers followed through edits (for `:g`); `usize::MAX` once
     /// the line was deleted.
     pub tracked: Vec<usize>,
+    /// Lowercase marks, followed through edits by the methods below.
+    pub(crate) marks: Marks,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -110,6 +122,65 @@ impl Buffer {
             no_lines: true,
             changedtick: 0,
             tracked: Vec::new(),
+            marks: [None; 26],
+        }
+    }
+
+    /// The position of lowercase mark `c`, if it is set.
+    pub fn mark(&self, c: char) -> Option<Pos> {
+        self.marks[mark_index(c)?]
+    }
+
+    /// Sets lowercase mark `c`. Setting a mark is not a change.
+    pub fn set_mark(&mut self, c: char, pos: Pos) {
+        if let Some(i) = mark_index(c) {
+            self.marks[i] = Some(pos);
+        }
+    }
+
+    /// Vim's `mark_adjust()` for the lowercase marks: lines `first..first +
+    /// old` were replaced by `new` lines. Marks on the replaced lines are
+    /// deleted, marks below them move by the difference, marks above stay.
+    pub(crate) fn adjust_marks(&mut self, first: usize, old: usize, new: usize) {
+        let delta = new as isize - old as isize;
+        for slot in self.marks.iter_mut() {
+            let Some(p) = slot.as_mut() else { continue };
+            if p.line >= first + old {
+                p.line = (p.line as isize + delta) as usize;
+            } else if p.line >= first {
+                *slot = None;
+            }
+        }
+    }
+
+    /// Removes the marks on lines `first..=last` and returns them, to be set
+    /// again where those lines end up.
+    pub(crate) fn take_marks_in(&mut self, first: usize, last: usize) -> Vec<(char, Pos)> {
+        let mut out = Vec::new();
+        for (i, slot) in self.marks.iter_mut().enumerate() {
+            if let Some(p) = *slot
+                && (first..=last).contains(&p.line)
+            {
+                out.push((char::from(b'a' + i as u8), p));
+                *slot = None;
+            }
+        }
+        out
+    }
+
+    /// Moves the marks on line `from` to line `to`, mapping their columns
+    /// with `col` (used when lines are joined).
+    pub(crate) fn move_marks_to_line(
+        &mut self,
+        from: usize,
+        to: usize,
+        col: impl Fn(usize) -> usize,
+    ) {
+        for p in self.marks.iter_mut().flatten() {
+            if p.line == from {
+                p.line = to;
+                p.col = col(p.col);
+            }
         }
     }
 
@@ -233,6 +304,7 @@ impl Buffer {
             return;
         }
         let all = n == total;
+        self.adjust_marks(l, n, 0);
         for t in self.tracked.iter_mut() {
             if *t == usize::MAX {
             } else if *t >= l + n {
@@ -287,7 +359,8 @@ impl Buffer {
         self.changedtick += 1;
     }
 
-    /// Inserts `text` (which may contain `\n`) before (l, c).
+    /// Inserts `text` (which may contain `\n`) before (l, c). As in Vim, a
+    /// line break does not move marks on line `l`, whatever their column.
     pub fn insert(&mut self, l: usize, c: usize, text: &str) {
         let breaks = text.matches('\n').count();
         if breaks > 0 {
@@ -296,6 +369,7 @@ impl Buffer {
                     *t += breaks;
                 }
             }
+            self.adjust_marks(l + 1, 0, breaks);
         }
         let i = self.index(l, c);
         self.rope.insert(i, text);
@@ -303,9 +377,27 @@ impl Buffer {
     }
 
     /// Removes `n` chars starting at (l, c); a line break counts as one char.
+    /// Removing a line break joins lines: marks on the joined line move to
+    /// the join point, as Vim's `do_join()` does.
     pub fn remove(&mut self, l: usize, c: usize, n: usize) {
         let i = self.index(l, c);
         let end = (i + n).min(self.rope.len_chars());
+        let breaks = self
+            .rope
+            .slice(i..end)
+            .chars()
+            .filter(|&ch| ch == '\n')
+            .count();
+        if breaks > 0 {
+            let l2 = self.rope.char_to_line(end);
+            let c2 = end - self.rope.line_to_char(l2);
+            for from in l + 1..=l2 {
+                self.move_marks_to_line(from, l, |k| {
+                    if from == l2 && k >= c2 { c + k - c2 } else { c }
+                });
+            }
+            self.adjust_marks(l + 1, breaks, 0);
+        }
         self.rope.remove(i..end);
         self.touch();
     }
@@ -318,6 +410,7 @@ impl Buffer {
                 *t += 1;
             }
         }
+        self.adjust_marks(at, 0, 1);
         if at >= self.line_count() {
             let end = self.rope.len_chars();
             self.rope.insert(end, &format!("\n{text}"));

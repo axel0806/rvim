@@ -521,6 +521,7 @@ impl Editor {
             self.buf.line_count(),
             self.cursor,
             self.buf.modified,
+            self.buf.marks,
         );
     }
 
@@ -566,12 +567,26 @@ impl Editor {
         let mut done = 0;
         for _ in 0..count {
             let modified = self.buf.modified;
+            let marks = self.buf.marks;
             let step = if redo {
-                self.undo.redo(modified)
+                self.undo.redo(modified, marks)
             } else {
-                self.undo.undo(modified)
+                self.undo.undo(modified, marks)
             };
             let Some(step) = step else { break };
+            // Like Vim's u_undoredo(): when the number of lines changes,
+            // marks on the replaced lines are deleted and the ones below
+            // move. Then the marks saved with the change come back.
+            let oldsize = step.from.line_count().saturating_sub(step.top + step.below);
+            let newsize = step.snap.line_count().saturating_sub(step.top + step.below);
+            if oldsize != newsize {
+                self.buf.adjust_marks(step.top, oldsize, newsize);
+            }
+            for (slot, saved) in self.buf.marks.iter_mut().zip(step.marks) {
+                if saved.is_some() {
+                    *slot = saved;
+                }
+            }
             self.buf.restore(&step.snap);
             self.buf.modified = step.modified;
             self.cursor = self.undo_cursor(&step);

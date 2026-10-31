@@ -26,8 +26,9 @@ Prebuilt binaries for Windows, Linux and macOS are attached to the
   tree, `r R s S C D Y x X`.
 - Search: `/ ? n N * # g* g# gn gN` with offsets and `;`, on a Vim-compatible regex
   engine (`\v \m \M \V`, `\{}`, look-around, `\zs`, `\_x`, collections, ...).
-- Ex commands: ranges (`%`, `.`, `$`, `'<,'>`, `/pat/`, `;`, offsets), `:d :y
-  :pu :m :t :j :> :< :s :g :v :normal :undo :redo :set :r :w :q :wq :x :e`.
+- Ex commands: ranges (`%`, `.`, `$`, `'<,'>`, `'a`, `/pat/`, `;`, offsets), `:d :y
+  :pu :m :t :j :> :< :k :mark :s :g :v :normal :undo :redo :set :r :w :q :wq :x :e`.
+- Lowercase marks `a`-`z` (`m{a-z}`, `'a`, `` `a ``).
 - Wrapping display, ruler, bracketed paste.
 
 ## Where rvim differs from Vim
@@ -37,9 +38,13 @@ use:
 
 **Missing features**
 
-- One buffer and one window: no `:split`, `:vsplit`, tabs, `:ls`, `:b`,
-  marks (`m'`, `` ` ``) or the jumplist. `:r file` works, but `:r !cmd` does
-  not. Macros (`q`, `@`) work; an error ends a running macro as in Vim.
+- One buffer and one window: no `:split`, `:vsplit`, tabs, `:ls`, `:b` or the
+  jumplist. `:r file` works, but `:r !cmd` does not. Macros (`q`, `@`) work; an
+  error ends a running macro as in Vim.
+- Marks: lowercase marks work (`ma`, `'a`, `` `a ``, as operator motions, `:k`,
+  `:mark`, `:'a` addresses, and they follow edits and undo). Missing: uppercase
+  marks, `m'` `` m` `` `m[` `m]` `m<` `m>`, `'[` `']` `` `[ `] ``, `''` and
+  `` `` `` (both need the jumplist), `'<` and `'>` as motions, and `:marks`.
 - No scrolling commands (`<C-f> <C-b> <C-d> <C-u> <C-e> <C-y> zt zz zb`), no
   `H M L`, no `scrolloff`.
 - The `:`, `/` and `?` command lines have Vim's editing keys (`<Left> <Right>

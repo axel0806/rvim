@@ -88,6 +88,11 @@ pub(crate) enum Motion {
         fwd: bool,
         whole: bool,
     },
+    /// `'{a-z}` (linewise, first non-blank) and `` `{a-z} `` (exact).
+    Mark {
+        mark: char,
+        linewise: bool,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -130,6 +135,8 @@ pub(crate) enum Simple {
     Visual(VisualMode),
     Reselect,
     CmdLine,
+    /// `m{a-z}`.
+    SetMark(char),
     /// `&` (`:s`) and `g&` (`:%s//~/&`).
     Ampersand {
         all: bool,
@@ -273,6 +280,19 @@ pub(crate) fn parse_motion(k: &[Key]) -> Res<(Motion, usize)> {
                     },
                     1 + n,
                 ))),
+            };
+        }
+        Key::Char(q @ ('\'' | '`')) => {
+            return match k.get(1) {
+                None => Ok(None),
+                Some(Key::Char(c)) if c.is_ascii_lowercase() => Ok(Some((
+                    Motion::Mark {
+                        mark: *c,
+                        linewise: q == '\'',
+                    },
+                    2,
+                ))),
+                _ => Err(()),
             };
         }
         Key::Char(f @ ('f' | 'F' | 't' | 'T')) => {
@@ -578,6 +598,13 @@ fn parse_body(k: &[Key], visual: bool) -> Res<(Body, Option<usize>, usize)> {
         Key::Ctrl('g') => return simple(Simple::FileInfo, 1),
         Key::Ctrl('l') => return simple(Simple::Redraw, 1),
         Key::Char(':') => return simple(Simple::CmdLine, 1),
+        Key::Char('m') => {
+            return match k.get(1) {
+                None => Ok(None),
+                Some(Key::Char(c)) if c.is_ascii_lowercase() => simple(Simple::SetMark(*c), 2),
+                _ => Err(()),
+            };
+        }
         _ => {}
     }
 
@@ -976,6 +1003,25 @@ impl Editor {
                 self.last_find = Some((c, fwd, till));
                 info.inclusive = fwd;
                 self.cursor.col = searchc(&self.buf, self.cursor, c, fwd, till, count1, true)?;
+            }
+            Motion::Mark { mark, linewise } => {
+                let Some(p) = self.buf.mark(mark) else {
+                    self.error("E20: Mark not set");
+                    return None;
+                };
+                // Column clamping: Normal mode clamps the cursor after the
+                // command, an operator may take the end of the line.
+                if linewise {
+                    info.linewise = true;
+                    self.cursor.line = p.line.min(self.buf.last_line());
+                    self.fnb();
+                } else {
+                    // Like Vim's nv_cursormark(): a backtick motion also
+                    // uses register 1 when it deletes.
+                    info.use_reg_one = true;
+                    let line = p.line.min(self.buf.last_line());
+                    self.cursor = Pos::new(line, p.col.min(self.buf.line_len(line)));
+                }
             }
             Motion::RepeatFind { reverse } => {
                 let (c, fwd, till) = self.last_find?;
@@ -1420,6 +1466,7 @@ impl Editor {
                 };
                 self.cmd_start(crate::cmdline::PromptKind::Ex, Mode::Normal, &initial);
             }
+            Simple::SetMark(c) => self.buf.set_mark(c, self.cursor),
             Simple::Record(c) => self.start_recording(c),
             Simple::Macro(c) => self.exec_register(c, count1),
             Simple::Ampersand { all } => self.execute_ex(if all { "%s//~/&" } else { "s" }),

@@ -259,6 +259,8 @@ impl Editor {
             self.ex_copymove(range, p.arg, true)?;
         } else if abbrev(n, "copy", 2) || n == "t" {
             self.ex_copymove(range, p.arg, false)?;
+        } else if n == "k" || abbrev(n, "mark", 2) {
+            self.ex_mark(range, p.arg)?;
         } else if abbrev(n, "join", 1) {
             self.ex_join(range, p.bang, p.arg)?;
         } else if n == ">" || n == "<" {
@@ -420,6 +422,11 @@ impl Editor {
                     Some('<') | Some('>') => {
                         let (a, b) = self.visual_lines_exact(m == Some('<'))?;
                         line = Some(if m == Some('<') { a } else { b } as i64);
+                        rest = &rest[2..];
+                    }
+                    Some(c @ 'a'..='z') => {
+                        let p = self.buf.mark(c).ok_or("E20: Mark not set")?;
+                        line = Some(p.line as i64 + 1);
                         rest = &rest[2..];
                     }
                     Some(_) => return Err("E20: Mark not set".into()),
@@ -796,6 +803,10 @@ impl Editor {
                 .map(|l| self.buf.line_string(l))
                 .collect();
             self.u_save(0, self.buf.line_count(), false);
+            // Marks on the moved lines go with them (Vim's do_move()): they
+            // are taken out here and put back where the lines land.
+            let first = r.line1 - 1;
+            let carried = self.buf.take_marks_in(first, r.line2 - 1);
             if dest >= r.line2 {
                 for (i, l) in moved.iter().enumerate() {
                     self.buf.insert_line(dest + i, l);
@@ -808,6 +819,11 @@ impl Editor {
                     self.buf.insert_line(dest + i, l);
                 }
                 self.cursor.line = dest + n - 1;
+            }
+            let new_first = if dest >= r.line2 { dest - n } else { dest };
+            for (mark, p) in carried {
+                self.buf
+                    .set_mark(mark, Pos::new(new_first + p.line - first, p.col));
             }
             if n > 2 {
                 self.info(format!("{n} lines moved"));
@@ -827,6 +843,29 @@ impl Editor {
         }
         self.uline = None;
         self.cursor.col = first_non_blank(&self.buf, self.cursor.line, true);
+        Ok(())
+    }
+
+    /// `:[range]k{a-z}` and `:[range]mark {a-z}`: sets the mark on the last
+    /// line of the range, at its first non-blank (Vim's ex_mark()).
+    fn ex_mark(&mut self, r: Range, arg: &str) -> ExRes<()> {
+        let arg = arg.trim_end();
+        let mut chars = arg.chars();
+        let Some(c) = chars.next() else {
+            return Err("E471: Argument required".into());
+        };
+        if chars.next().is_some() {
+            return Err(format!("E488: Trailing characters: {arg}"));
+        }
+        if !c.is_ascii_lowercase() {
+            return Err("E191: Argument must be a letter or forward/backward quote".into());
+        }
+        let line = r.line2 - 1;
+        let col = first_non_blank(&self.buf, line, true);
+        self.buf.set_mark(c, Pos::new(line, col));
+        // Vim's beginline() on the temporary cursor sets the desired column,
+        // so `:k` resets it even though the cursor does not move.
+        self.keep_curswant = false;
         Ok(())
     }
 
@@ -1318,12 +1357,34 @@ impl Editor {
                             let mut new_lines = std::mem::take(&mut out_lines);
                             new_lines.push(produced.iter().collect());
                             self.u_save(lnum, n_old, false);
+                            // Marks on the joined lines are kept, as in Vim's
+                            // do_sub(): a mark on the first line stays, the
+                            // others move to the joined line.
+                            let last_new = lnum + new_lines.len() - 1;
+                            let moved: Vec<(char, Pos)> = self
+                                .buf
+                                .take_marks_in(lnum, end_l)
+                                .into_iter()
+                                .map(|(c, p)| {
+                                    let at = if p.line == lnum {
+                                        p
+                                    } else if p.line == end_l && p.col >= m.end.1 {
+                                        Pos::new(last_new, plen + p.col - m.end.1)
+                                    } else {
+                                        Pos::new(last_new, plen)
+                                    };
+                                    (c, at)
+                                })
+                                .collect();
                             // Insert the new lines first so that the buffer
                             // never becomes empty.
                             for (i, l) in new_lines.iter().enumerate() {
                                 self.buf.insert_line(lnum + i, l);
                             }
                             self.buf.delete_lines(lnum + new_lines.len(), n_old);
+                            for (c, p) in moved {
+                                self.buf.set_mark(c, p);
+                            }
                             let added = new_lines.len();
                             line2 = (line2 + added).saturating_sub(n_old);
                             lnum += added - 1;
@@ -1472,6 +1533,9 @@ fn is_known_long(name: &str) -> bool {
             | "move"
             | "mo"
             | "mov"
+            | "ma"
+            | "mar"
+            | "mark"
             | "copy"
             | "co"
             | "cop"

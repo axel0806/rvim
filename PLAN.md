@@ -15,9 +15,9 @@ clean at the last commit.
 | Milestone | State |
 |---|---|
 | 1 Core, 2 Vim grammar | Done |
-| 3 Search and Ex | ~95%. Left: `:s` flag `c` and `\=`, `:k` |
+| 3 Search and Ex | ~95%. Left: `:s` flag `c` and `\=` |
 | 4 Foundation | ~70%. Left: the Document/Window/Editor split (the biggest item; see "Foundation"), kitty keyboard protocol, cell-level diff redraw, `:setlocal`/`:setglobal`, recovery on terminal close (SIGHUP) |
-| 5 Windows and buffers | ~10%. Done: macros (`q`, `@`, `@@`, `@:`). Left: splits, buffer list, marks (and `'a` in Ex addresses), jumplist, scrolling commands, `scrolloff`, swap files |
+| 5 Windows and buffers | ~15%. Done: macros (`q`, `@`, `@@`, `@:`), lowercase marks (`m{a-z}`, `'a`, `` `a ``, `:k`, `:mark`, `'a` addresses). Left: splits, buffer list, the other marks (uppercase, `''`, `'[`/`']`, `'<`/`'>` motions), jumplist, scrolling commands, `scrolloff`, swap files |
 | 6 Modern editing experience | 0%. Not started (hlsearch, incsearch, syntax, line numbers, config file, palette, mouse) |
 | 7 Agent integration | 0%. Not started (file-change reload as an undo step, diff view, ACP connector, agent detection). Research is in "Detecting and connecting to agents" |
 | 8 Prediction | 0%. Not started |
@@ -31,19 +31,18 @@ work), panic recovery files (`recovery.rs`), the channel-based event loop
 macros (`macros.rs`), `/` and `?` prompts with the same editing keys, `<C-r>`
 and history (also in `cmdline.rs`), `gn`/`gN` (`current_search()` in
 `search.rs`), `:r`. Search-prompt editing and history landed in commit
-e556a0b.
+e556a0b. Lowercase marks `a`-`z` (kept in `buffer.rs`, followed through edits
+by the buffer's line methods, saved and restored by undo in `undo.rs`).
 
 **In progress** (as of 2026-11-01; maintained by the orchestrator, and an
 entry is removed when its branch lands on main):
 
-- Marks (`m`, `'`, `` ` ``, `:k`, `:mark`, `'a` in Ex addresses): agent branch
-  `worktree-agent-a4bb7f1ec2a17e76d`, being built.
 - `:s` flag `c` (confirm): being built by a Haiku agent (branch name pending).
 - Scrolling (`<C-f> <C-b> <C-d> <C-u> <C-e> <C-y> zt zz zb H M L`,
   `scrolloff`): branch `worktree-agent-aa9509a3085f2e7dc`, being built.
 
-**Suggested order for what is left:** (1) Document/Window split, (2) marks +
-splits + buffers + scrolling, (3) the ACP connector and file-change reload
+**Suggested order for what is left:** (1) Document/Window split, (2) splits +
+buffers + scrolling, (3) the ACP connector and file-change reload
 (milestone 7), because those are the goals beyond Vim, (4) hlsearch/incsearch/
 syntax, (5) prediction. Cut a new release (`git tag v0.1.0-alpha.N`) when a
 milestone lands; `.github/workflows/release.yml` builds the binaries.
@@ -99,7 +98,7 @@ and the Vim contract").
 | `text.rs` | Display widths and virtual columns (tabstop 8, `^X` control chars, wide chars) |
 | `motion.rs` | Positions and motions; word motions are ports of Vim's `fwd_word`/`bck_word`/`end_word` with its `inc`/`dec` cursor walk and `utf_class` table |
 | `editor.rs` | Mode state machine (Normal, Insert, Command-line), counts, desired column (`curswant`) |
-| `ex.rs` | Ex commands: ranges (`%`, `.`, `$`, marks `'<` `'>`, `/pat/`, `;`), file commands, `:d :y :pu :m :t :j :> :<`, `:s` (port of `do_sub`), `:g`/`:v`, `:normal`, `:set` |
+| `ex.rs` | Ex commands: ranges (`%`, `.`, `$`, marks `'<` `'>` and `'a`, `/pat/`, `;`), file commands, `:k`/`:mark`, `:d :y :pu :m :t :j :> :<`, `:s` (port of `do_sub`), `:g`/`:v`, `:normal`, `:set` |
 | `normal.rs`, `ops.rs`, `textobject.rs`, `register.rs`, `undo.rs` | Normal/Visual parsing and motions, operators, text objects, registers, undo tree |
 | `regex.rs` | Vim regex (`\v \m \M \V`, `\{}`, look-around, `\zs`, `\_x`, collections, `\%` items) as a backtracking matcher over buffer lines |
 | `search.rs` | Port of `searchit()` / `do_search()` (offsets, `;`, `cpo-c`, wrapscan), `*`/`#` word lookup |
@@ -156,16 +155,17 @@ What the revised milestones fix, as the code stands today:
    Vim). Done since: `gn`/`gN` in Normal, Visual and operator-pending mode
    (with `.` repeat as typed, like Vim's `prep_redo` for `gn`), and
    `:[range]r[ead] {file}` (`:r !cmd` is not done). Left: `:s` flags `c` and
-   `\=` expressions, `:k`.
-   Marks in Ex addresses (`'a`) move to milestone 5 with the marks.
+   `\=` expressions.
+   Marks in Ex addresses (`'a`) are done with the marks (milestone 5).
 4. **Foundation (in progress).** Done: bracketed paste, Alt/F-keys/Insert/Shift-Tab, Visual area drawn via highlight groups, row-level diff redraw, options registry (`autoindent`, `expandtab`, `shiftwidth`), panic recovery files, channel-based event loop with an input thread. Left: the Document/Window/Editor split, kitty keyboard protocol, cell-level diff, `:setlocal`, SIGHUP recovery. Original description: Restructure before adding more features, because windows,
    agents and prediction all depend on it. Order, each step landing with the
    differential tests green: (a) Document/Window/Editor split, (b) internal
    event loop, (c) styled frame with the Visual area drawn, (d) diff redraw,
    (e) input (bracketed paste, modifiers, kitty protocol), (f) options
    registry, (g) emergency recovery files. Details in "Foundation".
-5. **Windows and buffers.** (macros `q`/`@` are done.) Splits, buffer list, marks (also in Ex
-   addresses), jumplist, macros (`q @`), `<C-f> <C-b> <C-d> <C-u> zt zz zb
+5. **Windows and buffers.** (Macros `q`/`@` and lowercase marks are done.)
+   Splits, buffer list, the remaining marks (uppercase, `''`, `'[`/`']`,
+   `'<`/`'>` as motions), jumplist, `<C-f> <C-b> <C-d> <C-u> zt zz zb
    H M L`, 'scrolloff'; then swap files (see "Recovery").
 6. **Modern editing experience.** hlsearch, incsearch, matching parens,
    syntax highlighting (tree-sitter), line numbers, a config file, a command
@@ -611,5 +611,14 @@ have unit tests (for layout, on the styled `Frame` once milestone 4 lands).
   enabled in `main.rs`, handled by `Editor::paste`, and tested in
   `tests/paste.rs`; step (e) of milestone 4 still needs modifiers and the
   kitty protocol.)
+- Marks: only lowercase marks exist. Missing: `mA`-`mZ` (file marks), `m'`,
+  `` m` ``, `m[ m] m< m>`, `'[ ']` and `` `[ `] `` as motions, `''` and
+  `` `` `` (both need the jumplist; a jump does not set the previous-context
+  mark), `'<` and `'>` as Normal-mode motions, `:marks` and `:delmarks`. The
+  Visual marks stay in `Editor::last_visual` and do not follow edits.
+- Marks have no column adjustment for single-line edits, as in Vim (`x`, `D`,
+  `r`, insert-mode typing do not move them). Joins (`J`, `gJ`, `:j`, `<BS>`
+  and `<Del>` at a line end) and `:s` with a line break in the pattern keep
+  them on the joined line with Vim's column mapping.
 - The test harness cannot test state carried between cases (last search,
   last `:s`, `.`), since rvim starts each case fresh and Vim does not.

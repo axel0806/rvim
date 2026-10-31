@@ -1163,6 +1163,11 @@ impl Editor {
         let mut endcurr2: Option<char> = None;
         let mut sumsize = 0usize;
         let mut currsize = 0usize;
+        // Where the spaces before each joined line start in the result, and
+        // how much leading white space was removed from it (for the marks on
+        // those lines).
+        let mut space_starts = vec![0usize; count];
+        let mut removed = vec![0usize; count];
         for (t, sp) in spaces.iter_mut().enumerate() {
             let mut curr = self.line_vec(first + t);
             if t == 0 {
@@ -1170,6 +1175,7 @@ impl Editor {
             }
             if insert_space && t > 0 {
                 let skip = curr.iter().take_while(|&&c| c == ' ' || c == '\t').count();
+                removed[t] = skip;
                 curr.drain(..skip);
                 if !curr.is_empty() && curr[0] != ')' && sumsize != 0 && endcurr1 != Some('\t') {
                     if endcurr1 == Some(' ') {
@@ -1184,6 +1190,7 @@ impl Editor {
                 }
             }
             currsize = curr.len();
+            space_starts[t] = sumsize;
             sumsize += currsize + *sp;
             endcurr1 = None;
             endcurr2 = None;
@@ -1205,6 +1212,25 @@ impl Editor {
         }
         self.set_line_vec(first, &new);
         self.op_end = Pos::new(first, sumsize);
+        // Marks on the joined lines move to the joined line, with the column
+        // mapping of Vim's do_join(): `amount` shifts columns after the
+        // inserted spaces, and columns inside the removed white space go to
+        // the start of the spaces.
+        for t in 1..count {
+            let s = space_starts[t] as isize;
+            let r = removed[t] as isize - spaces[t] as isize;
+            let amount = s - r;
+            self.buf.move_marks_to_line(first + t, first, |k| {
+                let k = k as isize;
+                if amount < 0 && k <= -amount {
+                    0
+                } else if k < r {
+                    (amount + r) as usize
+                } else {
+                    (k + amount) as usize
+                }
+            });
+        }
         self.buf.delete_lines(first + 1, count - 1);
         self.cursor = Pos::new(first, col);
         self.check_cursor_col();
