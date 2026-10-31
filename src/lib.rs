@@ -15,6 +15,7 @@ pub mod options;
 pub mod recovery;
 pub mod regex;
 pub mod register;
+mod scroll;
 mod search;
 pub mod text;
 pub mod textobject;

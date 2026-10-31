@@ -1,18 +1,13 @@
-//! Turns editor state into screen rows: scrolling, line wrapping ('wrap' is
-//! on), `~` filler rows, `@` rows for a partly visible last line, and the
-//! command/ruler line. Pure functions so they can be tested without a
-//! terminal.
+//! Turns editor state into screen rows: line wrapping ('wrap' is on), `~`
+//! filler rows, `@` rows for a partly visible last line, and the command/
+//! ruler line. The window's top line and size are part of the `Editor` (see
+//! scroll.rs), so `frame` is a pure function of the editor state and can be
+//! tested without a terminal.
 
 use crate::editor::{Editor, Mode, VisualMode};
 use crate::text::{self, char_display, char_width};
 use ropey::RopeSlice;
 use unicode_width::UnicodeWidthChar;
-
-#[derive(Default)]
-pub struct View {
-    /// First buffer line shown.
-    pub top: usize,
-}
 
 pub struct Frame {
     /// `height - 1` text rows, each exactly `width` cells wide.
@@ -178,145 +173,131 @@ fn rows_needed(lay: &Layout, width: usize) -> usize {
     lay.rows.len().max(end / width + 1)
 }
 
-impl View {
-    /// Scrolls so the whole cursor line is visible.
-    pub fn scroll(&mut self, ed: &Editor, width: usize, text_height: usize) {
-        let cur = ed.cursor().line;
-        if cur < self.top {
-            self.top = cur;
-            return;
-        }
-        let rows: Vec<usize> = (self.top..=cur)
-            .map(|l| rows_needed(&layout(ed.buf.line(l), width), width))
-            .collect();
-        let mut total: usize = rows.iter().sum();
-        let mut i = 0;
-        while total > text_height && self.top < cur {
-            total -= rows[i];
-            i += 1;
-            self.top += 1;
-        }
-    }
+/// Screen rows a buffer line takes when wrapped to `width` cells.
+pub fn line_height(line: RopeSlice, width: usize) -> usize {
+    let width = width.max(1);
+    rows_needed(&layout(line, width), width)
+}
 
-    pub fn frame(&mut self, ed: &Editor, width: usize, height: usize) -> Frame {
-        let width = width.max(1);
-        let text_height = height.saturating_sub(1).max(1);
-        self.scroll(ed, width, text_height);
-
-        let mut rows = Vec::with_capacity(text_height);
-        let mut hl = vec![vec![Hl::Normal; width]; text_height];
-        let mut cursor = (0, 0);
-        let mut line = self.top;
-        while rows.len() < text_height && line < ed.buf.line_count() {
-            let lay = layout(ed.buf.line(line), width);
-            let need = rows_needed(&lay, width);
-            if line != self.top && rows.len() + need > text_height {
-                while rows.len() < text_height {
-                    hl[rows.len()].fill(Hl::NonText);
-                    rows.push(pad("@".into(), width));
+/// Lays out the window of `ed`: its size is the editor's screen size and it
+/// starts at the editor's top line. The cursor must already be in view (the
+/// editor keeps it there after every key).
+pub fn frame(ed: &Editor) -> Frame {
+    let width = ed.screen_cols.max(1);
+    let height = ed.screen_rows;
+    let text_height = height.saturating_sub(1).max(1);
+    let mut rows = Vec::with_capacity(text_height);
+    let mut hl = vec![vec![Hl::Normal; width]; text_height];
+    let mut cursor = (0, 0);
+    let mut line = ed.top;
+    while rows.len() < text_height && line < ed.buf.line_count() {
+        let lay = layout(ed.buf.line(line), width);
+        let need = rows_needed(&lay, width);
+        if line != ed.top && rows.len() + need > text_height {
+            while rows.len() < text_height {
+                hl[rows.len()].fill(Hl::NonText);
+                rows.push(pad("@".into(), width));
+            }
+            break;
+        }
+        if line == ed.cursor().line {
+            let col = ed.cursor().col.min(lay.starts.len() - 1);
+            let mut cell = lay.starts[col];
+            let on_tab = ed.buf.char_at(line, col) == Some('\t');
+            if on_tab && ed.mode() != Mode::Insert {
+                cell += lay.widths[col] - 1;
+            }
+            cursor = (cell % width, rows.len() + cell / width);
+        }
+        let base = rows.len();
+        for (c0, c1) in visual_cells(ed, line, &lay) {
+            for c in c0..c1 {
+                if base + c / width < text_height {
+                    hl[base + c / width][c % width] = Hl::Visual;
                 }
+            }
+        }
+        for r in 0..need {
+            if rows.len() == text_height {
                 break;
             }
-            if line == ed.cursor().line {
-                let col = ed.cursor().col.min(lay.starts.len() - 1);
-                let mut cell = lay.starts[col];
-                let on_tab = ed.buf.char_at(line, col) == Some('\t');
-                if on_tab && ed.mode() != Mode::Insert {
-                    cell += lay.widths[col] - 1;
-                }
-                cursor = (cell % width, rows.len() + cell / width);
-            }
-            let base = rows.len();
-            for (c0, c1) in visual_cells(ed, line, &lay) {
-                for c in c0..c1 {
-                    if base + c / width < text_height {
-                        hl[base + c / width][c % width] = Hl::Visual;
-                    }
-                }
-            }
-            for r in 0..need {
-                if rows.len() == text_height {
-                    break;
-                }
-                let text = lay.rows.get(r).cloned().unwrap_or_default();
-                rows.push(pad(text, width));
-            }
-            line += 1;
+            let text = lay.rows.get(r).cloned().unwrap_or_default();
+            rows.push(pad(text, width));
         }
-        let filler_from = rows.len();
-        while rows.len() < text_height {
-            hl[rows.len()].fill(Hl::NonText);
-            rows.push(pad("~".into(), width));
-        }
-
-        // `line` is now the first buffer line not fully shown.
-        let below = ed.buf.line_count() - line;
-        let (status, status_is_error) = self.status_line(ed, width, &mut cursor, height, below);
-        Frame {
-            rows,
-            status,
-            status_is_error,
-            hl,
-            filler_from,
-            cursor,
-        }
+        line += 1;
+    }
+    let filler_from = rows.len();
+    while rows.len() < text_height {
+        hl[rows.len()].fill(Hl::NonText);
+        rows.push(pad("~".into(), width));
     }
 
-    fn status_line(
-        &self,
-        ed: &Editor,
-        width: usize,
-        cursor: &mut (usize, usize),
-        height: usize,
-        below: usize,
-    ) -> (String, bool) {
-        let bottom = height.saturating_sub(1);
-        let typed = (ed.mode() == Mode::CmdLine)
-            .then(|| format!("{}{}", ed.cmdline_prompt(), ed.cmdline()));
-        if let Some(text) = typed {
-            // The cursor sits at the edit position of the command line.
-            let upto = 1 + ed.cmdline_pos();
-            let used: usize = text.chars().take(upto).map(|c| char_width(c, 0)).sum();
-            *cursor = (used.min(width - 1), bottom);
-            return (pad(truncate(&text, width), width), false);
-        }
-        let (left, error) = match (ed.mode(), ed.message()) {
-            (Mode::Insert, _) => ("-- INSERT --".to_string(), false),
-            (_, Some(m)) => (m.text.clone(), m.error),
-            _ => (String::new(), false),
-        };
-        let ruler = self.ruler(ed, below);
-        let ruler_col = width.saturating_sub(18);
-        let mut s = truncate(&left, ruler_col.saturating_sub(1).max(1));
-        s = pad(s, ruler_col);
-        s.push_str(&ruler);
-        (pad(truncate(&s, width), width), error)
+    // `line` is now the first buffer line not fully shown.
+    let below = ed.buf.line_count() - line;
+    let (status, status_is_error) = status_line(ed, width, &mut cursor, height, below);
+    Frame {
+        rows,
+        status,
+        status_is_error,
+        hl,
+        filler_from,
+        cursor,
     }
+}
 
-    /// Vim's ruler: `line,col[-vcol]` and the position in the file.
-    fn ruler(&self, ed: &Editor, below: usize) -> String {
-        let cur = ed.cursor();
-        let line = ed.buf.line(cur.line);
-        let col = if line.len_chars() == 0 {
-            "0-1".to_string()
+fn status_line(
+    ed: &Editor,
+    width: usize,
+    cursor: &mut (usize, usize),
+    height: usize,
+    below: usize,
+) -> (String, bool) {
+    let bottom = height.saturating_sub(1);
+    let typed =
+        (ed.mode() == Mode::CmdLine).then(|| format!("{}{}", ed.cmdline_prompt(), ed.cmdline()));
+    if let Some(text) = typed {
+        // The cursor sits at the edit position of the command line.
+        let upto = 1 + ed.cmdline_pos();
+        let used: usize = text.chars().take(upto).map(|c| char_width(c, 0)).sum();
+        *cursor = (used.min(width - 1), bottom);
+        return (pad(truncate(&text, width), width), false);
+    }
+    let (left, error) = match (ed.mode(), ed.message()) {
+        (Mode::Insert, _) => ("-- INSERT --".to_string(), false),
+        (_, Some(m)) => (m.text.clone(), m.error),
+        _ => (String::new(), false),
+    };
+    let ruler = ruler(ed, below);
+    let ruler_col = width.saturating_sub(18);
+    let mut s = truncate(&left, ruler_col.saturating_sub(1).max(1));
+    s = pad(s, ruler_col);
+    s.push_str(&ruler);
+    (pad(truncate(&s, width), width), error)
+}
+
+/// Vim's ruler: `line,col[-vcol]` and the position in the file.
+fn ruler(ed: &Editor, below: usize) -> String {
+    let cur = ed.cursor();
+    let line = ed.buf.line(cur.line);
+    let col = if line.len_chars() == 0 {
+        "0-1".to_string()
+    } else {
+        let byte = line.slice(..cur.col.min(line.len_chars())).len_bytes() + 1;
+        let vcol = ed.cursor_vcol() + 1;
+        if byte == vcol {
+            format!("{byte}")
         } else {
-            let byte = line.slice(..cur.col.min(line.len_chars())).len_bytes() + 1;
-            let vcol = ed.cursor_vcol() + 1;
-            if byte == vcol {
-                format!("{byte}")
-            } else {
-                format!("{byte}-{vcol}")
-            }
-        };
-        let above = self.top;
-        let pos = match (above, below) {
-            (0, 0) => "All".to_string(),
-            (0, _) => "Top".to_string(),
-            (_, 0) => "Bot".to_string(),
-            _ => format!("{}%", above * 100 / (above + below)),
-        };
-        format!("{:<14}{pos}", format!("{},{col}", cur.line + 1))
-    }
+            format!("{byte}-{vcol}")
+        }
+    };
+    let above = ed.top;
+    let pos = match (above, below) {
+        (0, 0) => "All".to_string(),
+        (0, _) => "Top".to_string(),
+        (_, 0) => "Bot".to_string(),
+        _ => format!("{}%", above * 100 / (above + below)),
+    };
+    format!("{:<14}{pos}", format!("{},{col}", cur.line + 1))
 }
 
 fn truncate(s: &str, width: usize) -> String {
@@ -340,12 +321,12 @@ mod tests {
     #[test]
     fn wraps_and_scrolls() {
         let mut ed = Editor::from_text("abcdefghij\nx\ny\nz");
-        let mut v = View::default();
-        let f = v.frame(&ed, 4, 4);
+        ed.set_screen_size(4, 4);
+        let f = frame(&ed);
         assert_eq!(f.rows, ["abcd", "efgh", "ij  "]);
         ed.feed("G");
-        let f = v.frame(&ed, 4, 4);
-        assert_eq!(v.top, 1);
+        let f = frame(&ed);
+        assert_eq!(ed.top, 1);
         assert_eq!(f.rows, ["x   ", "y   ", "z   "]);
         assert_eq!(f.cursor, (0, 2));
     }
@@ -366,8 +347,9 @@ mod tests {
 
     fn frame_after(keys: &str) -> Frame {
         let mut ed = Editor::from_text("abcdef\nxy\n\nlast");
+        ed.set_screen_size(8, 6);
         ed.feed(keys);
-        View::default().frame(&ed, 8, 6)
+        frame(&ed)
     }
 
     #[test]
@@ -398,11 +380,11 @@ mod tests {
     #[test]
     fn tab_cursor_and_partial_lines() {
         let mut ed = Editor::from_text("\tx\nabcdefghijklmnop");
-        let mut v = View::default();
-        let f = v.frame(&ed, 10, 3);
+        ed.set_screen_size(10, 3);
+        let f = frame(&ed);
         assert_eq!(f.rows, ["        x ", "@         "]);
         assert_eq!(f.cursor, (7, 0));
         ed.feed("i");
-        assert_eq!(v.frame(&ed, 10, 3).cursor, (0, 0));
+        assert_eq!(frame(&ed).cursor, (0, 0));
     }
 }

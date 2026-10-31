@@ -104,9 +104,13 @@ fn vim_key_string(keys: &str) -> String {
 const SCRIPT_BODY: &str = r#"
 let s:regs = ['"', '0', '1', '2', '3', '-', 'a', 'b']
 let s:out = []
+" Screen size first: rvim's Editor assumes Vim's default without a terminal.
+call add(s:out, 'S ' . &lines . ' ' . &columns)
 for [s:lines, s:keys] in g:cases
   silent! set autoindent& expandtab& shiftwidth& softtabstop& smarttab& tabstop&
   silent! set ignorecase& smartcase& wrapscan& scrolloff& hlsearch& incsearch&
+  " 'scroll&' would set 0, which scrolls nothing with CTRL-D; the default is half the window.
+  silent! execute 'set scroll=' . (winheight(0) / 2)
   silent! call histdel(':')
   silent! call histdel('/')
   let s:old = bufnr('%')
@@ -177,6 +181,13 @@ pub fn run_vim(cases: &[(&str, &str)]) -> Option<Vec<Outcome>> {
 
     // Not `lines()`: a register line ending in `` must keep it.
     let mut lines = out.split_terminator('\n');
+    // Scrolling tests assume the screen Vim has without a terminal (24 lines,
+    // 80 columns; 23 text rows). A different environment fails loudly here.
+    let geometry = lines.next().unwrap_or_default();
+    assert_eq!(
+        geometry, "S 24 80",
+        "reference Vim has a different screen size; rvim's Editor defaults to 24x80"
+    );
     let mut outcomes = Vec::new();
     while let Some(header) = lines.next() {
         let nums: Vec<usize> = header

@@ -8,6 +8,7 @@ use crate::motion::{
     self, Cur, Pos, findmatchlimit, findpar, findsent, first_non_blank, gchar, searchc,
 };
 use crate::register::valid_name;
+use crate::scroll::ScrollCmd;
 use crate::text;
 use crate::textobject::{self, ObjOut, VisualCtx};
 
@@ -66,6 +67,8 @@ pub(crate) enum Motion {
     Sent {
         fwd: bool,
     },
+    /// `H`, `M` or `L`: linewise, to the first non-blank.
+    ScreenLine(char),
     Find {
         c: char,
         fwd: bool,
@@ -158,6 +161,8 @@ pub(crate) enum Simple {
     Gn {
         fwd: bool,
     },
+    /// CTRL-E/Y/F/B/D/U and `zt zz zb z<CR> z. z-`.
+    Scroll(ScrollCmd),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -252,6 +257,7 @@ pub(crate) fn parse_motion(k: &[Key]) -> Res<(Motion, usize)> {
         Key::Char('$') | Key::End => Motion::Dollar,
         Key::Char('|') => Motion::Bar,
         Key::Char(c @ ('w' | 'W' | 'b' | 'B' | 'e' | 'E')) => Motion::Word(c),
+        Key::Char(c @ ('H' | 'M' | 'L')) => Motion::ScreenLine(c),
         Key::Char('G') => Motion::Goto { first: false },
         Key::Char('%') => Motion::Percent,
         Key::Char('{') => Motion::Para { fwd: false },
@@ -604,6 +610,40 @@ fn parse_body(k: &[Key], visual: bool) -> Res<(Body, Option<usize>, usize)> {
                 Some(Key::Char(c)) if c.is_ascii_lowercase() => simple(Simple::SetMark(*c), 2),
                 _ => Err(()),
             };
+        }
+        Key::Ctrl('e') => return simple(Simple::Scroll(ScrollCmd::LineDown), 1),
+        Key::Ctrl('y') => return simple(Simple::Scroll(ScrollCmd::LineUp), 1),
+        Key::Ctrl('f') => return simple(Simple::Scroll(ScrollCmd::PageDown), 1),
+        Key::Ctrl('b') => return simple(Simple::Scroll(ScrollCmd::PageUp), 1),
+        Key::Ctrl('d') => return simple(Simple::Scroll(ScrollCmd::HalfDown), 1),
+        Key::Ctrl('u') => return simple(Simple::Scroll(ScrollCmd::HalfUp), 1),
+        Key::Char('z') => {
+            let cmd = match k.get(1) {
+                None => return Ok(None),
+                Some(Key::Enter) => ScrollCmd::Top {
+                    first_non_blank: true,
+                },
+                Some(Key::Char(c)) => match c {
+                    't' => ScrollCmd::Top {
+                        first_non_blank: false,
+                    },
+                    'z' => ScrollCmd::Middle {
+                        first_non_blank: false,
+                    },
+                    'b' => ScrollCmd::Bottom {
+                        first_non_blank: false,
+                    },
+                    '.' => ScrollCmd::Middle {
+                        first_non_blank: true,
+                    },
+                    '-' => ScrollCmd::Bottom {
+                        first_non_blank: true,
+                    },
+                    _ => return Err(()),
+                },
+                _ => return Err(()),
+            };
+            return simple(Simple::Scroll(cmd), 2);
         }
         _ => {}
     }
@@ -960,6 +1000,11 @@ impl Editor {
                 }
             }
             Motion::Word(c) => return self.word_motion(c, count1, op),
+            Motion::ScreenLine(which) => {
+                info.linewise = true;
+                self.cursor.line = self.screen_line(which, count1);
+                self.fnb();
+            }
             Motion::Goto { first } => {
                 info.linewise = true;
                 let line = match count0 {
@@ -1481,6 +1526,7 @@ impl Editor {
                 self.file_info();
             }
             Simple::Redraw => self.keep_curswant = true,
+            Simple::Scroll(cmd) => self.scroll_cmd(cmd, count),
             Simple::Esc => {
                 self.keep_curswant = true;
                 if self.is_visual() {

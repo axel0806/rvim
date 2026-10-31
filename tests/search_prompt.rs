@@ -3,7 +3,7 @@
 //! into a prompt), what is drawn while the prompt is open, and history
 //! carried over many prompts. Editing keys are in tests/compat_m4_cmdline.rs.
 
-use rvim::view::{Hl, View};
+use rvim::view::{Hl, frame};
 use rvim::{Editor, Mode, VisualMode};
 
 const TEXT: &str = "foo bar\nqux foo";
@@ -49,7 +49,8 @@ fn the_visual_area_is_drawn_while_the_pattern_is_typed() {
     assert_eq!(ed.mode(), Mode::CmdLine);
     assert_eq!(ed.shown_visual(), Some(VisualMode::Line));
     assert_eq!(ed.visual_start().map(|p| p.line), Some(0));
-    let f = View::default().frame(&ed, 20, 4);
+    ed.set_screen_size(20, 4);
+    let f = frame(&ed);
     assert_eq!(f.rows[0].trim_end(), "foo bar");
     // Linewise: the seven characters and the line break cell are in the area.
     assert!(f.hl[0][..8].iter().all(|h| *h == Hl::Visual));
@@ -64,7 +65,8 @@ fn prompt_shows_its_character_text_and_cursor() {
     assert_eq!(ed.cmdline_prompt(), '?');
     assert_eq!(ed.cmdline(), "fo");
     assert_eq!(ed.cmdline_pos(), 1);
-    let f = View::default().frame(&ed, 20, 4);
+    ed.set_screen_size(20, 4);
+    let f = frame(&ed);
     assert_eq!(f.status.trim_end(), "?fo");
     assert_eq!(f.cursor, (2, 3));
 }

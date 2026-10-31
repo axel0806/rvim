@@ -17,7 +17,7 @@ clean at the last commit.
 | 1 Core, 2 Vim grammar | Done |
 | 3 Search and Ex | ~95%. Left: `:s` flag `c` and `\=` |
 | 4 Foundation | ~70%. Left: the Document/Window/Editor split (the biggest item; see "Foundation"), kitty keyboard protocol, cell-level diff redraw, `:setlocal`/`:setglobal`, recovery on terminal close (SIGHUP) |
-| 5 Windows and buffers | ~15%. Done: macros (`q`, `@`, `@@`, `@:`), lowercase marks (`m{a-z}`, `'a`, `` `a ``, `:k`, `:mark`, `'a` addresses). Left: splits, buffer list, the other marks (uppercase, `''`, `'[`/`']`, `'<`/`'>` motions), jumplist, scrolling commands, `scrolloff`, swap files |
+| 5 Windows and buffers | ~25%. Done: macros (`q`, `@`, `@@`, `@:`), lowercase marks (`m{a-z}`, `'a`, `` `a ``, `:k`, `:mark`, `'a` addresses), scrolling (`<C-e> <C-y> <C-f> <C-b> <C-d> <C-u> zt zz zb z<CR> z. z- H M L`, counts, `scrolloff`, wrapped lines). Left: splits, buffer list, the other marks (uppercase, `''`, `'[`/`']`, `'<`/`'>` motions), jumplist, swap files |
 | 6 Modern editing experience | 0%. Not started (hlsearch, incsearch, syntax, line numbers, config file, palette, mouse) |
 | 7 Agent integration | 0%. Not started (file-change reload as an undo step, diff view, ACP connector, agent detection). Research is in "Detecting and connecting to agents" |
 | 8 Prediction | 0%. Not started |
@@ -32,7 +32,9 @@ macros (`macros.rs`), `/` and `?` prompts with the same editing keys, `<C-r>`
 and history (also in `cmdline.rs`), `gn`/`gN` (`current_search()` in
 `search.rs`), `:r`. Search-prompt editing and history landed in commit
 e556a0b. Lowercase marks `a`-`z` (kept in `buffer.rs`, followed through edits
-by the buffer's line methods, saved and restored by undo in `undo.rs`).
+by the buffer's line methods, saved and restored by undo in `undo.rs`), and the
+scrolling commands with `scrolloff` (`scroll.rs`; the window's top line now
+lives in `Editor`).
 
 **In progress** (as of 2026-11-01; maintained by the orchestrator, and an
 entry is removed when its branch lands on main):
@@ -40,8 +42,6 @@ entry is removed when its branch lands on main):
 - `:s` flag `c` (confirm): being built by a Haiku agent (branch name pending).
 - Jumplist (`<C-o>`, `<C-i>`/`<Tab>`, `''`, ``` `` ```, `:jumps`, context mark):
   being built by a Haiku agent (branch name pending).
-- Scrolling (`<C-f> <C-b> <C-d> <C-u> <C-e> <C-y> zt zz zb H M L`,
-  `scrolloff`): branch `worktree-agent-aa9509a3085f2e7dc`, being built.
 
 **Suggested order for what is left:** (1) Document/Window split, (2) splits +
 buffers + scrolling, (3) the ACP connector and file-change reload
@@ -51,6 +51,26 @@ milestone lands; `.github/workflows/release.yml` builds the binaries.
 
 ### Working notes (things that cost time)
 
+- Scrolling and the harness (milestone 5). Vim run with `-es` has a 24x80
+  screen (23 text rows) and `winheight()` is 23; `set lines=40` does not
+  change it. The harness asserts `S 24 80` in its first output line and
+  fails if Vim's screen differs. Vim never redraws here, so after a cursor
+  move the window it reports is stale: `line('w0')` after `G` is the cursor
+  line, not the screen's top, and `CTRL-F` or `H`/`M`/`L` after an earlier
+  scroll see a wrong bottom line. The harness therefore compares only
+  cursors (and lines) for scroll cases, and only cases whose cursor does
+  not depend on that stale window (a fresh window at line 1, or a scroll
+  command that sets the line itself). Top lines, wrapped-line heights and
+  the 'scrolloff' margin are checked in `tests/scroll_window.rs` with the
+  rules written from `scroll.txt`. Vim's C source was not available to
+  port line by line (the sources reachable from here are summaries only),
+  so `scroll.rs` follows the documented rules and the probed results.
+  Checked against Vim: CTRL-F/CTRL-D/CTRL-U/CTRL-E/CTRL-Y cursors on a fresh
+  window, the `halfpage()` line-by-line rule for CTRL-D on wrapped lines
+  (3 whole lines for 11 rows of 3-row lines), `H`/`M`/`L` counts (clamped to
+  the window, count and `'scrolloff'` combined with max). Pitfall: `set
+  scroll&` sets 'scroll' to 0, and CTRL-D then scrolls nothing, so the
+  harness resets it to half the window height instead.
 - Windows Git Bash: put `~/.cargo/bin` on `PATH`. Never run `python`/`python3`
   (the Store stub hangs); use `perl -0pi` for multi-line edits. Shell
   heredocs and `sed` mangle backslashes (`\t`, `\n`, `\x16` turn into real
@@ -104,14 +124,17 @@ and the Vim contract").
 | `normal.rs`, `ops.rs`, `textobject.rs`, `register.rs`, `undo.rs` | Normal/Visual parsing and motions, operators, text objects, registers, undo tree |
 | `regex.rs` | Vim regex (`\v \m \M \V`, `\{}`, look-around, `\zs`, `\_x`, collections, `\%` items) as a backtracking matcher over buffer lines |
 | `search.rs` | Port of `searchit()` / `do_search()` (offsets, `;`, `cpo-c`, wrapscan), `*`/`#` word lookup |
-| `view.rs` | Scrolling, wrapping, `~`/`@` rows, message line and ruler as plain strings |
+| `scroll.rs` | The window's top line and size (in `Editor`), `update_topline` with 'scrolloff' and wrapped lines, and the scroll commands (`CTRL-E/Y/F/B/D/U`, `z` commands, `H M L`) |
+| `view.rs` | Layout as a pure function of the editor (`frame`): wrapping, `~`/`@` rows, message line and ruler as plain strings |
 | `main.rs` | crossterm terminal front end (only file that touches the terminal) |
 
 The library has no terminal dependency: tests drive `Editor::feed("keys")`.
 
-Today `Editor` owns one `Buffer`, one cursor and one undo tree, and the
-scroll position (`View`) lives in `main.rs`. Milestone 4 changes this; the
-target structure is described under "Foundation".
+Today `Editor` owns one `Buffer`, one cursor and one undo tree, and also the
+window's top line and screen size (`top`, `screen_cols`, `screen_rows`),
+which `main.rs` sets on each draw and on resize. `view::frame(&Editor)` only
+lays out. Milestone 4 changes this; the target structure is described under
+"Foundation".
 
 ## Gaps in the current code
 
@@ -165,10 +188,11 @@ What the revised milestones fix, as the code stands today:
    event loop, (c) styled frame with the Visual area drawn, (d) diff redraw,
    (e) input (bracketed paste, modifiers, kitty protocol), (f) options
    registry, (g) emergency recovery files. Details in "Foundation".
-5. **Windows and buffers.** (Macros `q`/`@` and lowercase marks are done.)
-   Splits, buffer list, the remaining marks (uppercase, `''`, `'[`/`']`,
-   `'<`/`'>` as motions), jumplist, `<C-f> <C-b> <C-d> <C-u> zt zz zb
-   H M L`, 'scrolloff'; then swap files (see "Recovery").
+5. **Windows and buffers.** (Macros `q`/`@`, lowercase marks and scrolling are
+   done: `<C-e> <C-y> <C-f> <C-b> <C-d> <C-u> zt zz zb z<CR> z. z- H M L` with
+   counts, 'scrolloff'.) Left: splits, buffer list, the remaining marks
+   (uppercase, `''`, `'[`/`']`, `'<`/`'>` as motions), jumplist; then swap
+   files (see "Recovery").
 6. **Modern editing experience.** hlsearch, incsearch, matching parens,
    syntax highlighting (tree-sitter), line numbers, a config file, a command
    palette, mouse. Details in "Editing experience".
@@ -591,8 +615,19 @@ have unit tests (for layout, on the styled `Frame` once milestone 4 lands).
 - Options come from the registry in `options.rs` (all global for now).
   `tabstop` is fixed at 8, there is no `softtabstop`/`smarttab`/`smartindent`,
   `backspace=indent,eol,start`, `whichwrap=b,s` and `startofline` are fixed,
-  and the ruler is always shown. `hlsearch`, `incsearch`, `scrolloff`, `number`,
+  and the ruler is always shown. `hlsearch`, `incsearch`, `number`,
   `relativenumber`, `wrap` and `autoread` are stored but have no effect yet.
+  `scrolloff` works. 'scroll' is not an option yet: a count on CTRL-D/CTRL-U
+  sets a per-editor value (as Vim does), with no `:set scroll`.
+- Scrolling (milestone 5), not verified against Vim, or only in part:
+  the centring of an even-height window (`zz` and far jumps), CTRL-F and
+  CTRL-B when the window is near the end of the file or has wrapped lines
+  (the rules are from `scroll.txt`; the exact screen results were not
+  probed), the cursor after CTRL-B (put on the bottom line with
+  'scrolloff'), `scrolloff` counted in screen rows, and a count that is
+  larger than the window for `H`/`L` (clamped, which Vim agrees with on a
+  fresh window). Not implemented: `z+ z^ z{height}<CR>`, `smoothscroll`,
+  `<PageUp>`/`<PageDown>`/`<S-Up>`/`<S-Down>`, and `:set scroll`.
 - An error does not flush pending typeahead (only matters for pasted key
   sequences).
 - `n` after `/pat/e+1` when the cursor is on the last char of the buffer

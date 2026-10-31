@@ -133,6 +133,10 @@ impl Options {
     pub fn expandtab(&self) -> bool {
         self.bool_of("expandtab")
     }
+    /// `'scrolloff'`: lines kept above and below the cursor.
+    pub fn scrolloff(&self) -> usize {
+        self.num_of("scrolloff").max(0) as usize
+    }
     pub fn tabstop(&self) -> usize {
         self.num_of("tabstop").max(1) as usize
     }

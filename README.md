@@ -45,8 +45,9 @@ use:
   `:mark`, `:'a` addresses, and they follow edits and undo). Missing: uppercase
   marks, `m'` `` m` `` `m[` `m]` `m<` `m>`, `'[` `']` `` `[ `] ``, `''` and
   `` `` `` (both need the jumplist), `'<` and `'>` as motions, and `:marks`.
-- No scrolling commands (`<C-f> <C-b> <C-d> <C-u> <C-e> <C-y> zt zz zb`), no
-  `H M L`, no `scrolloff`.
+- Scrolling: `<C-f> <C-b> <C-d> <C-u> <C-e> <C-y> zt zz zb z<CR> z. z- H M L`
+  work with counts and `scrolloff`. Not there: `z+ z^ z{height}<CR>`,
+  `smoothscroll`, and the `<PageUp>`/`<PageDown>`/`<S-Up>` aliases.
 - The `:`, `/` and `?` command lines have Vim's editing keys (`<Left> <Right>
   <Home> <End> <C-b> <C-e> <C-w> <C-u> <Del> <C-r>{reg}` and `<Up>`/`<Down>`/
   `<C-p>`/`<C-n>` history). There is no command-line window (`q:`, `q/`) or
@@ -55,8 +56,8 @@ use:
   Visual area is drawn (reverse video).
 - Few options. `:set` supports `ignorecase`, `smartcase`, `wrapscan`,
   `autoindent`, `expandtab`, `shiftwidth`, and stores `hlsearch`,
-  `incsearch`, `scrolloff`, `number`, `relativenumber`, `wrap` and
-  `autoread` without using them yet. `tabstop` is fixed at 8 (setting another
+  `incsearch`, `number`, `relativenumber`, `wrap` and `autoread` without
+  using them yet (`scrolloff` works). `tabstop` is fixed at 8 (setting another
   value is an error), `softtabstop`, `smarttab` and `smartindent` do not exist,
   and `backspace=indent,eol,start`, `whichwrap=b,s` and `startofline` are
   fixed. Options are global; `:setlocal` and `:setglobal` are not there yet.

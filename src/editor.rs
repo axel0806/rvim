@@ -149,6 +149,13 @@ pub struct Editor {
     pub(crate) replaying_visual: Option<VisualRedo>,
     /// Size of the last Visual operation, for `1v` (Vim's resel_VIsual_*).
     pub(crate) resel: Option<VisualRedo>,
+    /// First buffer line shown in the window (Vim's `w_topline`).
+    pub(crate) top: usize,
+    /// Screen size in cells; the last row is the command line.
+    pub(crate) screen_cols: usize,
+    pub(crate) screen_rows: usize,
+    /// The 'scroll' option for CTRL-D and CTRL-U; 0 means half the window.
+    pub(crate) scroll_opt: usize,
     depth: usize,
     /// The `'[` and `']` marks.
     pub(crate) op_start: Pos,
@@ -225,6 +232,11 @@ impl Editor {
             redo_building: None,
             replaying_visual: None,
             resel: None,
+            top: 0,
+            // Vim's default screen when it runs without a terminal.
+            screen_cols: 80,
+            screen_rows: 24,
+            scroll_opt: 0,
             depth: 0,
             op_start: Pos::default(),
             op_end: Pos::default(),
@@ -338,7 +350,8 @@ impl Editor {
         match ev {
             Event::Key(k) => self.handle_key(k),
             Event::Paste(text) => self.paste(&text),
-            Event::Resize(..) | Event::FocusGained | Event::FocusLost | Event::Timer => {}
+            Event::Resize(cols, rows) => self.set_screen_size(cols as usize, rows as usize),
+            Event::FocusGained | Event::FocusLost | Event::Timer => {}
         }
     }
 
@@ -395,6 +408,7 @@ impl Editor {
         if !self.keep_curswant {
             self.curswant = self.cursor_vcol();
         }
+        self.update_topline();
         self.depth -= 1;
         if self.depth == 0
             && matches!(self.mode, Mode::Normal | Mode::Visual(_) | Mode::CmdLine)

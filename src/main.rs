@@ -8,7 +8,7 @@ use crossterm::event::{
 use crossterm::style::{Attribute, Color, Print, ResetColor, SetAttribute, SetForegroundColor};
 use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::{execute, queue};
-use rvim::view::{Hl, View};
+use rvim::view::{self, Hl};
 use rvim::{Editor, Key, Mode};
 use std::io::{self, Write};
 use std::path::PathBuf;
@@ -83,13 +83,12 @@ fn spawn_input(tx: mpsc::Sender<rvim::Event>) {
 }
 
 fn run(ed: &mut Editor) -> io::Result<()> {
-    let mut view = View::default();
     let mut screen = Screen::default();
     let mut out = io::BufWriter::new(io::stdout());
     let (tx, rx) = mpsc::channel();
     spawn_input(tx);
     while !ed.should_quit() {
-        draw(&mut out, ed, &mut view, &mut screen)?;
+        draw(&mut out, ed, &mut screen)?;
         // Wait for the first event (or the editor's timer), then take
         // everything already queued so a burst is drawn once.
         let first = match ed.next_deadline() {
@@ -186,13 +185,15 @@ fn print_row(out: &mut impl Write, text: &str, hl: &[Hl]) -> io::Result<()> {
     Ok(())
 }
 
-fn draw(out: &mut impl Write, ed: &Editor, view: &mut View, screen: &mut Screen) -> io::Result<()> {
+fn draw(out: &mut impl Write, ed: &mut Editor, screen: &mut Screen) -> io::Result<()> {
     let (w, h) = terminal::size()?;
     if screen.size != (w, h) {
         screen.size = (w, h);
         screen.invalidate();
     }
-    let frame = view.frame(ed, w as usize, h as usize);
+    // The editor keeps the cursor in view for this size (scrolling uses it).
+    ed.set_screen_size(w as usize, h as usize);
+    let frame = view::frame(ed);
     screen.rows.resize_with(frame.rows.len() + 1, || None);
     queue!(out, Hide)?;
     for (i, row) in frame.rows.iter().enumerate() {
