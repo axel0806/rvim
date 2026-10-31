@@ -43,9 +43,8 @@ use:
   `H M L`, no `scrolloff`.
 - No command-line editing keys (`<Left>`, `<C-b>`, `<C-r>`) and no history
   (`<Up>` in `:` or `/`).
-- No syntax highlighting, `hlsearch`, `incsearch`, or line numbers, and
-  Visual selections are not drawn yet (the mode and the cursor still follow
-  Vim exactly).
+- No syntax highlighting, `hlsearch`, `incsearch`, or line numbers. The
+  Visual area is drawn (reverse video).
 - No `autoindent`, `expandtab`, `shiftwidth` and other options: only
   `ignorecase`, `smartcase` and `wrapscan` can be changed with `:set`; the
   others are fixed to Vim's `-N` defaults (`tabstop=8`,

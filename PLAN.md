@@ -525,8 +525,9 @@ have unit tests (for layout, on the styled `Frame` once milestone 4 lands).
   implemented. `:p`, `:nu`, `:=` only set a message.
 - Options: only `ignorecase`, `smartcase` and `wrapscan` can change;
   `hlsearch`, `incsearch` etc. are accepted and ignored.
-- Visual selections are not drawn yet (plain-string frame); fixed in
-  milestone 4.
+- The frame carries highlight groups per cell (`view::Hl`); only Visual and
+  the `~`/`@` filler use them so far. The terminal redraws only rows that
+  changed. Still missing: hlsearch, incsearch, matching parens, syntax.
 - Alt, F-keys and Shift-Tab are ignored; there is no recovery file after a
   crash. Both are fixed in milestone 4. (Bracketed paste is done: it is
   enabled in `main.rs`, handled by `Editor::paste`, and tested in

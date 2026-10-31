@@ -8,7 +8,7 @@ use crossterm::event::{
 use crossterm::style::{Attribute, Color, Print, ResetColor, SetAttribute, SetForegroundColor};
 use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::{execute, queue};
-use rvim::view::View;
+use rvim::view::{Hl, View};
 use rvim::{Editor, Key, Mode};
 use std::io::{self, Write};
 use std::path::PathBuf;
@@ -47,12 +47,16 @@ fn restore_terminal() {
 
 fn run(ed: &mut Editor) -> io::Result<()> {
     let mut view = View::default();
+    let mut screen = Screen::default();
     let mut out = io::BufWriter::new(io::stdout());
     while !ed.should_quit() {
-        draw(&mut out, ed, &mut view)?;
+        draw(&mut out, ed, &mut view, &mut screen)?;
         match event::read()? {
             Event::Key(k) if k.kind != KeyEventKind::Release => {
                 if let Some(key) = convert(k) {
+                    if key == Key::Ctrl('l') {
+                        screen.invalidate();
+                    }
                     ed.handle_key(key);
                     if ed.take_bell() {
                         queue!(out, Print('\x07'))?;
@@ -60,44 +64,134 @@ fn run(ed: &mut Editor) -> io::Result<()> {
                 }
             }
             Event::Paste(text) => ed.paste(&text),
+            Event::Resize(..) => screen.invalidate(),
             _ => {}
         }
     }
     Ok(())
 }
 
-fn draw(out: &mut impl Write, ed: &Editor, view: &mut View) -> io::Result<()> {
+/// What was last written to each screen row, so only changed rows are sent.
+#[derive(Default)]
+struct Screen {
+    size: (u16, u16),
+    rows: Vec<Option<RowSig>>,
+}
+
+#[derive(PartialEq)]
+struct RowSig {
+    text: String,
+    hl: Vec<Hl>,
+    kind: StatusKind,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum StatusKind {
+    Text,
+    Plain,
+    Error,
+    Insert,
+}
+
+impl Screen {
+    /// Forget everything: the next draw repaints all rows.
+    fn invalidate(&mut self) {
+        self.rows.clear();
+    }
+}
+
+/// Maps highlight groups to terminal styles (the "theme").
+fn set_hl(out: &mut impl Write, hl: Hl) -> io::Result<()> {
+    match hl {
+        Hl::Normal => queue!(out, SetAttribute(Attribute::Reset), ResetColor),
+        Hl::Visual => queue!(out, SetAttribute(Attribute::Reverse)),
+        Hl::NonText => queue!(out, SetForegroundColor(Color::Blue)),
+    }
+}
+
+fn print_row(out: &mut impl Write, text: &str, hl: &[Hl]) -> io::Result<()> {
+    let mut cell = 0;
+    let mut run = String::new();
+    let mut cur = Hl::Normal;
+    for c in text.chars() {
+        let h = hl.get(cell).copied().unwrap_or(Hl::Normal);
+        if h != cur {
+            if !run.is_empty() {
+                queue!(out, Print(&run))?;
+                run.clear();
+            }
+            set_hl(out, h)?;
+            cur = h;
+        }
+        run.push(c);
+        cell += unicode_width::UnicodeWidthChar::width(c)
+            .unwrap_or(1)
+            .max(1);
+    }
+    if !run.is_empty() {
+        queue!(out, Print(&run))?;
+    }
+    if cur != Hl::Normal {
+        set_hl(out, Hl::Normal)?;
+    }
+    Ok(())
+}
+
+fn draw(out: &mut impl Write, ed: &Editor, view: &mut View, screen: &mut Screen) -> io::Result<()> {
     let (w, h) = terminal::size()?;
+    if screen.size != (w, h) {
+        screen.size = (w, h);
+        screen.invalidate();
+    }
     let frame = view.frame(ed, w as usize, h as usize);
+    screen.rows.resize_with(frame.rows.len() + 1, || None);
     queue!(out, Hide)?;
     for (i, row) in frame.rows.iter().enumerate() {
-        queue!(out, MoveTo(0, i as u16))?;
-        if i >= frame.filler_from {
-            queue!(out, SetForegroundColor(Color::Blue), Print(row), ResetColor)?;
-        } else {
-            queue!(out, Print(row))?;
+        let sig = RowSig {
+            text: row.clone(),
+            hl: frame.hl[i].clone(),
+            kind: StatusKind::Text,
+        };
+        if screen.rows[i].as_ref() != Some(&sig) {
+            queue!(out, MoveTo(0, i as u16))?;
+            print_row(out, row, &frame.hl[i])?;
+            screen.rows[i] = Some(sig);
         }
     }
-    queue!(out, MoveTo(0, h.saturating_sub(1)))?;
-    if frame.status_is_error {
-        queue!(
-            out,
-            SetForegroundColor(Color::White),
-            crossterm::style::SetBackgroundColor(Color::DarkRed),
-            Print(frame.status.trim_end()),
-            ResetColor,
-            Print(&frame.status[frame.status.trim_end().len()..]),
-        )?;
+    let kind = if frame.status_is_error {
+        StatusKind::Error
     } else if ed.mode() == Mode::Insert {
-        queue!(
-            out,
-            SetAttribute(Attribute::Bold),
-            Print(&frame.status[..12]),
-            SetAttribute(Attribute::Reset),
-            Print(&frame.status[12..]),
-        )?;
+        StatusKind::Insert
     } else {
-        queue!(out, Print(&frame.status))?;
+        StatusKind::Plain
+    };
+    let last = frame.rows.len();
+    let sig = RowSig {
+        text: frame.status.clone(),
+        hl: Vec::new(),
+        kind,
+    };
+    if screen.rows[last].as_ref() != Some(&sig) {
+        queue!(out, MoveTo(0, h.saturating_sub(1)))?;
+        match kind {
+            StatusKind::Error => queue!(
+                out,
+                SetForegroundColor(Color::White),
+                crossterm::style::SetBackgroundColor(Color::DarkRed),
+                Print(frame.status.trim_end()),
+                ResetColor,
+                Print(&frame.status[frame.status.trim_end().len()..]),
+            )?,
+            StatusKind::Insert => queue!(
+                out,
+                SetAttribute(Attribute::Bold),
+                Print(&frame.status[..12]),
+                SetAttribute(Attribute::Reset),
+                Print(&frame.status[12..]),
+            )?,
+            _ => queue!(out, Print(&frame.status))?,
+        }
+        screen.rows[last] = Some(sig);
     }
     let shape = match ed.mode() {
         Mode::Insert => SetCursorStyle::SteadyBar,

@@ -3,8 +3,8 @@
 //! command/ruler line. Pure functions so they can be tested without a
 //! terminal.
 
-use crate::editor::{Editor, Mode};
-use crate::text::{char_display, char_width};
+use crate::editor::{Editor, Mode, VisualMode};
+use crate::text::{self, char_display, char_width};
 use ropey::RopeSlice;
 use unicode_width::UnicodeWidthChar;
 
@@ -20,10 +20,90 @@ pub struct Frame {
     /// Bottom row (command line, messages, ruler), `width` cells wide.
     pub status: String,
     pub status_is_error: bool,
+    /// Highlight group of every cell of `rows` (`width` entries per row).
+    pub hl: Vec<Vec<Hl>>,
     /// Rows from this index on are `~` filler past the end of the buffer.
     pub filler_from: usize,
     /// Screen (column, row) of the cursor.
     pub cursor: (usize, usize),
+}
+
+/// Named highlight groups. The terminal front end maps them to styles, so
+/// the layout code never mentions colours.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Hl {
+    #[default]
+    Normal,
+    /// The Visual area.
+    Visual,
+    /// `~` and `@` filler rows.
+    NonText,
+}
+
+/// Linear cell ranges (within the wrapped line) covered by the Visual area on
+/// `line`.
+fn visual_cells(ed: &Editor, line: usize, lay: &Layout) -> Vec<(usize, usize)> {
+    let Mode::Visual(vm) = ed.mode() else {
+        return Vec::new();
+    };
+    let b = ed.cursor();
+    let a = ed.visual_start().unwrap_or(b);
+    let len = lay.starts.len() - 1;
+    let end_cell = lay.starts[len];
+    let mut out: Vec<(usize, usize)> = Vec::new();
+    match vm {
+        VisualMode::Char | VisualMode::Line => {
+            let (s, e) = if (a.line, a.col) <= (b.line, b.col) {
+                (a, b)
+            } else {
+                (b, a)
+            };
+            if line < s.line || line > e.line {
+                return out;
+            }
+            if vm == VisualMode::Line {
+                out.push((0, end_cell + 1));
+            } else {
+                let from = if line == s.line { s.col.min(len) } else { 0 };
+                let (to, eol) = if line == e.line {
+                    ((e.col + 1).min(len), e.col >= len)
+                } else {
+                    (len, true)
+                };
+                if to > from || eol {
+                    out.push((
+                        lay.starts[from],
+                        if eol { end_cell + 1 } else { lay.starts[to] },
+                    ));
+                }
+            }
+        }
+        VisualMode::Block => {
+            if line < a.line.min(b.line) || line > a.line.max(b.line) {
+                return out;
+            }
+            let (la, ra) = text::vcol_range(ed.buf.line(a.line), a.col);
+            let (lb, rb) = text::vcol_range(ed.buf.line(b.line), b.col);
+            let left = la.min(lb);
+            let to_eol = ed.curswant == usize::MAX;
+            let right = if to_eol { usize::MAX } else { ra.max(rb) };
+            let mut vcol = 0;
+            for i in 0..len {
+                let w = lay.widths[i];
+                if vcol + w > left && vcol <= right {
+                    match out.last_mut() {
+                        Some(last) if last.1 == lay.starts[i] => last.1 = lay.starts[i + 1],
+                        _ => out.push((lay.starts[i], lay.starts[i + 1])),
+                    }
+                }
+                vcol += w;
+            }
+            if to_eol {
+                out.push((end_cell, end_cell + 1));
+            }
+        }
+    }
+    out
 }
 
 /// One buffer line laid out across screen rows.
@@ -124,6 +204,7 @@ impl View {
         self.scroll(ed, width, text_height);
 
         let mut rows = Vec::with_capacity(text_height);
+        let mut hl = vec![vec![Hl::Normal; width]; text_height];
         let mut cursor = (0, 0);
         let mut line = self.top;
         while rows.len() < text_height && line < ed.buf.line_count() {
@@ -131,6 +212,7 @@ impl View {
             let need = rows_needed(&lay, width);
             if line != self.top && rows.len() + need > text_height {
                 while rows.len() < text_height {
+                    hl[rows.len()].fill(Hl::NonText);
                     rows.push(pad("@".into(), width));
                 }
                 break;
@@ -144,6 +226,14 @@ impl View {
                 }
                 cursor = (cell % width, rows.len() + cell / width);
             }
+            let base = rows.len();
+            for (c0, c1) in visual_cells(ed, line, &lay) {
+                for c in c0..c1 {
+                    if base + c / width < text_height {
+                        hl[base + c / width][c % width] = Hl::Visual;
+                    }
+                }
+            }
             for r in 0..need {
                 if rows.len() == text_height {
                     break;
@@ -155,6 +245,7 @@ impl View {
         }
         let filler_from = rows.len();
         while rows.len() < text_height {
+            hl[rows.len()].fill(Hl::NonText);
             rows.push(pad("~".into(), width));
         }
 
@@ -165,6 +256,7 @@ impl View {
             rows,
             status,
             status_is_error,
+            hl,
             filler_from,
             cursor,
         }
@@ -257,6 +349,51 @@ mod tests {
         assert_eq!(v.top, 1);
         assert_eq!(f.rows, ["x   ", "y   ", "z   "]);
         assert_eq!(f.cursor, (0, 2));
+    }
+
+    fn marks(f: &Frame) -> Vec<String> {
+        f.hl.iter()
+            .map(|r| {
+                r.iter()
+                    .map(|h| match h {
+                        Hl::Visual => 'V',
+                        Hl::NonText => '~',
+                        Hl::Normal => '.',
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
+    fn frame_after(keys: &str) -> Frame {
+        let mut ed = Editor::from_text("abcdef\nxy\n\nlast");
+        ed.feed(keys);
+        View::default().frame(&ed, 8, 6)
+    }
+
+    #[test]
+    fn visual_areas_are_marked() {
+        // Characterwise: rest of the first line and its line break, then "xy".
+        assert_eq!(
+            marks(&frame_after("lvj")),
+            [".VVVVVV.", "VV......", "........", "........", "~~~~~~~~"]
+        );
+        // The selection runs backwards as well.
+        assert_eq!(marks(&frame_after("jlvk")), marks(&frame_after("lvj")));
+        // Linewise covers the line break cell too.
+        assert_eq!(
+            marks(&frame_after("Vj")),
+            ["VVVVVVV.", "VVV.....", "........", "........", "~~~~~~~~"]
+        );
+        // Blockwise: one column.
+        assert_eq!(
+            marks(&frame_after("l<C-v>j")),
+            [".V......", ".V......", "........", "........", "~~~~~~~~"]
+        );
+        // An empty line shows its line break.
+        assert_eq!(marks(&frame_after("jjv"))[2], "V.......");
+        // No Visual mode, no marks.
+        assert_eq!(marks(&frame_after("l"))[0], "........");
     }
 
     #[test]
