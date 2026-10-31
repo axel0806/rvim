@@ -16,6 +16,7 @@ fn main() -> io::Result<()> {
         Some(path) => Editor::open(&PathBuf::from(path)),
         None => Editor::new(),
     };
+    ed.show_intro();
 
     terminal::enable_raw_mode()?;
     execute!(io::stdout(), EnterAlternateScreen)?;

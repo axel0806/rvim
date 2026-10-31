@@ -64,6 +64,8 @@ impl Editor {
             } else {
                 self.quit = true;
             }
+        } else if abbrev(p.name, "version", 2) {
+            self.info(crate::VERSION_MESSAGE);
         } else if abbrev(p.name, "edit", 1) {
             self.cmd_edit(&p);
         } else {
@@ -210,6 +212,13 @@ mod tests {
         assert_eq!(ed.cursor().line, 2);
         ed.feed(":.-2<CR>");
         assert_eq!(ed.cursor().line, 0);
+        ed.feed(":ve<CR>");
+        assert!(
+            ed.message()
+                .unwrap()
+                .text
+                .contains("modified version of Vim")
+        );
         ed.feed(":frob<CR>");
         assert!(ed.message().unwrap().text.starts_with("E492"));
         ed.feed("x:x<CR>");

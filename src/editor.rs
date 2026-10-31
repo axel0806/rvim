@@ -89,6 +89,14 @@ impl Editor {
         ed
     }
 
+    /// Shows the startup notice (the "intro screen" message the Vim license
+    /// asks for), unless a message such as file info is already shown.
+    pub fn show_intro(&mut self) {
+        if self.message.is_none() {
+            self.info(crate::VERSION_MESSAGE);
+        }
+    }
+
     pub fn mode(&self) -> Mode {
         self.mode
     }
