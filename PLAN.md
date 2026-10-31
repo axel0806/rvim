@@ -15,7 +15,7 @@ clean at the last commit.
 | Milestone | State |
 |---|---|
 | 1 Core, 2 Vim grammar | Done |
-| 3 Search and Ex | ~95%. Left: `:s` flag `c` and `\=`, `gn`, `:r`, `:k` |
+| 3 Search and Ex | ~95%. Left: `:s` flag `c` and `\=`, `:k` |
 | 4 Foundation | ~70%. Left: the Document/Window/Editor split (the biggest item; see "Foundation"), kitty keyboard protocol, cell-level diff redraw, `:setlocal`/`:setglobal`, recovery on terminal close (SIGHUP) |
 | 5 Windows and buffers | ~10%. Done: macros (`q`, `@`, `@@`, `@:`). Left: splits, buffer list, marks (and `'a` in Ex addresses), jumplist, scrolling commands, `scrolloff`, swap files |
 | 6 Modern editing experience | 0%. Not started (hlsearch, incsearch, syntax, line numbers, config file, palette, mouse) |
@@ -29,16 +29,15 @@ the options registry (`options.rs`: `autoindent`, `expandtab`, `shiftwidth`
 work), panic recovery files (`recovery.rs`), the channel-based event loop
 (`event.rs`), `:` command-line editing and history (`cmdline.rs`), `&`/`g&`,
 macros (`macros.rs`), `/` and `?` prompts with the same editing keys, `<C-r>`
-and history (also in `cmdline.rs`). Search-prompt editing and history
-landed in commit e556a0b.
+and history (also in `cmdline.rs`), `gn`/`gN` (`current_search()` in
+`search.rs`), `:r`. Search-prompt editing and history landed in commit
+e556a0b.
 
 **In progress** (as of 2026-11-01; maintained by the orchestrator, and an
 entry is removed when its branch lands on main):
 
 - Marks (`m`, `'`, `` ` ``, `:k`, `:mark`, `'a` in Ex addresses): agent branch
   `worktree-agent-a4bb7f1ec2a17e76d`, being built.
-- `gn`/`gN` and `:r`: branch `worktree-agent-a3fbde37de6ad1c4f`, verified,
-  being rebased onto main.
 - Scrolling (`<C-f> <C-b> <C-d> <C-u> <C-e> <C-y> zt zz zb H M L`,
   `scrolloff`): branch `worktree-agent-aa9509a3085f2e7dc`, being built.
 
@@ -153,7 +152,10 @@ What the revised milestones fix, as the code stands today:
    Done since: `:` command-line editing keys, `<C-r>` insertion and history,
    `&`/`g&`, and the same for the `/` and `?` prompts (search history also
    takes the patterns of `:s`, `:g`, `:v`, `*`, `#` and Ex addresses, as in
-   Vim). Left: `:s` flags `c` and `\=` expressions, `gn`, `:r`, `:k`.
+   Vim). Done since: `gn`/`gN` in Normal, Visual and operator-pending mode
+   (with `.` repeat as typed, like Vim's `prep_redo` for `gn`), and
+   `:[range]r[ead] {file}` (`:r !cmd` is not done). Left: `:s` flags `c` and
+   `\=` expressions, `:k`.
    Marks in Ex addresses (`'a`) move to milestone 5 with the marks.
 4. **Foundation (in progress).** Done: bracketed paste, Alt/F-keys/Insert/Shift-Tab, Visual area drawn via highlight groups, row-level diff redraw, options registry (`autoindent`, `expandtab`, `shiftwidth`), panic recovery files, channel-based event loop with an input thread. Left: the Document/Window/Editor split, kitty keyboard protocol, cell-level diff, `:setlocal`, SIGHUP recovery. Original description: Restructure before adding more features, because windows,
    agents and prediction all depend on it. Order, each step landing with the
@@ -596,6 +598,8 @@ have unit tests (for layout, on the styled `Frame` once milestone 4 lands).
   it on the first non-blank.
 - `\=` expressions, `:s///c` and the `\n` (NUL) replacement are not
   implemented. `:p`, `:nu`, `:=` only set a message.
+- `:r !cmd` (insert the output of a command) is not implemented; `:r file`
+  is. `:r` takes the file's lines as `:e` decodes them (CRLF removed).
 - The frame carries highlight groups per cell (`view::Hl`); only Visual and
   the `~`/`@` filler use them so far. The terminal redraws only rows that
   changed. Still missing: hlsearch, incsearch, matching parens, syntax.

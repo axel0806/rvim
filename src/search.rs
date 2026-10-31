@@ -2,7 +2,7 @@
 //! including the 'cpoptions' `c` behaviour of the default Vim.
 
 use crate::buffer::Buffer;
-use crate::editor::{Editor, Message};
+use crate::editor::{Editor, Message, Mode, VisualMode};
 use crate::motion::{Pos, char_class, decl, incl};
 use crate::regex::{Opts, Regex};
 
@@ -34,6 +34,9 @@ impl Default for SearchState {
 
 pub(crate) struct Found {
     pub pos: Pos,
+    /// Vim's `end_pos`: the match start when `SEARCH_END` is set, else the
+    /// position after its last char (exclusive).
+    pub other: Pos,
     pub wrapped: bool,
 }
 
@@ -90,7 +93,7 @@ pub(crate) fn searchit(
         } else {
             start_pos.line as i64
         };
-        let mut result: Option<Pos> = None;
+        let mut result: Option<(Pos, Pos)> = None;
         let first_pass = if outside {
             outside = false;
             lnum = if fwd { 0 } else { nlines as i64 - 1 };
@@ -211,9 +214,9 @@ pub(crate) fn searchit(
                         } else {
                             p.1 -= 1;
                         }
-                        result = Some(Pos::new(p.0, p.1));
+                        result = Some((Pos::new(p.0, p.1), Pos::new(s.0, s.1)));
                     } else {
-                        result = Some(Pos::new(s.0, s.1));
+                        result = Some((Pos::new(s.0, s.1), Pos::new(e.0, e.1)));
                     }
                     found = true;
                     if pass == 1 {
@@ -233,11 +236,16 @@ pub(crate) fn searchit(
         if !found {
             return None;
         }
-        pos = result.unwrap();
+        let (p, o) = result.unwrap();
+        pos = p;
         first_match = false;
         remaining -= 1;
         if remaining == 0 {
-            return Some(Found { pos, wrapped });
+            return Some(Found {
+                pos,
+                other: o,
+                wrapped,
+            });
         }
     }
 }
@@ -537,6 +545,116 @@ impl Editor {
             });
         }
         Some((pos, retval_line, inclusive))
+    }
+
+    /// Vim's `current_search()` for `gn` (`forward`) and `gN`: selects the
+    /// match under the cursor, else the next (previous) one, by starting
+    /// Visual mode, or by moving the Visual cursor when Visual mode is
+    /// already active. The search trick is to search backwards for the
+    /// match ending before the cursor, then forwards from there, so a match
+    /// at the cursor is found. Returns false (with the cursor unchanged) if
+    /// there is no match. Operators are applied by the caller.
+    pub(crate) fn current_search(&mut self, count: usize, forward: bool) -> bool {
+        let Some(pat) = self.search.pat.clone() else {
+            return false;
+        };
+        let Ok(re) = Regex::new(&pat, &self.re_opts()) else {
+            return false;
+        };
+        let visual = self.is_visual();
+        let orig_cursor = self.cursor;
+        let orig_vstart = self.vstart;
+        // Visual forward with the cursor before the anchor: the first
+        // backward search would not move the cursor, so it is skipped.
+        let skip_first_backward = forward && visual && self.cursor < self.vstart;
+
+        let mut pos = self.cursor;
+        if visual {
+            if forward {
+                incl(&self.buf, &mut pos);
+            } else {
+                decl(&self.buf, &mut pos);
+            }
+        }
+
+        // Is the pattern zero-width at the cursor? (Only matters for the
+        // SEARCH_END search below.)
+        let zero_width = match searchit(
+            &self.buf,
+            &re,
+            Start::At(self.cursor),
+            true,
+            1,
+            &SearchFlags {
+                start: true,
+                end: false,
+                wrapscan: true,
+            },
+        ) {
+            Some(f) => f.pos == f.other,
+            None => return false,
+        };
+
+        let mut from = Start::At(pos);
+        let mut end_pos = pos;
+        for i in 0..2 {
+            // Forward: first a backward search (i == 0), then a forward one.
+            // Backward: the other way round.
+            let dir_fwd = if forward { i == 1 } else { i == 0 };
+            if forward && i == 0 && skip_first_backward {
+                continue;
+            }
+            let fl = SearchFlags {
+                start: false,
+                // The backward search finds the match by its last char, so
+                // it skips a match that contains the cursor.
+                end: !dir_fwd && !zero_width,
+                // No wrapping in the first search, as in Vim.
+                wrapscan: i == 1 && self.opts.wrapscan(),
+            };
+            let cnt = if i == 1 { count.max(1) } else { 1 };
+            match searchit(&self.buf, &re, from, dir_fwd, cnt, &fl) {
+                Some(f) => {
+                    pos = f.pos;
+                    end_pos = f.other;
+                    from = Start::At(pos);
+                }
+                None if i == 1 => {
+                    self.cursor = orig_cursor;
+                    self.vstart = orig_vstart;
+                    return false;
+                }
+                None => {
+                    // Try again from the other end of the buffer.
+                    if forward {
+                        from = Start::Outside;
+                    } else {
+                        let last = self.buf.last_line();
+                        pos = Pos::new(last, self.buf.line_len(last));
+                        from = Start::At(pos);
+                    }
+                }
+            }
+        }
+
+        let start_pos = pos;
+        if !visual {
+            self.vstart = start_pos;
+        }
+        self.cursor = end_pos;
+        if self.vstart < end_pos && forward {
+            if skip_first_backward {
+                // Put the cursor on the start of the match.
+                self.cursor = pos;
+            } else {
+                // Put the cursor on the last char of the match.
+                decl(&self.buf, &mut self.cursor);
+            }
+        } else if visual && self.cursor < self.vstart && forward {
+            self.cursor = pos;
+        }
+        self.mode = Mode::Visual(VisualMode::Char);
+        true
     }
 
     /// The identifier or string under or after the cursor (Vim's

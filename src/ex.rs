@@ -1,7 +1,9 @@
 //! Ex commands typed after `:`: line ranges (numbers, `.`, `$`, `%`, `'<`,
-//! `/pat/`, offsets, `,` and `;`), files (`:w :q :wq :x :e`), line commands
+//! `/pat/`, offsets, `,` and `;`), files (`:w :q :wq :x :e :r`), line commands
 //! (`:d :y :pu :m :t :j :> :<`), `:s`, `:g`, `:normal`, `:undo`, `:set`.
+//! `:r` reads a file's lines (`:r !cmd` is not supported).
 
+use crate::buffer::Buffer;
 use crate::editor::{Editor, Mode, describe};
 use crate::key::Key;
 use crate::motion::{Pos, first_non_blank};
@@ -9,6 +11,7 @@ use crate::normal::Op;
 use crate::ops::OpArg;
 use crate::regex::Regex;
 use crate::search::{SearchFlags, Start, searchit};
+use std::fs;
 use std::path::{Path, PathBuf};
 
 struct Parsed<'a> {
@@ -244,6 +247,8 @@ impl Editor {
             self.info(crate::VERSION_MESSAGE);
         } else if abbrev(n, "edit", 1) {
             self.cmd_edit(&p);
+        } else if abbrev(n, "read", 1) {
+            self.ex_read(range, p.bang, p.arg)?;
         } else if abbrev(n, "delete", 1) {
             self.ex_delete_yank(range, p.arg, true)?;
         } else if abbrev(n, "yank", 1) {
@@ -718,6 +723,48 @@ impl Editor {
             self.info(format!("{n} more lines"));
         }
         let _ = reg.kind;
+        Ok(())
+    }
+
+    /// `:[line]r[ead] [file]`: inserts the lines of `file` (default: the
+    /// current file) below `line`; line 0 inserts above the first line. The
+    /// cursor goes to the last new line (on its first non-blank), as Vim's
+    /// `readfile()` does, or stays on the insert line for an empty file.
+    fn ex_read(&mut self, r: Range, bang: bool, arg: &str) -> ExRes<()> {
+        if bang || arg.starts_with('!') {
+            return Err("rvim: :read !{cmd} is not supported".into());
+        }
+        let path = if arg.is_empty() {
+            self.buf.path.clone().ok_or("E32: No file name")?
+        } else {
+            PathBuf::from(arg)
+        };
+        if r.line2 > self.buf.line_count() {
+            return Err("E16: Invalid range".into());
+        }
+        let bytes =
+            fs::read(&path).map_err(|_| format!("E484: Can't open file {}", path.display()))?;
+        let (lines, stats) = Buffer::file_lines(&bytes);
+        // 0-based index of the first new line.
+        let at = r.line2;
+        self.u_save(at, 0, false);
+        for (i, l) in lines.iter().enumerate() {
+            self.buf.insert_line(at + i, l);
+        }
+        let last = if lines.is_empty() {
+            r.line2.max(1) - 1
+        } else {
+            at + lines.len() - 1
+        };
+        self.cursor.line = last;
+        self.cursor.col = first_non_blank(&self.buf, last, true);
+        self.uline = None;
+        self.info(format!(
+            "\"{}\" {}L, {}B",
+            path.display(),
+            stats.lines,
+            stats.bytes
+        ));
         Ok(())
     }
 
@@ -1685,5 +1732,126 @@ mod tests {
         ed.feed("x:x<CR>");
         assert!(ed.should_quit());
         assert_eq!(fs::read_to_string(&path).unwrap(), "ne\n  two\nthree\n");
+    }
+
+    /// Writes `contents` to a file in `dir` and returns its path.
+    fn file_in(dir: &tempfile::TempDir, name: &str, contents: &[u8]) -> std::path::PathBuf {
+        let path = dir.path().join(name);
+        fs::write(&path, contents).unwrap();
+        path
+    }
+
+    #[test]
+    fn read_inserts_below_the_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = file_in(&dir, "ins.txt", b"  p\n\tq\n  r\n");
+        let mut ed = Editor::from_text("a\n  b\nc");
+        ed.feed(&format!(":2r {}<CR>", path.display()));
+        assert_eq!(ed.buf.lines(), ["a", "  b", "  p", "\tq", "  r", "c"]);
+        // The cursor goes to the last new line, on its first non-blank.
+        assert_eq!((ed.cursor().line, ed.cursor().col), (4, 2));
+        assert!(ed.message().unwrap().text.ends_with("3L, 11B"));
+        assert!(!ed.message().unwrap().error);
+    }
+
+    #[test]
+    fn read_line_zero_inserts_above_the_first_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = file_in(&dir, "top.txt", b"x\ny\n");
+        let mut ed = Editor::from_text("a\nb");
+        ed.feed(&format!(":0r {}<CR>", path.display()));
+        assert_eq!(ed.buf.lines(), ["x", "y", "a", "b"]);
+        assert_eq!((ed.cursor().line, ed.cursor().col), (1, 0));
+        ed.feed(":1r<CR>");
+        assert!(ed.message().unwrap().text.starts_with("E32"));
+    }
+
+    #[test]
+    fn read_with_no_range_uses_the_cursor_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = file_in(&dir, "cur.txt", b"new\n");
+        let mut ed = Editor::from_text("a\nb\nc");
+        ed.feed("j");
+        ed.feed(&format!(":r {}<CR>", path.display()));
+        assert_eq!(ed.buf.lines(), ["a", "b", "new", "c"]);
+        assert_eq!(ed.cursor().line, 2);
+    }
+
+    #[test]
+    fn read_empty_file_leaves_lines_and_cursor_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = file_in(&dir, "empty.txt", b"");
+        let mut ed = Editor::from_text("a\n  b\nc");
+        ed.feed(&format!(":2r {}<CR>", path.display()));
+        assert_eq!(ed.buf.lines(), ["a", "  b", "c"]);
+        assert_eq!((ed.cursor().line, ed.cursor().col), (1, 2));
+    }
+
+    #[test]
+    fn read_into_empty_buffer_keeps_its_first_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = file_in(&dir, "into.txt", b"one\ntwo");
+        let mut ed = Editor::new();
+        ed.feed(&format!(":r {}<CR>", path.display()));
+        assert_eq!(ed.buf.lines(), ["", "one", "two"]);
+        assert_eq!(ed.cursor().line, 2);
+    }
+
+    #[test]
+    fn read_decodes_like_load() {
+        let dir = tempfile::tempdir().unwrap();
+        // CRLF line ends are removed, as `:e` does.
+        let crlf = file_in(&dir, "crlf.txt", b"a\r\nb\r\n");
+        let mut ed = Editor::from_text("x");
+        ed.feed(&format!(":r {}<CR>", crlf.display()));
+        assert_eq!(ed.buf.lines(), ["x", "a", "b"]);
+        // No final newline: the last line still counts.
+        let noeol = file_in(&dir, "noeol.txt", b"c\nd");
+        ed.feed(&format!(":r {}<CR>", noeol.display()));
+        assert_eq!(ed.buf.lines(), ["x", "a", "b", "c", "d"]);
+    }
+
+    #[test]
+    fn read_is_one_undo_step() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = file_in(&dir, "undo.txt", b"1\n2\n3\n");
+        let mut ed = Editor::from_text("a\nb");
+        ed.feed(&format!(":1r {}<CR>", path.display()));
+        assert_eq!(ed.buf.line_count(), 5);
+        ed.feed("u");
+        assert_eq!(ed.buf.lines(), ["a", "b"]);
+        ed.feed("<C-r>");
+        assert_eq!(ed.buf.line_count(), 5);
+    }
+
+    #[test]
+    fn read_errors_leave_the_buffer_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("missing.txt");
+        let mut ed = Editor::from_text("a\nb");
+        ed.feed(&format!(":2r {}<CR>", missing.display()));
+        assert!(ed.message().unwrap().text.starts_with("E484"));
+        assert!(ed.message().unwrap().error);
+        assert_eq!(ed.buf.lines(), ["a", "b"]);
+        assert!(!ed.buf.modified);
+        // A directory cannot be read either.
+        ed.feed(&format!(":r {}<CR>", dir.path().display()));
+        assert!(ed.message().unwrap().text.starts_with("E484"));
+        assert_eq!(ed.buf.lines(), ["a", "b"]);
+        ed.feed(":9r missing.txt<CR>");
+        assert!(ed.message().unwrap().text.starts_with("E16"));
+        ed.feed(":r!ls<CR>");
+        assert!(ed.message().unwrap().text.contains("not supported"));
+        assert_eq!(ed.buf.lines(), ["a", "b"]);
+    }
+
+    #[test]
+    fn read_without_a_name_reads_the_current_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = file_in(&dir, "self.txt", b"s\n");
+        let mut ed = Editor::new();
+        ed.feed(&format!(":e {}<CR>", path.display()));
+        ed.feed(":r<CR>");
+        assert_eq!(ed.buf.lines(), ["s", "s"]);
     }
 }

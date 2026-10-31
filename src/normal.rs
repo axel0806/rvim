@@ -102,6 +102,10 @@ pub(crate) enum Target {
     Obj(Obj),
     /// The operator doubled (`dd`, `>>`), Vim's `nv_lineop`.
     Line,
+    /// `gn` / `gN` after an operator: the match becomes the Visual area.
+    Gn {
+        fwd: bool,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -142,6 +146,10 @@ pub(crate) enum Simple {
     /// Visual `o` / `O`.
     VisOther {
         horiz: bool,
+    },
+    /// `gn` / `gN` (Normal and Visual mode): select the next match.
+    Gn {
+        fwd: bool,
     },
 }
 
@@ -441,6 +449,8 @@ fn parse_body(k: &[Key], visual: bool) -> Res<(Body, Option<usize>, usize)> {
                 Some('U') => return vop(Op::Upper, 'U', 2),
                 Some('?') => return vop(Op::Rot13, '?', 2),
                 Some('v') => return simple(Simple::Reselect, 2),
+                Some('n') => return simple(Simple::Gn { fwd: true }, 2),
+                Some('N') => return simple(Simple::Gn { fwd: false }, 2),
                 _ => {}
             },
             _ => {}
@@ -484,6 +494,23 @@ fn parse_body(k: &[Key], visual: bool) -> Res<(Body, Option<usize>, usize)> {
                         count2,
                         j + n,
                     )));
+                }
+                if ch(k.get(j)) == Some('g') {
+                    match k.get(j + 1) {
+                        None => return Ok(None),
+                        Some(Key::Char(c @ ('n' | 'N'))) => {
+                            return Ok(Some((
+                                Body::Op {
+                                    op,
+                                    force,
+                                    target: Target::Gn { fwd: *c == 'n' },
+                                },
+                                count2,
+                                j + 2,
+                            )));
+                        }
+                        _ => {}
+                    }
                 }
                 if matches!(ch(k.get(j)), Some('i' | 'a')) {
                     let Some((o, n)) = parse_obj(&k[j..])? else {
@@ -646,6 +673,8 @@ fn parse_body(k: &[Key], visual: bool) -> Res<(Body, Option<usize>, usize)> {
                 }
                 Some('v') => return simple(Simple::Reselect, 2),
                 Some('I') => return simple(Simple::Insert('g'), 2),
+                Some('n') => return simple(Simple::Gn { fwd: true }, 2),
+                Some('N') => return simple(Simple::Gn { fwd: false }, 2),
                 _ => {}
             },
             _ => {}
@@ -1266,10 +1295,38 @@ impl Editor {
     ) {
         let start = self.cursor;
         let count1 = count.unwrap_or(1).max(1);
+        if let Target::Gn { fwd } = target {
+            if !self.current_search(count1, fwd) {
+                self.beep();
+                self.redo_building = None;
+                return;
+            }
+            // The key only matters for the linewise variants (X Y D C S R),
+            // which operators from `parse_operator` never are.
+            let key = match op {
+                Op::Delete => 'd',
+                Op::Change => 'c',
+                Op::Yank => 'y',
+                Op::LShift => '<',
+                Op::RShift => '>',
+                Op::Tilde => '~',
+                Op::Lower => 'u',
+                Op::Upper => 'U',
+                Op::Rot13 => '?',
+                _ => '\0',
+            };
+            self.visual_operator(op, key, reg, None);
+            // Vim repeats "gn" as typed, not as a Visual operation.
+            if let Some(r) = &mut self.redo_building {
+                r.visual = None;
+            }
+            return;
+        }
         let res = match target {
             Target::Motion(m) => self.do_motion(m, count, Some(op)).map(|i| (start, i)),
             Target::Line => self.line_motion(count1, Some(op)).map(|i| (start, i)),
             Target::Obj(o) => self.text_object(o, count1),
+            Target::Gn { .. } => unreachable!("handled above"),
         };
         let Some((start, info)) = res else {
             self.beep();
@@ -1382,6 +1439,11 @@ impl Editor {
                 }
             }
             Simple::VisOther { horiz } => self.visual_other(horiz),
+            Simple::Gn { fwd } => {
+                if !self.current_search(count1, fwd) {
+                    self.beep();
+                }
+            }
         }
     }
 

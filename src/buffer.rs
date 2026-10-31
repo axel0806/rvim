@@ -59,6 +59,41 @@ fn line_of(rope: &Rope, l: usize) -> RopeSlice<'_> {
     }
 }
 
+/// File contents after decoding: the text without its final newline, CRLF
+/// line ends removed when every line has one, and the file's statistics.
+struct Decoded {
+    text: String,
+    crlf: bool,
+    /// The file had no bytes at all.
+    no_lines: bool,
+    stats: FileStats,
+}
+
+fn decode(bytes: &[u8]) -> Decoded {
+    let mut text = String::from_utf8_lossy(bytes).into_owned();
+    let newlines = text.matches('\n').count();
+    let crlf = newlines > 0 && text.matches("\r\n").count() == newlines;
+    if crlf {
+        text = text.replace("\r\n", "\n");
+    }
+    let noeol = !text.is_empty() && !text.ends_with('\n');
+    let stats = FileStats {
+        lines: newlines + usize::from(noeol),
+        bytes: bytes.len(),
+        noeol,
+    };
+    let no_lines = text.is_empty();
+    if text.ends_with('\n') {
+        text.pop();
+    }
+    Decoded {
+        text,
+        crlf,
+        no_lines,
+        stats,
+    }
+}
+
 impl Default for Buffer {
     fn default() -> Self {
         Self::new()
@@ -101,30 +136,27 @@ impl Buffer {
             }
             Err(e) => return Err(e),
         };
-        let mut text = String::from_utf8_lossy(&bytes).into_owned();
-        let newlines = text.matches('\n').count();
-        let crlf = newlines > 0 && text.matches("\r\n").count() == newlines;
-        if crlf {
-            text = text.replace("\r\n", "\n");
-        }
-        let noeol = !text.is_empty() && !text.ends_with('\n');
-        let stats = FileStats {
-            lines: newlines + usize::from(noeol),
-            bytes: bytes.len(),
-            noeol,
-        };
-        let no_lines = text.is_empty();
-        if text.ends_with('\n') {
-            text.pop();
-        }
+        let d = decode(&bytes);
         let buf = Self {
-            rope: Rope::from_str(&text),
+            rope: Rope::from_str(&d.text),
             path: Some(path.to_owned()),
-            crlf,
-            no_lines,
+            crlf: d.crlf,
+            no_lines: d.no_lines,
             ..Self::new()
         };
-        Ok((buf, Some(stats)))
+        Ok((buf, Some(d.stats)))
+    }
+
+    /// The lines of file contents `bytes`, decoded as `load` does (for
+    /// `:read`). An empty file has no lines.
+    pub fn file_lines(bytes: &[u8]) -> (Vec<String>, FileStats) {
+        let d = decode(bytes);
+        let lines = if d.no_lines {
+            Vec::new()
+        } else {
+            d.text.split('\n').map(str::to_owned).collect()
+        };
+        (lines, d.stats)
     }
 
     /// File contents as written: every line gets a terminator ('fixeol').
