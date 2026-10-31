@@ -58,8 +58,6 @@ pub(crate) struct PutFlags {
     pub line_forward: bool,
 }
 
-const SHIFTWIDTH: usize = 8;
-
 fn chars_of(s: &str) -> Vec<char> {
     s.chars().collect()
 }
@@ -508,8 +506,20 @@ impl Editor {
                     self.cursor.line = line;
                 }
                 self.u_save_cursor();
-                self.cursor.col = 0;
-                self.buf.set_line(self.cursor.line, "");
+                if self.opts.autoindent() {
+                    // Keep the indent; it is removed again if nothing is typed.
+                    let line = self.line_vec(self.cursor.line);
+                    let w = line
+                        .iter()
+                        .position(|&c| c != ' ' && c != '\t')
+                        .unwrap_or(line.len());
+                    self.set_line_vec(self.cursor.line, &line[..w]);
+                    self.cursor.col = w;
+                    self.did_ai = w > 0;
+                } else {
+                    self.cursor.col = 0;
+                    self.buf.set_line(self.cursor.line, "");
+                }
                 if oa.line_count > 1 {
                     self.uline = None;
                 }
@@ -722,7 +732,7 @@ impl Editor {
 
     // ---- shift --------------------------------------------------------------
 
-    fn get_indent(line: &[char]) -> usize {
+    pub(crate) fn get_indent(line: &[char]) -> usize {
         let mut vcol = 0;
         for &c in line {
             if c != ' ' && c != '\t' {
@@ -735,14 +745,19 @@ impl Editor {
 
     /// Replaces the indent of `l` with `size` columns of tabs and spaces
     /// ('noexpandtab').
-    fn set_indent(&mut self, l: usize, size: usize) {
+    pub(crate) fn set_indent(&mut self, l: usize, size: usize) {
         let line = self.line_vec(l);
         let rest = line
             .iter()
             .position(|&c| c != ' ' && c != '\t')
             .unwrap_or(line.len());
-        let mut new: Vec<char> = std::iter::repeat_n('\t', size / TABSTOP).collect();
-        new.extend(std::iter::repeat_n(' ', size % TABSTOP));
+        let (tabs, spaces) = if self.opts.expandtab() {
+            (0, size)
+        } else {
+            (size / TABSTOP, size % TABSTOP)
+        };
+        let mut new: Vec<char> = std::iter::repeat_n('\t', tabs).collect();
+        new.extend(std::iter::repeat_n(' ', spaces));
         new.extend(&line[rest..]);
         if new != line {
             self.set_line_vec(l, &new);
@@ -764,9 +779,9 @@ impl Editor {
                 let line = self.line_vec(l);
                 let ind = Self::get_indent(&line);
                 let new = if left {
-                    ind.saturating_sub(SHIFTWIDTH * amount)
+                    ind.saturating_sub(self.opts.shiftwidth() * amount)
                 } else {
-                    ind + SHIFTWIDTH * amount
+                    ind + self.opts.shiftwidth() * amount
                 };
                 self.set_indent(l, new);
             }
@@ -798,7 +813,7 @@ impl Editor {
             return;
         }
         let line = self.line_vec(l);
-        let total0 = amount * SHIFTWIDTH;
+        let total0 = amount * self.opts.shiftwidth();
         let mut textstart = bd.textcol;
         if oa.op == Op::RShift {
             let mut total = total0 + bd.pre_whitesp;
@@ -813,7 +828,11 @@ impl Editor {
                 vcol += incr;
                 textstart += 1;
             }
-            let tabs = ((ws_vcol % TABSTOP) + total) / TABSTOP;
+            let tabs = if self.opts.expandtab() {
+                0
+            } else {
+                ((ws_vcol % TABSTOP) + total) / TABSTOP
+            };
             let spaces = if tabs > 0 {
                 ((ws_vcol % TABSTOP) + total) % TABSTOP
             } else {

@@ -1392,6 +1392,7 @@ impl Editor {
                 self.uline = None;
                 self.buf.insert_line(at, "");
                 self.cursor = Pos::new(at, 0);
+                self.auto_indent(at, if below { at - 1 } else { at + 1 });
                 self.start_insert(count1, InsertKind::OpenLine, false);
                 return;
             }

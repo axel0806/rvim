@@ -7,6 +7,7 @@ use crate::buffer::{Buffer, FileStats};
 use crate::key::{Key, parse_keys};
 use crate::motion::{self, Pos};
 use crate::ops::OpArg;
+use crate::options::Options;
 use crate::register::Registers;
 use crate::text;
 use crate::undo::{Step, UndoTree};
@@ -105,14 +106,6 @@ enum RepItem {
     Newline,
 }
 
-/// Options changed with `:set`.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct Options {
-    pub ignorecase: bool,
-    pub smartcase: bool,
-    pub wrapscan: bool,
-}
-
 pub struct Editor {
     pub buf: Buffer,
     pub(crate) cursor: Pos,
@@ -144,6 +137,8 @@ pub struct Editor {
     pub(crate) last_sub_raw: String,
     pub(crate) sub_flags: crate::ex::SubFlags,
     pub(crate) opts: Options,
+    /// The current line holds only an automatic indent (Vim's `did_ai`).
+    pub(crate) did_ai: bool,
     pub(crate) global_busy: bool,
     pub(crate) cmd_literal: bool,
     pub(crate) global_need_beginline: bool,
@@ -202,10 +197,8 @@ impl Editor {
             cmd_search: None,
             last_sub_raw: String::new(),
             sub_flags: Default::default(),
-            opts: Options {
-                wrapscan: true,
-                ..Default::default()
-            },
+            opts: Options::default(),
+            did_ai: false,
             global_busy: false,
             cmd_literal: false,
             global_need_beginline: false,
@@ -648,6 +641,25 @@ impl Editor {
         self.message = None;
     }
 
+    /// Gives line `new` the indent of line `from` when 'autoindent' is on
+    /// (the start of Vim's `open_line()`), leaving the cursor after it.
+    pub(crate) fn auto_indent(&mut self, new: usize, from: usize) {
+        if !self.opts.autoindent() {
+            return;
+        }
+        let ind = Self::get_indent(&self.line_vec(from));
+        if ind > 0 {
+            self.set_indent(new, ind);
+            let w = self
+                .line_vec(new)
+                .iter()
+                .take_while(|&&c| c == ' ' || c == '\t')
+                .count();
+            self.cursor = Pos::new(new, w);
+            self.did_ai = true;
+        }
+    }
+
     fn insert_key(&mut self, key: Key) {
         match key {
             Key::Esc | Key::Ctrl('c') => return self.finish_insert(),
@@ -719,6 +731,22 @@ impl Editor {
         let replace = self.mode == Mode::Replace;
         match key {
             Key::Char(_) | Key::Tab => {
+                self.did_ai = false;
+                if key == Key::Tab && self.opts.expandtab() {
+                    // 'expandtab': spaces up to the next tab stop.
+                    let ts = self.opts.tabstop();
+                    let vcol = text::cursor_vcol(self.buf.line(line), col, true);
+                    let mode = self.mode;
+                    for i in 0..ts - vcol % ts {
+                        if i == 1 {
+                            // Replace mode replaces one character only.
+                            self.mode = Mode::Insert;
+                        }
+                        self.insert_edit(Key::Char(' '));
+                    }
+                    self.mode = mode;
+                    return true;
+                }
                 let c = if let Key::Char(c) = key { c } else { '\t' };
                 self.u_save_cursor();
                 if replace && col < self.line_len() {
@@ -735,8 +763,48 @@ impl Editor {
             Key::Enter | Key::Ctrl('j') => {
                 self.u_save_cursor();
                 self.uline = None;
+                let ai = self.opts.autoindent();
+                let ind = if ai {
+                    // Only the indent before the cursor is copied.
+                    Self::get_indent(&self.line_vec(line)[..col])
+                } else {
+                    0
+                };
+                let was_ai = std::mem::take(&mut self.did_ai);
                 self.buf.insert(line, col, "\n");
-                self.cursor = Pos::new(line + 1, 0);
+                if ai {
+                    // Text after the cursor loses its leading white space,
+                    // and an indent that was never used is removed.
+                    let skip = self
+                        .line_vec(line + 1)
+                        .iter()
+                        .take_while(|&&c| c == ' ' || c == '\t')
+                        .count();
+                    if skip > 0 {
+                        self.buf.remove(line + 1, 0, skip);
+                    }
+                    if was_ai {
+                        let mut len = self.buf.line_len(line);
+                        while len > 0 && matches!(self.buf.char_at(line, len - 1), Some(' ' | '\t'))
+                        {
+                            self.buf.remove(line, len - 1, 1);
+                            len -= 1;
+                        }
+                    }
+                    if ind > 0 {
+                        self.set_indent(line + 1, ind);
+                        self.did_ai = true;
+                    }
+                }
+                let w = if ai {
+                    self.line_vec(line + 1)
+                        .iter()
+                        .take_while(|&&c| c == ' ' || c == '\t')
+                        .count()
+                } else {
+                    0
+                };
+                self.cursor = Pos::new(line + 1, w);
                 self.ins_stack.push(RepItem::Newline);
             }
             Key::Backspace if replace => match self.ins_stack.pop() {
@@ -831,12 +899,25 @@ impl Editor {
                 self.uline = None;
                 self.buf.insert_line(at, "");
                 self.cursor = Pos::new(at, 0);
+                self.auto_indent(at, at - 1);
             }
             for &k in &keys {
                 self.insert_edit(k);
             }
         }
         self.ins_count = 1;
+        if std::mem::take(&mut self.did_ai) {
+            // Nothing was typed after an automatic indent: remove it.
+            let l = self.cursor.line;
+            let mut len = self.buf.line_len(l);
+            if self.cursor.col >= len {
+                while len > 0 && matches!(self.buf.char_at(l, len - 1), Some(' ' | '\t')) {
+                    self.buf.remove(l, len - 1, 1);
+                    len -= 1;
+                }
+                self.cursor.col = len;
+            }
+        }
         self.mode = Mode::Normal;
         if self.cursor.col > 0 {
             self.cursor.col -= 1;

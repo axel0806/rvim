@@ -105,6 +105,8 @@ const SCRIPT_BODY: &str = r#"
 let s:regs = ['"', '0', '1', '2', '3', '-', 'a', 'b']
 let s:out = []
 for [s:lines, s:keys] in g:cases
+  silent! set autoindent& expandtab& shiftwidth& softtabstop& smarttab& tabstop&
+  silent! set ignorecase& smartcase& wrapscan& scrolloff& hlsearch& incsearch&
   let s:old = bufnr('%')
   enew!
   exe 'silent! bwipe! ' . s:old

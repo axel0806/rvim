@@ -8,6 +8,7 @@ pub mod key;
 pub mod motion;
 mod normal;
 mod ops;
+pub mod options;
 pub mod regex;
 pub mod register;
 mod search;

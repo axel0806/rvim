@@ -319,8 +319,8 @@ fn keyword_class(c: char) -> u32 {
 impl Editor {
     pub(crate) fn re_opts(&self) -> Opts {
         Opts {
-            ignorecase: self.opts.ignorecase,
-            smartcase: self.opts.smartcase,
+            ignorecase: self.opts.ignorecase(),
+            smartcase: self.opts.smartcase(),
             last_sub: self.last_sub.clone(),
         }
     }
@@ -473,7 +473,7 @@ impl Editor {
             let fl = SearchFlags {
                 start: false,
                 end: off.end,
-                wrapscan: self.opts.wrapscan,
+                wrapscan: self.opts.wrapscan(),
             };
             let found = searchit(&self.buf, &re, start, dirc == '/', count, &fl);
             let Some(f) = found else {

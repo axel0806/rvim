@@ -512,9 +512,11 @@ have unit tests (for layout, on the styled `Frame` once milestone 4 lands).
 
 - Emoji use approximate block ranges instead of Vim's full `emoji_all` table
   for word motions; composing characters are separate characters.
-- Options are fixed to Vim's `-N` defaults (`tabstop=8`,
-  `backspace=indent,eol,start`, `whichwrap=b,s`, `startofline`, `wrap`, no
-  `autoindent`). The ruler is always shown. (Milestone 4 adds the registry.)
+- Options come from the registry in `options.rs` (all global for now).
+  `tabstop` is fixed at 8, there is no `softtabstop`/`smarttab`/`smartindent`,
+  `backspace=indent,eol,start`, `whichwrap=b,s` and `startofline` are fixed,
+  and the ruler is always shown. `hlsearch`, `incsearch`, `scrolloff`, `number`,
+  `relativenumber`, `wrap` and `autoread` are stored but have no effect yet.
 - An error does not flush pending typeahead (only matters for pasted key
   sequences).
 - `n` after `/pat/e+1` when the cursor is on the last char of the buffer
@@ -523,8 +525,6 @@ have unit tests (for layout, on the styled `Frame` once milestone 4 lands).
   it on the first non-blank.
 - `\=` expressions, `:s///c` and the `\n` (NUL) replacement are not
   implemented. `:p`, `:nu`, `:=` only set a message.
-- Options: only `ignorecase`, `smartcase` and `wrapscan` can change;
-  `hlsearch`, `incsearch` etc. are accepted and ignored.
 - The frame carries highlight groups per cell (`view::Hl`); only Visual and
   the `~`/`@` filler use them so far. The terminal redraws only rows that
   changed. Still missing: hlsearch, incsearch, matching parens, syntax.

@@ -45,10 +45,13 @@ use:
   (`<Up>` in `:` or `/`).
 - No syntax highlighting, `hlsearch`, `incsearch`, or line numbers. The
   Visual area is drawn (reverse video).
-- No `autoindent`, `expandtab`, `shiftwidth` and other options: only
-  `ignorecase`, `smartcase` and `wrapscan` can be changed with `:set`; the
-  others are fixed to Vim's `-N` defaults (`tabstop=8`,
-  `backspace=indent,eol,start`, `whichwrap=b,s`, `startofline`, `wrap`).
+- Few options. `:set` supports `ignorecase`, `smartcase`, `wrapscan`,
+  `autoindent`, `expandtab`, `shiftwidth`, and stores `hlsearch`,
+  `incsearch`, `scrolloff`, `number`, `relativenumber`, `wrap` and
+  `autoread` without using them yet. `tabstop` is fixed at 8 (setting another
+  value is an error), `softtabstop`, `smarttab` and `smartindent` do not exist,
+  and `backspace=indent,eol,start`, `whichwrap=b,s` and `startofline` are
+  fixed. Options are global; `:setlocal` and `:setglobal` are not there yet.
 - No config file (`vimrc`), plugins, Vimscript, `:help`, folds, completion,
   spell checking, `:terminal`, or `:!` shell commands.
 - `:s`: no `c` flag (confirm) and no `\=` expressions; the `\n` (NUL)

@@ -545,7 +545,7 @@ impl Editor {
         let fl = SearchFlags {
             start: false,
             end: false,
-            wrapscan: self.opts.wrapscan,
+            wrapscan: self.opts.wrapscan(),
         };
         match searchit(&self.buf, &re, Start::At(start), fwd, 1, &fl) {
             Some(f) => Ok(f.pos.line + 1),
@@ -950,43 +950,106 @@ impl Editor {
 
     fn ex_set(&mut self, arg: &str) -> ExRes<()> {
         for item in arg.split_whitespace() {
-            let (name, val): (&str, Option<&str>) = match item.split_once(['=', ':']) {
-                Some((n, v)) => (n, Some(v)),
-                None => (item, None),
-            };
-            let (base, on) = if let Some(b) = name.strip_prefix("no") {
-                (b, false)
-            } else if let Some(b) = name.strip_prefix("inv") {
-                (b, !self.get_bool_opt(b))
-            } else {
-                (name.trim_end_matches(['!', '?', '&']), true)
-            };
-            let toggle = name.ends_with('!');
-            let base = base.trim_end_matches(['!', '?']);
-            let on = if toggle { !self.get_bool_opt(base) } else { on };
-            match base {
-                "ic" | "ignorecase" => self.opts.ignorecase = on,
-                "scs" | "smartcase" => self.opts.smartcase = on,
-                "ws" | "wrapscan" => self.opts.wrapscan = on,
-                "hls" | "hlsearch" | "is" | "incsearch" | "nu" | "number" | "list" | "wrap"
-                | "ru" | "ruler" | "sc" | "showcmd" | "magic" | "et" | "expandtab" | "ai"
-                | "autoindent" | "sw" | "shiftwidth" | "ts" | "tabstop" | "sol" | "startofline"
-                | "js" | "joinspaces" | "hidden" | "hid" => {
-                    let _ = val;
-                }
-                _ => return Err(format!("E518: Unknown option: {base}")),
-            }
+            self.set_one(item)?;
         }
         Ok(())
     }
 
-    fn get_bool_opt(&self, name: &str) -> bool {
-        match name {
-            "ic" | "ignorecase" => self.opts.ignorecase,
-            "scs" | "smartcase" => self.opts.smartcase,
-            "ws" | "wrapscan" => self.opts.wrapscan,
-            _ => false,
+    /// One `:set` argument: `opt`, `noopt`, `invopt`, `opt!`, `opt?`, `opt&`,
+    /// `opt=val`, `opt:val`, `opt+=val`, `opt-=val`, `opt^=val`.
+    fn set_one(&mut self, item: &str) -> ExRes<()> {
+        use crate::options::{INERT, Options, Val, describe};
+        let name_end = item
+            .find(|c: char| !c.is_ascii_alphabetic())
+            .unwrap_or(item.len());
+        let (name, rest) = item.split_at(name_end);
+        if INERT.contains(&name) {
+            return Ok(());
         }
+        let mut name = name;
+        let mut prefix = "";
+        if Options::find(name).is_none() {
+            for p in ["no", "inv"] {
+                if let Some(b) = name.strip_prefix(p)
+                    && (Options::find(b).is_some() || INERT.contains(&b))
+                {
+                    name = b;
+                    prefix = p;
+                    break;
+                }
+            }
+            if INERT.contains(&name) {
+                return Ok(());
+            }
+        }
+        let Some(i) = Options::find(name) else {
+            return Err(format!("E518: Unknown option: {name}"));
+        };
+        let bad = || format!("E474: Invalid argument: {item}");
+        let new = match self.opts.get(i).clone() {
+            Val::Bool(cur) => match (prefix, rest) {
+                ("no", "") => Val::Bool(false),
+                ("inv", "") | ("", "!") => Val::Bool(!cur),
+                ("", "") => Val::Bool(true),
+                ("", "?") => {
+                    let text = describe(i, self.opts.get(i));
+                    self.info(text);
+                    return Ok(());
+                }
+                ("", "&" | "&vim") => crate::options::TABLE[i].default.clone(),
+                _ => return Err(bad()),
+            },
+            Val::Num(cur) => {
+                if !prefix.is_empty() {
+                    return Err(bad());
+                }
+                let (op, val) = if let Some(v) = rest.strip_prefix("+=") {
+                    ('+', v)
+                } else if let Some(v) = rest.strip_prefix("-=") {
+                    ('-', v)
+                } else if let Some(v) = rest.strip_prefix("^=") {
+                    ('^', v)
+                } else if let Some(v) = rest.strip_prefix(['=', ':']) {
+                    ('=', v)
+                } else if rest.is_empty() || rest == "?" {
+                    let text = describe(i, self.opts.get(i));
+                    self.info(text);
+                    return Ok(());
+                } else if rest == "&" || rest == "&vim" {
+                    ('&', "")
+                } else {
+                    return Err(bad());
+                };
+                let n = if op == '&' {
+                    match crate::options::TABLE[i].default {
+                        Val::Num(d) => d,
+                        _ => 0,
+                    }
+                } else {
+                    let v: i64 = val
+                        .parse()
+                        .map_err(|_| format!("E521: Number required after =: {item}"))?;
+                    match op {
+                        '+' => cur + v,
+                        '-' => cur - v,
+                        '^' => cur * v,
+                        _ => v,
+                    }
+                };
+                let def = &crate::options::TABLE[i];
+                if n < 0 {
+                    return Err(format!("E487: Argument must be positive: {item}"));
+                }
+                if def.name == "tabstop" && n != 8 {
+                    return Err(format!(
+                        "E474: Invalid argument: {item} (rvim only supports tabstop=8 so far)"
+                    ));
+                }
+                Val::Num(n)
+            }
+        };
+        self.opts.set(i, new);
+        Ok(())
     }
 
     // ---- :substitute ----------------------------------------------------
