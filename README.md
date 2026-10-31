@@ -13,6 +13,16 @@ full list of known differences.
 cargo run --release -- path/to/file
 ```
 
+## Star History
+
+<a href="https://www.star-history.com/?repos=axel0806%2Frvim&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=axel0806/rvim&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=axel0806/rvim&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=axel0806/rvim&type=date&legend=top-left" />
+ </picture>
+</a>
+
 Prebuilt binaries for Windows, Linux and macOS are attached to the
 [releases](https://github.com/axel0806/rvim/releases).
 
