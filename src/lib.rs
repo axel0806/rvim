@@ -7,6 +7,7 @@ pub mod editor;
 pub mod event;
 pub(crate) mod ex;
 pub mod key;
+mod macros;
 pub mod motion;
 mod normal;
 mod ops;

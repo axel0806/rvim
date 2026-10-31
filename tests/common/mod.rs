@@ -175,7 +175,8 @@ pub fn run_vim(cases: &[(&str, &str)]) -> Option<Vec<Outcome>> {
         return None;
     };
 
-    let mut lines = out.lines();
+    // Not `lines()`: a register line ending in `` must keep it.
+    let mut lines = out.split_terminator('\n');
     let mut outcomes = Vec::new();
     while let Some(header) = lines.next() {
         let nums: Vec<usize> = header

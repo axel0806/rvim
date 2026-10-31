@@ -38,7 +38,8 @@ use:
 **Missing features**
 
 - One buffer and one window: no `:split`, `:vsplit`, tabs, `:ls`, `:b`,
-  marks (`m'`, `` ` ``), the jumplist, macros (`q`, `@`), or `:r`.
+  marks (`m'`, `` ` ``), the jumplist, or `:r`. Macros (`q`, `@`) work; an
+  error ends a running macro as in Vim.
 - No scrolling commands (`<C-f> <C-b> <C-d> <C-u> <C-e> <C-y> zt zz zb`), no
   `H M L`, no `scrolloff`.
 - The `:` command line has Vim's editing keys (`<Left> <Right> <Home> <End>

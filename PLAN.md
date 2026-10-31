@@ -5,6 +5,59 @@ on the same text give the same buffer and cursor as Vim 9 started with
 `vim -N -u NONE` (Vim defaults, no vimrc). Every behaviour is checked against
 a real Vim by the differential harness in `tests/common/mod.rs`.
 
+## Status: read this first
+
+Last updated 2026-10-31. **rvim is an alpha, roughly 25-30% of this plan.**
+Released as `v0.1.0-alpha.1` (that release predates everything below the
+"Since the alpha" line). All tests pass against Vim 9.1 and clippy/fmt are
+clean at the last commit.
+
+| Milestone | State |
+|---|---|
+| 1 Core, 2 Vim grammar | Done |
+| 3 Search and Ex | ~90%. Left: `/`-prompt editing and history, `:s` flag `c` and `\=`, `gn`, `:r`, `:k` |
+| 4 Foundation | ~70%. Left: the Document/Window/Editor split (the biggest item; see "Foundation"), kitty keyboard protocol, cell-level diff redraw, `:setlocal`/`:setglobal`, recovery on terminal close (SIGHUP) |
+| 5 Windows and buffers | ~10%. Done: macros (`q`, `@`, `@@`, `@:`). Left: splits, buffer list, marks (and `'a` in Ex addresses), jumplist, scrolling commands, `scrolloff`, swap files |
+| 6 Modern editing experience | 0%. Not started (hlsearch, incsearch, syntax, line numbers, config file, palette, mouse) |
+| 7 Agent integration | 0%. Not started (file-change reload as an undo step, diff view, ACP connector, agent detection). Research is in "Detecting and connecting to agents" |
+| 8 Prediction | 0%. Not started |
+| 9 Extras | 0%. Not started |
+
+Since the alpha (all committed and pushed): bracketed paste, Alt/F-keys/Insert/
+Shift-Tab, Visual area drawn through `view::Hl` groups, row-level diff redraw,
+the options registry (`options.rs`: `autoindent`, `expandtab`, `shiftwidth`
+work), panic recovery files (`recovery.rs`), the channel-based event loop
+(`event.rs`), `:` command-line editing and history (`cmdline.rs`), `&`/`g&`,
+macros (`macros.rs`).
+
+**Suggested order for what is left:** (1) Document/Window split, (2) marks +
+splits + buffers + scrolling, (3) the ACP connector and file-change reload
+(milestone 7), because those are the goals beyond Vim, (4) hlsearch/incsearch/
+syntax, (5) prediction. Cut a new release (`git tag v0.1.0-alpha.N`) when a
+milestone lands; `.github/workflows/release.yml` builds the binaries.
+
+### Working notes (things that cost time)
+
+- Windows Git Bash: put `~/.cargo/bin` on `PATH`. Never run `python`/`python3`
+  (the Store stub hangs); use `perl -0pi` for multi-line edits. Shell
+  heredocs and `sed` mangle backslashes (`\t`, `\n`, `\x16` turn into real
+  control characters, and `"\<..>"` fails to compile): write Rust with the
+  Write/Edit tools, and check `cargo build` right after any scripted edit.
+- Differential harness artifacts (Vim side, not bugs in rvim): Vim runs in Ex
+  mode (`-es`), so `<BS>` on an empty `:` line does not cancel and an empty
+  `:<CR>` moves down a line; cases must not run `:x`/`:q` (they kill Vim);
+  `silent! feedkeys` means errors never flush typeahead, so macro/typeahead
+  abort-on-error cannot be compared (use unit tests, see `tests/macros.rs`);
+  command history is cleared per case via `histdel`, options are reset per
+  case in `SCRIPT_BODY`; Vim died on `qaf{char}x q @a` style cases (recording
+  an `f` motion), so they are left out. Register lines are compared with
+  trailing `\r` kept.
+- Every behaviour needs cases in `tests/compat_*.rs`; when Vim and rvim
+  differ, rvim is wrong. Verify with `RVIM_REQUIRE_VIM=1 cargo test`, then
+  `cargo clippy --all-targets && cargo fmt --check`.
+- Known gaps are listed under "Known differences" below and mirrored in
+  README.md ("Where rvim differs from Vim"): keep both current.
+
 ## Direction
 
 rvim stays Vim-compatible for everything Vim does, and adds three things on
@@ -91,7 +144,7 @@ What the revised milestones fix, as the code stands today:
    event loop, (c) styled frame with the Visual area drawn, (d) diff redraw,
    (e) input (bracketed paste, modifiers, kitty protocol), (f) options
    registry, (g) emergency recovery files. Details in "Foundation".
-5. **Windows and buffers.** Splits, buffer list, marks (also in Ex
+5. **Windows and buffers.** (macros `q`/`@` are done.) Splits, buffer list, marks (also in Ex
    addresses), jumplist, macros (`q @`), `<C-f> <C-b> <C-d> <C-u> zt zz zb
    H M L`, 'scrolloff'; then swap files (see "Recovery").
 6. **Modern editing experience.** hlsearch, incsearch, matching parens,

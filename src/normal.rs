@@ -130,6 +130,10 @@ pub(crate) enum Simple {
     Ampersand {
         all: bool,
     },
+    /// `q{reg}`.
+    Record(char),
+    /// `@{reg}`.
+    Macro(char),
     WriteQuit,
     Quit,
     FileInfo,
@@ -616,6 +620,24 @@ fn parse_body(k: &[Key], visual: bool) -> Res<(Body, Option<usize>, usize)> {
             Key::Char('U') => return simple(Simple::UndoLine, 1),
             Key::Char('.') => return simple(Simple::Dot, 1),
             Key::Char('&') => return simple(Simple::Ampersand { all: false }, 1),
+            Key::Char('q') => {
+                return match k.get(1) {
+                    None => Ok(None),
+                    Some(Key::Char(c)) if c.is_ascii_alphanumeric() || *c == '"' => {
+                        simple(Simple::Record(*c), 2)
+                    }
+                    _ => Err(()),
+                };
+            }
+            Key::Char('@') => {
+                return match k.get(1) {
+                    None => Ok(None),
+                    Some(Key::Char(c)) if c.is_ascii_alphanumeric() || "@:.-_\"".contains(*c) => {
+                        simple(Simple::Macro(*c), 2)
+                    }
+                    _ => Err(()),
+                };
+            }
             Key::Esc => return simple(Simple::Esc, 1),
             Key::Char('Z') => {
                 return match ch(k.get(1)) {
@@ -1359,6 +1381,8 @@ impl Editor {
                 };
                 self.cmd_start(&initial);
             }
+            Simple::Record(c) => self.start_recording(c),
+            Simple::Macro(c) => self.exec_register(c, count1),
             Simple::Ampersand { all } => self.execute_ex(if all { "%s//~/&" } else { "s" }),
             Simple::WriteQuit => self.execute_ex("x"),
             Simple::Quit => self.execute_ex("q!"),

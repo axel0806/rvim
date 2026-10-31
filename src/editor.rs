@@ -155,6 +155,14 @@ pub struct Editor {
     pub(crate) op_end: Pos,
     pub(crate) cmdline: String,
     pub(crate) cmdpos: usize,
+    /// Register being recorded into (`q{reg}`), and the keys typed so far.
+    pub(crate) recording: Option<char>,
+    pub(crate) rec_keys: Vec<Key>,
+    pub(crate) last_macro: Option<char>,
+    /// Number of errors so far; a macro stops when it grows.
+    pub(crate) beeps: usize,
+    /// Nesting level of register execution (keys are not recorded inside).
+    pub(crate) replaying: usize,
     pub(crate) cmd_hist: Vec<String>,
     pub(crate) hist_idx: Option<usize>,
     pub(crate) hist_prefix: String,
@@ -216,6 +224,11 @@ impl Editor {
             op_end: Pos::default(),
             cmdline: String::new(),
             cmdpos: 0,
+            recording: None,
+            rec_keys: Vec::new(),
+            last_macro: None,
+            beeps: 0,
+            replaying: 0,
             cmd_hist: Vec::new(),
             hist_idx: None,
             hist_prefix: String::new(),
@@ -341,6 +354,14 @@ impl Editor {
     }
 
     pub fn handle_key(&mut self, key: Key) {
+        // Recording: the `q` that ends it is not part of the macro; keys
+        // replayed from a register are not recorded again.
+        if self.depth == 0 && self.replaying == 0 && self.recording.is_some() {
+            if key == Key::Char('q') && self.mode == Mode::Normal && self.pending.is_empty() {
+                return self.stop_recording();
+            }
+            self.rec_keys.push(key);
+        }
         let key = match key {
             Key::Alt(c) => {
                 self.handle_key(Key::Esc);
@@ -426,6 +447,7 @@ impl Editor {
     // ---- helpers --------------------------------------------------------
 
     pub(crate) fn beep(&mut self) {
+        self.beeps += 1;
         self.bell = true;
     }
 

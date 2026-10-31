@@ -1,7 +1,9 @@
 # CLAUDE.md
 
 rvim: a Vim clone in Rust. Read `PLAN.md` first (architecture, milestones,
-known differences). Keep it current when finishing work.
+known differences). Keep it current when finishing work. The "Status" section at the top of
+PLAN.md says how far along the project is; update it whenever a milestone
+moves.
 
 ## Commands
 
