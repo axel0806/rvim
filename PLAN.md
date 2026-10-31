@@ -64,6 +64,10 @@ only. Nothing listed here is built, and the milestone table above is unchanged.
   `AGENTS.md`, `MAINTAIN.md`, `INSTALL.md`): see "Repository and packaging".
 - Future goals (AUR packages, logo): see "Future goals".
 
+Agent experience (how the agent parts fit together, with the implementation
+steps and test plan for them): see "Agent experience: how it fits together"
+after milestone 7.
+
 ### Working notes (things that cost time)
 
 - Scrolling and the harness (milestone 5). Vim run with `-es` has a 24x80
@@ -647,6 +651,533 @@ Agents edit files while rvim has them open.
 - **Safety**: the endpoint listens only on a user-owned socket (mode 0600, or
   a per-user pipe ACL). Nothing leaves the machine unless the user configures
   a command that does it. No telemetry.
+
+## Agent experience: how it fits together
+
+This section fixes the user-facing path through the agent parts above. Where
+it repeats a rule, the rule is the same. Where it makes a rule concrete, the
+text says so, and where it refines an earlier statement it is marked
+"(refines ...)". Nothing here is on by default: with no config and no flag,
+rvim is `vim -N -u NONE`, and the agent features start only at an explicit
+opt-in or an explicit `:Agent...` command. UNVERIFIED marks a protocol or
+Vim detail that must be checked before it is built.
+
+### Summary
+
+| User action | What rvim does | Key or command |
+|---|---|---|
+| Looks for installed agents | Read-only scan; lists what it found; connects to nothing | `:AgentScan` |
+| Sends a prompt the first time | Consent prompt for this agent and project; on yes, connects and sends | `:Agent <prompt>` |
+| Sends a prompt later | Sends the prompt with the cursor and open-file paths; reply streams into the agent log | `\a`, then Enter; or `:Agent <prompt>` |
+| Sends a selection | Opens `:'<,'>Agent ` with the selected range | Visual `\a` |
+| Stops a turn | Sends `session/cancel` | `\ac`, `:AgentCancel` |
+| Agent edits a file that is open and unmodified | Reloads it as one undo step tagged `agent:<id>`; cursor and scroll follow the text | none (automatic) |
+| Agent edits a file with unsaved changes | Conflict prompt; never a silent reload | `l` load disk, `k` keep mine, `d` diff, `m` merge |
+| Agent asks permission | Modal prompt on the message line; never answered by rvim alone | `y` `a` `n` `N` (`<Esc>` rejects once) |
+| Reviews changes | Gutter marks; hunk navigation; accept or revert a hunk | `]c` `[c` `dp` (accept) `do` (revert); `:AgentChanges` |
+| Switches the active agent | Sets the target of `:Agent` and `\a` | `:AgentUse <name>` |
+| Reads the agent's output | Read-only agent log document | `\al`, `:AgentLog` |
+| Runs Claude Code inside rvim | Terminal pane with the CLI, sharing rvim's IDE server | `:AgentTerminal`, `<C-\><C-n>` |
+| Attaches Claude Code from outside | rvim's IDE server (lock file) | `/ide` in Claude Code |
+| Revokes trust | Disconnects; removes approval and "always" grants for this project | `:AgentForget[!]`, `:AgentGrants` |
+| Has no agent | Files-only mode: reload on change, diff against saved text or git | `:DiffSaved`, `:DiffGit`, `:checktime` |
+
+### Keys and commands
+
+Keys. Vim's status is given for each, because a key may only be bound when
+its extension is on (CLAUDE.md: an extension never changes a Vim key sequence
+while it is off).
+
+| Mode | Key | Action | Vim today |
+|---|---|---|---|
+| Normal | `\a` | Opens the command line with `:Agent ` | `\` has no default command (UNVERIFIED; check with `:map \` and a probe in Vim) |
+| Visual | `\a` | Opens the command line with `:'<,'>Agent ` | same (UNVERIFIED) |
+| Normal | `\ac` | `:AgentCancel` | same |
+| Normal | `\al` | `:AgentLog` | same |
+| Normal (modern profile only) | `<Space>a` | Same as `\a` | `<Space>` is `l`, so the modern profile changes it; the prefix is taken only with the profile on |
+| Diff view | `]c` `[c` | Next and previous hunk | Vim, diff mode only |
+| Diff view | `dp` in the buffer window | Accept hunk: copy the buffer's hunk into the baseline | Vim, diff mode only |
+| Diff view | `do` in the buffer window | Revert hunk: copy the baseline's hunk into the buffer | Vim, diff mode only |
+| Outside diff view | `]c` `[c` | Jump between gutter-marked lines | no-op in Vim (UNVERIFIED); bound only with agent keys on |
+| Agent log window | `<C-c>` | `:AgentCancel` | Vim `<C-c>` elsewhere, unchanged |
+| Any | `<C-^>` in the agent log | Back to the previous document (before splits) | Vim alternate file |
+
+The leader is `\` (Vim's default `mapleader`) with the agent keys on, and
+`<Space>` only with the modern profile. The rule in "Extensions and the Vim
+contract" that new keys use keys Vim leaves free is wrong for `<Space>` (Vim
+uses it as `l`), so this section keeps `<Space>` to the modern profile and
+says so there. The PLAN text should be fixed when this lands.
+
+Ex commands (all capitalised, so they do not clash with Vim's):
+
+| Command | Effect |
+|---|---|
+| `:AgentScan` | Runs detection on a worker; lists what was found with version and state. Connects to nothing. |
+| `:Agent` | No text: lists agents and their states. With text: sends it to the active agent (see Prompting). With a range: sends the range as the selection. |
+| `:AgentConnect [name]` | Consent prompt if not yet approved for this project, then connects. |
+| `:AgentDisconnect [name]` | Closes the connection and keeps the approval. Stops the process only if rvim started it. |
+| `:AgentForget[!] [name]` | Disconnects and removes the approval and the permission grants for this project. `!` does it for every project. |
+| `:AgentGrants` | Lists the stored permission grants for this project. |
+| `:AgentUse [name]` | Sets the active agent. No name: lists the connected agents. |
+| `:AgentCancel` | Cancels the active agent's turn. |
+| `:AgentLog [name]` | Shows the agent's output document. |
+| `:AgentChanges[!]` | Recent changes with source tags (`!`: all documents). |
+| `:AgentTerminal [name]` | Runs the agent's CLI in a terminal pane. |
+| `:DiffSaved`, `:DiffGit` | Diff the buffer against its baseline: last saved text, or git `HEAD` (run on a worker). |
+
+Config (the opt-in; the config file itself is milestone 6, so until then only
+this table is read, and the same loader is used):
+
+```toml
+[agent]
+enabled = true              # agent keys, startup scan, file watching, gutter marks
+shareable = ["C:/proj"]     # directories rvim may share; default: the project root
+log = "events"              # or "transcript" (JSON-RPC with tokens redacted)
+```
+
+`rvim --agent` is the same as `enabled = true` for one run.
+
+### 1. First run
+
+| Start | What the user sees | Keys | Startup work |
+|---|---|---|---|
+| No config, no flag | Nothing: no status indicator, no message | Vim's | none |
+| `enabled = true` or `--agent` | Once a scan finds something, one message per session: `ai: found claude-acp, codex. :AgentConnect to use`. Status indicator appears (see Lifecycle) | Agent keys on | Scan on a worker at startup |
+| Explicit `:AgentScan`, `:Agent`, `:AgentConnect` (no opt-in) | Result on the message line; status indicator appears after the first scan | Agent keys stay off | Only what the command asks for |
+
+(refines "Detecting and connecting to agents": startup detection runs only
+with the opt-in, so a Vim user who never opts in sees no extra work.)
+
+The consent prompt, exact text (one message line; `?` gives the rest):
+
+```
+Connect Claude Code for C:/proj? It sees open file paths and the file, cursor and selection you send with a prompt. It reads other files only inside shareable directories. [y]es [n]ot now [?] details
+```
+
+| Key | Result |
+|---|---|
+| `y` | Stores the approval, connects, sends the prompt that was waiting |
+| `n`, `<Esc>` | Not now. Nothing stored; asked again the next time the agent is used |
+| `?` | Opens the full text in the agent log: the exact paths that would be sent, the directories the agent may read, and that the agent's own service may receive what it reads (that is the agent's policy, not rvim's). The prompt stays open |
+
+Storage. Approvals are in `agent-approvals.toml` in the rvim config directory
+(`$XDG_CONFIG_HOME/rvim/`, Windows `%APPDATA%\rvim\`), not in `config.toml`,
+so rvim never rewrites the file the user edits. (refines "The choice is
+remembered in the config".)
+
+```toml
+[[approval]]
+agent = "claude-acp"             # registry id
+project = "C:/Users/axel/proj"   # canonical path, case-folded on Windows
+protocol = "1"                   # protocol version the connector was verified against
+approved = "2026-11-01"
+
+[[grant]]                        # written by allow_always / reject_always, see Permissions
+agent = "claude-acp"
+project = "C:/Users/axel/proj"
+kind = "edit"                    # ACP tool call kind (UNVERIFIED value list)
+answer = "allow"                 # or "reject"
+```
+
+- Written atomically (temp file, then rename). If the file cannot be parsed,
+  rvim treats it as empty, shows `agent-approvals.toml unreadable; no
+  approvals loaded`, and does not overwrite it until the next approval.
+- Project root: the nearest ancestor of the active file that contains `.git`;
+  otherwise the directory rvim was started in. Both canonicalised.
+- Approval is per (agent id, project root). `claude-acp` and `claude-ide` are
+  separate ids with separate approvals.
+- `:AgentForget` (or `:AgentForget!`) removes these records; it is the only
+  way to revoke. Nothing expires.
+
+### 2. Lifecycle
+
+One state machine per agent. Its pure part (states, events, transitions,
+backoff) is in `agent/state.rs`, with no I/O, so it is tested directly.
+
+| State | Meaning | Status line (ASCII) |
+|---|---|---|
+| NotInstalled | Not found by the last scan | `ai: none` after a scan; nothing before one |
+| Found | Executable or config seen; not approved here | `ai: claude found` |
+| Connecting | Process started or socket opened; `initialize`, `authenticate`, `session/new` in progress. Also the brief stage after approval | `ai: claude connecting` |
+| Idle | Connected, no turn running | `ai: claude` |
+| Working | A `session/prompt` turn is running | `ai: claude working 12s` (seconds shown after 5 s; an ASCII spinner cycles at the start) |
+| WaitingPermission | The turn is paused on a request | `ai: claude PERMISSION 2` (reverse video; count of queued requests) |
+| Disconnected | Connection lost; retry scheduled | `ai: claude retry 2/5` |
+| Error | Could not connect, or gave up retrying | `ai: claude error` (error style; detail once on the message line) |
+
+Files-only (no agent connected, opt-in on) shows `ai: files only`. With no
+opt-in, no indicator is drawn at all.
+
+Transitions:
+
+| From | Event | To | Action |
+|---|---|---|---|
+| NotInstalled, Found | scan finds the agent | Found | none |
+| Found | `y` at consent, or `:AgentConnect` with approval already stored | Connecting | store approval (first time) |
+| Found | `n` at consent | Found | nothing stored |
+| Found (approved here) | first `:Agent` in a session | Connecting | lazy: no connection at startup |
+| Connecting | `initialize`, `authenticate`, `session/new` succeed | Idle | becomes active if none is |
+| Connecting | no reply to `initialize` in 10 s; auth error; process exits | Error | message from the table in "Failures" |
+| Idle | `session/prompt` sent | Working | none |
+| Working | stop reason returned (end of turn) | Idle | none |
+| Working | `session/request_permission` | WaitingPermission | prompt shown (Permissions) |
+| WaitingPermission | last queued request answered | Working | none |
+| WaitingPermission | `\ac` | Working until the stop reason | every queued request answered as cancelled; `session/cancel` sent |
+| Idle, Working, WaitingPermission | EOF, socket error, process exit | Disconnected | turn (if any) ends with `claude: connection lost`; retry timer |
+| Disconnected | reconnect succeeds | Idle | the lost turn is not resumed |
+| Disconnected | 5 retries failed | Error | none |
+| Error | `:AgentConnect` | Connecting | none |
+| any connected | `:AgentDisconnect`, `:AgentForget`, rvim quits | Found | close; stop only processes rvim started |
+
+Backoff: retries at 1, 2, 4, 8 and 16 seconds, then Error. A timer is requested
+through `Editor::next_deadline()` and fired as an event, so nothing sleeps on
+the UI thread. A successful connect resets the count.
+
+Several agents keep separate states. The status line shows the active agent
+and its state, with `(+N)` for other connected agents, and the `PERMISSION`
+state of any agent is shown even when that agent is not active.
+
+### 3. Prompting
+
+`:Agent <text>` sends `<text>` as typed (the rest of the line, `|` is not a
+separator). The target is the active agent. If no agent is active:
+
+- one found agent and approved here: it becomes active on connect;
+- one found agent not yet approved here: consent prompt, then send;
+- several found and none active: message `ai: several agents found, pick one with :AgentUse` (no prompt).
+
+`\a` (Normal) and Visual `\a` only fill the command line; the user finishes the
+text and presses Enter. Nothing is sent until Enter.
+
+Context attached to each prompt:
+
+| Item | When | Sent as |
+|---|---|---|
+| Active file path | the buffer has a name | `resource_link` with the `file://` URI |
+| Cursor | always | text block `Cursor: <path>:<line>:<col>` |
+| Selection | the command had a range | embedded resource `file:///<abs>#L<start>-<end>` with its text (URI convention UNVERIFIED) |
+| Open file paths | always; paths only | `resource_link` list, at most 50, then `(+N more)`; filtered by shareable directories |
+| Buffer text | never sent in the prompt | served only when the agent calls `fs/read_text_file`, and then it is the unsaved text |
+
+Excluded everywhere, even inside shareable directories: `.env*`, `*.pem`,
+`*.key`, `id_rsa*`. rvim does not list them and does not serve them.
+
+Response pane:
+
+- Before splits (milestone 5): the message line shows the last complete line of
+  the reply, updated per redraw, truncated to the width. `\al` / `:AgentLog`
+  replaces the current window's document with the agent log (one read-only
+  document per agent, named `[claude]`, `[codex]`, ...). `<C-^>` returns to the
+  previous document, as Vim's alternate file does.
+- With splits: `:AgentLog` opens a split at the bottom, one third of the window
+  height (at least 5 rows). It closes with `:q` or `<C-w>c`. Autoscroll only when
+  the cursor is on the last line; otherwise the cursor and view stay where they
+  are, as with `:terminal`.
+- Rendering: message text as plain lines; thoughts (if sent) in the `Comment`
+  group; tool calls as one line `[tool] edit src/a.rs: completed`; plans as
+  `[plan] 2/5 done`; errors in the `ErrorMsg` group. No Markdown rendering until
+  syntax highlighting (milestone 6).
+- Streaming: chunks append to the document; a partial line is held until its
+  newline. All updates in one event drain produce one redraw.
+
+Cancel: `\ac`, `:AgentCancel`, or `<C-c>` in the agent log. `session/cancel` is
+sent; pending permission requests are answered as cancelled (ACP outcome
+`cancelled`, wire shape UNVERIFIED). Edits already written stay on disk and in
+undo.
+
+### 4. The edit loop
+
+Principle: an agent's write is never held back to wait for review. It lands at
+once as one undo step, and review comes after, always one `u` away.
+
+Three ways a document changes because of an agent:
+
+| Path | What rvim does |
+|---|---|
+| A. The agent writes a file on disk (any agent) | The file watcher sees the change and reloads it (below). The step is tagged by the agent if rvim recognises the write |
+| B. ACP `fs/write_text_file` served by rvim | rvim records a write intent (path, SHA-256 of the new text, agent id, request id), writes the file, and the watcher's reload is tagged `agent:<id>` because the hash matches the intent |
+| C. ACP `diff` in a tool call | Informational only: shown in the permission prompt and the agent log. rvim never applies a diff itself |
+
+Path B is why a single source of truth is kept: the disk is written once, and
+the buffer follows the disk through path A's reload. Nothing is applied
+"computed for an old version", so the rule that asynchronous results are
+dropped when the document version has moved (CLAUDE.md) is not broken.
+
+File watcher (worker, milestone 7 step 2): polls mtime and size of open files
+every 750 ms and on focus gained; `:checktime` polls at once. When a file has
+changed, the worker reads it and sends `FileChanged(DocId, text, hash,
+writer)` (refines `FileChanged(DocId)`: the worker does the I/O, so the editor
+receives the text). `writer` is `agent:<id>` for a matching write intent and
+`external` otherwise.
+
+When the editor applies it:
+
+| Document | Mode | Result |
+|---|---|---|
+| Unmodified since the last sync | Normal, no pending keys | Reload as one undo step (below). Applied at once |
+| Unmodified | Any other mode | Queued; applied on return to Normal mode. Message: `x.rs changed on disk; reloads in Normal mode` |
+| Modified | Any | Conflict prompt (below). Never a silent reload |
+| Deleted on disk | Any | Buffer kept and marked `[deleted]`; message `"x.rs" was deleted on disk`; `:w` writes it again |
+
+Insert mode is never interrupted: a change that arrives while typing waits.
+Leaving Insert mode with typed text makes the document modified, so the
+conflict prompt appears rather than losing text.
+
+Reload as one undo step (`autoread` on; with the opt-in it is on by default for
+the session, see "Files-only fallback"):
+
+- A line diff (`similar`, Myers) between the buffer and the new text is applied
+  as line edits in one undo step tagged with the writer.
+- Marks and tracked lines follow the diff, as in the existing mark code.
+- Cursor: if its line is equal in both texts, it moves with that line. If its
+  line is inside a deleted or replaced run, it goes to the first new line of the
+  replacement, or the line before the deletion when there is none; the column is
+  the desired column, clipped. Lines that did not change do not move.
+- Scroll top: mapped the same way. If the top line itself changed, the view is
+  adjusted so the cursor keeps its screen row where possible.
+- Message: `"src/a.rs" changed on disk (agent:claude): +3 -1 lines`.
+- `u` restores the text and the cursor from before the reload, as usual. `u`
+  does not write the disk, so the buffer now differs from the file and is
+  modified; `:w` then asks as in Vim (W11, below).
+- Vim difference (to record under "Known differences" when built): Vim's
+  `autoread` reload keeps the cursor line number, not the diff mapping, and
+  this rule is not what Vim does (UNVERIFIED for Vim's exact placement; probe
+  it with a file change outside the harness before the step lands, since the
+  harness cannot write files).
+
+Conflict prompt (buffer modified and the file changed on disk):
+
+Message: `"src/a.rs" changed on disk and in rvim. [l]oad disk [k]eep mine [d]iff [m]erge`
+
+| Key | Result |
+|---|---|
+| `l` | Loads the disk text as one undo step tagged `external`; the user's text is one `u` away |
+| `k`, `<Esc>` | Keeps the buffer. The disk version's hash is recorded as seen, so the prompt does not come back for it. `:w` then asks: `"src/a.rs" changed since reading; overwrite? [y]es [n]o` (W11/W12) |
+| `d` | Opens the diff view (baseline = disk text, buffer on the other side); the prompt stays |
+| `m` | Three-way merge: base = last saved text, ours = buffer, theirs = disk. Clean hunks merge; conflicts are written into the buffer as `<<<<<<< mine`, `=======`, `>>>>>>> disk` in one undo step. The buffer stays modified; `:w` refuses while markers remain (rvim extension, not in Vim) |
+
+The prompt is modal: only these keys act, others beep.
+
+Per-hunk review:
+
+- Baseline per document: the last saved text. `:w` resets it to the buffer's
+  text. `dp` moves it forward by one hunk (accept), without changing the buffer
+  text, so it adds no undo step.
+- Gutter: one column left of the line numbers, drawn only when the document
+  differs from its baseline and agent keys are on. `+` added line, `~` changed
+  line, `_` lines were deleted after this line. Style group `Changed` (new).
+- Diff view (`:DiffSaved`, `:DiffGit`, or the conflict prompt's `d`): the
+  baseline is a read-only `[base]` window on one side, the buffer on the other,
+  both with `:diffthis`. The keys are Vim's own (see Keys). `do` in the buffer is
+  one undo step tagged `user`.
+- Before splits: `:DiffSaved` shows a unified diff in a read-only document.
+  `do` and `dp` are not available; accept everything with `:w`, revert
+  everything with `:e!`.
+- Recent changes, `:AgentChanges`: the document's undo steps, newest first, last
+  50, one line each: `#seq time source file +added -removed`. `<CR>` jumps to the
+  first changed line of that step; it does not undo. Source tags: `user`,
+  `agent:<id>`, `external`, `paste`, `prediction`.
+
+Undo tags: every undo step records its source (existing rule), and the step
+for a reload records the file's hash so `:AgentChanges` can show it.
+
+### 5. Permission requests
+
+A permission request is shown as a modal prompt on the message line:
+
+```
+claude-acp wants to edit src/a.rs (+3 -1). [y]es [a]lways [n]o [N]ever (1/2)
+claude-acp wants to run: cargo test. [y]es [n]o (1/1)
+```
+
+- Only the options the agent sent are offered: `allow_once` = `y`,
+  `allow_always` = `a`, `reject_once` = `n`, `reject_always` = `N`. For
+  `allow_always` the text says the scope: `[a]lways for edit in this project`.
+- `<Esc>` answers `reject_once`, or cancelled if no reject option was sent (wire
+  shape UNVERIFIED).
+- Queue: first in, first out across all agents; `(k/n)` counts the queue. Keys
+  answer the head request; the prompt consumes the keys, so they do not reach
+  Normal mode or prediction.
+- Never auto-answered by rvim. There is no timeout that answers. After 5 minutes
+  the message line reads `claude-acp still waiting for y or n`, repeated every
+  5 minutes. The only automatic answers are `cancelled` (on `\ac`, cancel, or
+  disconnect, where the agent is gone) and the stored grants below.
+- `always` (`allow_always` or `reject_always`) is stored as a `[[grant]]` in
+  `agent-approvals.toml` for (agent, project, tool kind). Later requests of that
+  kind in that project get the stored answer without a prompt. A first-time
+  request of a kind always prompts.
+- `:AgentGrants` lists them; `:AgentForget` removes them with the approval;
+  `:AgentForget!` removes them for every project.
+- Requests from the IDE server (`openDiff`, below) are the same prompt, with
+  `[y]es [n]o`, and do not get `always`.
+
+### 6. Multiple agents and switching
+
+- Each connected agent has its own state, its own agent log document, and its
+  own entries in the permission queue (the prompt names the agent).
+- The active agent is the first one that reaches Idle in the session, until the
+  user runs `:AgentUse <name>` (id or display name; `<Tab>` completion once Ex
+  completion exists). `:AgentUse` with no name lists the connected agents with
+  their states. The choice lasts for the session; approvals are per agent, not
+  per choice.
+- Writes are attributed per agent (source tag `agent:<id>`). Two agents editing
+  one file need no special case: each write is tagged by its own intent, and the
+  conflict rules apply as usual.
+
+### 7. Claude Code: IDE server and terminal pane
+
+Two ways to reach Claude Code, both with the approval rules above (agent id
+`claude-ide` for the IDE server).
+
+IDE server (Claude Code's own IDE integration, UNVERIFIED protocol details as
+listed in "Detecting and connecting"):
+
+- Starts only after `:AgentConnect claude-ide` is approved for the project.
+- Binds `127.0.0.1` on an ephemeral port. The token is 128 random bits.
+- Lock file: `<CLAUDE_CONFIG_DIR or ~/.claude>/ide/<port>.lock`, written
+  atomically after the bind. Fields: `pid` (rvim's), `workspaceFolders` (the
+  project root), `ideName` (`rvim`), `transport` (`ws`), `authToken`. Owner-only
+  permissions on Unix; on Windows an ACL for the current user (UNVERIFIED how
+  Claude Code reads it).
+- Lock file lifecycle: created when the server starts; removed on clean quit,
+  `:AgentDisconnect claude-ide`, and `:AgentForget`. At startup rvim removes a
+  `<port>.lock` only if its `ideName` is `rvim` and its `pid` is not running.
+  It never touches another tool's lock files.
+- From an external terminal the user runs `/ide` in Claude Code and picks rvim
+  (picker behaviour UNVERIFIED). Message on attach: `claude-ide: client attached`.
+- Served calls (UNVERIFIED names, from the research above): current selection,
+  open editors, open file, and `openFile` (open a shareable file at a line, no
+  prompt). `openDiff` is a permission request (`[y]es [n]o`): `y` writes the
+  proposal through the write-intent path, `n` rejects it. `getDiagnostics`
+  returns an empty list until LSP (milestone 9).
+- Transport: JSON-RPC over WebSocket (`tungstenite`, blocking). One thread per
+  client; reads become events; no call from the editor waits on the socket.
+
+Terminal pane:
+
+- `:AgentTerminal [name]` runs the agent's CLI in a PTY (`portable-pty`, ConPTY on
+  Windows). Before splits it takes the window, as `:terminal` does; with splits
+  it opens a bottom split like the agent log.
+- Environment for the child: `RVIM_SOCKET` (when the context endpoint is on),
+  `ENABLE_IDE_INTEGRATION=true` and `CLAUDE_CODE_SSE_PORT` (when the IDE server
+  is running) (names UNVERIFIED, from the research above).
+- Terminal mode: keys go to the child. `<C-\><C-n>` returns to Normal mode in
+  that window, and `i` or `a` in Normal mode returns to Terminal mode (Vim's
+  `:terminal`). No other Vim key is handled in Terminal mode.
+- When the child exits, the window shows `[exited <code>]` and stays until closed.
+- Quitting rvim with a child it started still running asks:
+  `claude still running. [y]es quit and stop it [n]o`. Children rvim did not start
+  are never touched; the terminal pane only ever runs children it started.
+
+### 8. Files-only fallback
+
+Works with no setup and no agent: the file watcher and reload (opt-in), the
+conflict prompt, `:checktime`, `:DiffSaved`, `:DiffGit` and `:AgentChanges` all
+work without any agent connected. A user who runs `claude` in another terminal
+gets the same edit loop; its writes are tagged `external`, because there is no
+write intent.
+
+How rvim says it is in this mode:
+
+- Status line: `ai: files only` when the opt-in is on and no agent is connected
+  (and none is found, else the Found state shows).
+- First external change in a session, message: `files only: changes on disk are
+  reloaded; no agent connected`.
+- With no opt-in: Vim's behaviour. `autoread` is off, so a change is reported
+  (`:checktime` gives Vim's warning) and nothing reloads until `:e!`. This is the
+  differential case, and it is the one that must not change.
+
+### 9. Prediction and agent coexistence
+
+Prediction (milestone 8) is suppressed while the document is about to change
+under it. Suppression is checked when a request would start and when a
+suggestion would show:
+
+| Condition for the document | Prediction |
+|---|---|
+| An agent turn is Working in this project | Off: no request, and any ghost text is dropped (not just hidden) |
+| A permission request that touches this document is queued | Off |
+| The conflict prompt is open for this document | Off |
+| A reload is queued for this document | Off |
+
+`Editor::prediction_allowed(doc)` returns this. It lands in milestone 7 step
+5 as a function that returns false (prediction does not exist yet) and is
+tested there, so milestone 8 only plugs in.
+
+Keys that never conflict:
+
+- Prediction accept (`<M-y>` by default; `<Tab>` only with the modern profile)
+  acts only while ghost text is shown. Otherwise `<Tab>` is Vim's Insert `<Tab>`
+  (unchanged).
+- Agent keys are all `\`-prefixed or Normal-mode keys that prediction does not
+  use. The permission and conflict prompts take their keys while open.
+- Accepting a suggestion is an undo step tagged `prediction` (existing rule), so
+  `:AgentChanges` shows it with its source.
+
+### 10. Failures and privacy
+
+Failures:
+
+| Failure | How it is seen | Message (message line) | State and recovery |
+|---|---|---|---|
+| Agent process exits | stdout EOF, exit code | `claude-acp: exited 1; see :AgentLog` | Disconnected, retried 5 times, then Error |
+| No reply to `initialize` | 10 s timeout | `claude-acp: no reply to initialize after 10s` | Error; `:AgentConnect` |
+| Not logged in | `authenticate` error or auth-required | `claude-acp: not logged in. <hint from the registry>` (hint text UNVERIFIED) | Error; `:AgentConnect` after login |
+| Request failed during a turn (network, service) | JSON-RPC error on the prompt | `claude-acp: request failed: <agent's message>` | Idle; the prompt can be sent again |
+| Slow turn | none; no timeout on a turn | `ai: claude working 42s` | Working; `\ac` |
+| Malformed JSON from the agent | parse error | line logged and skipped; 10 in a row: disconnect | Disconnected |
+| Agent write fails (`fs/write_text_file`) | IO error | JSON-RPC error to the agent; message `write failed: <reason>` | unchanged |
+| rvim panics | panic hook | recovery files (existing) | agent processes stop when their pipes close |
+
+Slow agent: every call to an agent runs on the connector's worker. The UI never
+waits for `initialize`, `session/prompt` or a read. The Working state is the
+only sign of a slow turn, with elapsed seconds.
+
+Child processes die with rvim where the platform allows it: a Windows job object
+with kill-on-close; on Unix the process group, plus closing the pipes (macOS
+behaviour UNVERIFIED).
+
+Logs: `$XDG_STATE_HOME/rvim/agent/<id>.log` (Windows `%LOCALAPPDATA%\rvim\agent\`).
+With `log = "events"` (default) it holds lifecycle events, method names, exit
+codes and errors: no prompt text, no file contents, no replies. With
+`log = "transcript"` it also holds the JSON-RPC lines with tokens redacted; this
+is off by default. Rotation at 1 MiB, three files kept. Nothing is sent off the
+machine by rvim. The agent's own process may use the network under its own
+policy, which the consent text says.
+
+Shareable directories: the context and the served file calls only touch paths
+inside `shareable` (default: the project root). A path outside it is left out of
+the context, and an `fs/read_text_file` or `fs/write_text_file` for it gets a
+JSON-RPC error (`path outside shareable directories`). The same exclusions as
+above (`.env*` etc.) apply.
+
+### 11. Implementation order and tests
+
+Each step lands with `RVIM_REQUIRE_VIM=1 cargo test`, clippy and fmt clean.
+New modules keep the terminal out: `agent/state.rs` (pure), `agent/registry.rs`
+and `agent/detect.rs`, `agent/approval.rs`, `agent/acp.rs` (connector),
+`agent/ide.rs` (IDE server), `filewatch.rs` (worker), `reload.rs` (line diff,
+cursor and scroll mapping, undo step), `review.rs` (baseline, gutter, diff
+view model). `main.rs` only wires threads and draws.
+
+| Step | Lands | Depends on | Tests |
+|---|---|---|---|
+| 1 | Document/Window split (milestone 4a) | none | Existing compat suite unchanged. Unit: two windows on one document share undo and marks, keep their own cursors |
+| 2 | Undo step source and hash, file watcher (worker), `checktime`, `autoread`, reload as one undo step with cursor and scroll mapping, echo suppression | 1 (per-document version) | Unit: mapping table (equal, inserted above, deleted under cursor, replaced, deleted top line); `u` and `<C-r>` after reload. Scripted watcher with fake clock and fake file contents. Echo: own write does not reload. Differential: `autoread` value and `:checktime` with no change. Add the cursor-placement difference to "Known differences" |
+| 3 | Conflict prompt (`l k d m`), baseline and gutter, `:w` W11/W12 guard, deleted file, `:AgentChanges`, merge with markers | 2 | Unit: each conflict key on a fixed state; merge (clean, conflicting, identical); Frame golden of the gutter and of the prompt line. No differential (messages) |
+| 4 | Opt-in config table, registry, detection, `:AgentScan`, status-line states without connection | minimal config loader (shared with milestone 6), options | Detection with a temporary fake home and `PATH`: found, not found, found under the config dir only. Frame golden for each indicator. Golden with no opt-in: no indicator, identical to Vim's frame |
+| 5 | ACP connector: consent, approval store, `:Agent`, `:AgentConnect`, `:AgentCancel`, `:AgentDisconnect`, agent log document, `\a` and `\al`, lifecycle and backoff, `Editor::prediction_allowed` (returns false) | 4 | Fake agent (test helper binary) replays recorded JSON-RPC transcripts both ways: success, auth failure, reply timeout, EOF mid-turn, malformed line. Pure transition table test. Fake timer for backoff. Approval store round trip and unreadable file. Consent keys. Cases: `:Agent` without opt-in still works, keys stay unbound |
+| 6 | Permissions and served file calls: queue, prompt keys, grants, `:AgentForget`, `:AgentGrants`, write intent and `agent:<id>` tag, `fs/*` limited to shareable paths | 5, 3 | Transcripts with a permission queue of two; never-answered-without-key test (no reply sent until a key); `always` answers the next request of that kind only; forget removes it; cancel answers as cancelled; write intent tags the undo step; `fs/read_text_file` returns unsaved text |
+| 7 | Splits-dependent UI: agent log split, side-by-side diff view, `:AgentUse`, terminal pane (PTY), `<C-\><C-n>` routing | milestone 5 splits, buffer list, PTY | Frame goldens with a split, status and agent log. Differential, scratch buffers with `:diffthis`: `]c [c do dp` on the same text in Vim and rvim (UNVERIFIED that the harness can drive two diff buffers; check first). Terminal: key routing test with a fake child that echoes. `:AgentUse` state tests |
+| 8 | Claude Code IDE server (`claude-ide`), context endpoint `RVIM_SOCKET`, `openDiff` as permission | 5, 6 | Lock file lifecycle in a temp `CLAUDE_CONFIG_DIR`: created, stale removed, another tool's file kept, removed on quit. WebSocket transcript replay with a fake client; `openDiff` answered only by a key. Manual checklist with a real Claude Code (`/ide`, at-mention, `openDiff`); not part of `cargo test` |
+
+Step 1 is the only hard prerequisite for everything. Step 7 is the only one
+that needs splits and a PTY, so steps 2 to 6 and 8 work before splits, with
+the message-line and unified fallbacks above. Every Vim-counterpart behaviour
+gets a differential case where the harness can express it (diff-mode keys on
+scratch buffers, `:checktime` with no change, the option values). File changes
+cannot be written by the harness between keys, so reload is tested in unit and
+scripted tests, and the Vim placement rule is probed by hand.
 
 ## Prediction (milestone 8)
 
