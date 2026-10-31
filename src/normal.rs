@@ -126,6 +126,10 @@ pub(crate) enum Simple {
     Visual(VisualMode),
     Reselect,
     CmdLine,
+    /// `&` (`:s`) and `g&` (`:%s//~/&`).
+    Ampersand {
+        all: bool,
+    },
     WriteQuit,
     Quit,
     FileInfo,
@@ -611,6 +615,7 @@ fn parse_body(k: &[Key], visual: bool) -> Res<(Body, Option<usize>, usize)> {
             Key::Ctrl('r') => return simple(Simple::Redo, 1),
             Key::Char('U') => return simple(Simple::UndoLine, 1),
             Key::Char('.') => return simple(Simple::Dot, 1),
+            Key::Char('&') => return simple(Simple::Ampersand { all: false }, 1),
             Key::Esc => return simple(Simple::Esc, 1),
             Key::Char('Z') => {
                 return match ch(k.get(1)) {
@@ -623,6 +628,7 @@ fn parse_body(k: &[Key], visual: bool) -> Res<(Body, Option<usize>, usize)> {
             Key::Char('g') => match ch(k.get(1)) {
                 None if k.len() < 2 => return Ok(None),
                 Some('J') => return simple(Simple::Join { spaces: false }, 2),
+                Some('&') => return simple(Simple::Ampersand { all: true }, 2),
                 Some('p') => {
                     return simple(
                         Simple::Put {
@@ -1340,19 +1346,20 @@ impl Editor {
                     self.end_visual();
                     self.cursor = start;
                 }
-                self.mode = Mode::CmdLine;
-                self.cmdline.clear();
-                if was_visual {
-                    self.cmdline.push_str("'<,'>");
+                let initial = if was_visual {
+                    "'<,'>".to_string()
                 } else if let Some(c) = count {
-                    self.cmdline.push_str(&format!(".,.+{}", c - 1));
                     if c == 1 {
-                        self.cmdline.clear();
-                        self.cmdline.push('.');
+                        ".".to_string()
+                    } else {
+                        format!(".,.+{}", c - 1)
                     }
-                }
-                self.message = None;
+                } else {
+                    String::new()
+                };
+                self.cmd_start(&initial);
             }
+            Simple::Ampersand { all } => self.execute_ex(if all { "%s//~/&" } else { "s" }),
             Simple::WriteQuit => self.execute_ex("x"),
             Simple::Quit => self.execute_ex("q!"),
             Simple::FileInfo => {

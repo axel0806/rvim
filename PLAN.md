@@ -81,8 +81,9 @@ What the revised milestones fix, as the code stands today:
 3. **Search and Ex (mostly done).** Done: `/ ? n N * # g* g#` with
    offsets, Vim regex, Ex ranges, `:s :g :v :d :y :pu :m :t :j :> :<
    :normal :undo :redo :set` (ic/scs/ws), Visual `:` (`'<,'>`).
-   Left: command-line editing keys (`<Left>`, `<C-b>`, `<C-r>`, ...) and
-   history, `&`/`g&`, `:s` flags `c` and `\=` expressions, `gn`, `:r`, `:k`.
+   Done since: `:` command-line editing keys, `<C-r>` insertion and history,
+   `&`/`g&`. Left: `/` prompt editing and history, `:s` flags `c` and `\=`
+   expressions, `gn`, `:r`, `:k`.
    Marks in Ex addresses (`'a`) move to milestone 5 with the marks.
 4. **Foundation (in progress).** Done: bracketed paste, Alt/F-keys/Insert/Shift-Tab, Visual area drawn via highlight groups, row-level diff redraw, options registry (`autoindent`, `expandtab`, `shiftwidth`), panic recovery files, channel-based event loop with an input thread. Left: the Document/Window/Editor split, kitty keyboard protocol, cell-level diff, `:setlocal`, SIGHUP recovery. Original description: Restructure before adding more features, because windows,
    agents and prediction all depend on it. Order, each step landing with the

@@ -154,6 +154,11 @@ pub struct Editor {
     pub(crate) op_start: Pos,
     pub(crate) op_end: Pos,
     pub(crate) cmdline: String,
+    pub(crate) cmdpos: usize,
+    pub(crate) cmd_hist: Vec<String>,
+    pub(crate) hist_idx: Option<usize>,
+    pub(crate) hist_prefix: String,
+    pub(crate) cmd_paste: Option<crate::cmdline::PasteState>,
     pub(crate) message: Option<Message>,
     pub(crate) quit: bool,
     bell: bool,
@@ -210,6 +215,11 @@ impl Editor {
             op_start: Pos::default(),
             op_end: Pos::default(),
             cmdline: String::new(),
+            cmdpos: 0,
+            cmd_hist: Vec::new(),
+            hist_idx: None,
+            hist_prefix: String::new(),
+            cmd_paste: None,
             message: None,
             quit: false,
             bell: false,
@@ -392,9 +402,10 @@ impl Editor {
         });
         match self.mode {
             Mode::Insert | Mode::Replace => keys.for_each(|k| self.handle_key(k)),
-            Mode::CmdLine => self
-                .cmdline
-                .extend(text.chars().filter(|c| !c.is_control())),
+            Mode::CmdLine => {
+                let t: String = text.chars().filter(|c| !c.is_control()).collect();
+                self.cmd_insert(&t);
+            }
             Mode::Normal | Mode::Visual(_) => {
                 if !self.pending.is_empty() {
                     // Half-typed command: drop it so the paste cannot complete it.
@@ -962,44 +973,6 @@ impl Editor {
     }
 
     // ---- Command-line mode ----------------------------------------------
-
-    fn cmdline_key(&mut self, key: Key) {
-        // Only commands that move the cursor reset the desired column.
-        self.keep_curswant = true;
-        if std::mem::take(&mut self.cmd_literal) {
-            match key {
-                Key::Char(c) => self.cmdline.push(c),
-                Key::Esc => self.cmdline.push('\x1b'),
-                Key::Enter => self.cmdline.push('\r'),
-                Key::Tab => self.cmdline.push('\t'),
-                Key::Backspace => self.cmdline.push('\x08'),
-                Key::Ctrl(c) => self.cmdline.push(((c as u8) & 0x1f) as char),
-                _ => {}
-            }
-            return;
-        }
-        match key {
-            Key::Ctrl('v') | Key::Ctrl('q') => self.cmd_literal = true,
-            Key::Esc | Key::Ctrl('c') => {
-                self.mode = Mode::Normal;
-                self.cmdline.clear();
-            }
-            Key::Enter => {
-                self.mode = Mode::Normal;
-                let cmd = std::mem::take(&mut self.cmdline);
-                self.execute_ex(&cmd);
-            }
-            Key::Backspace => {
-                if self.cmdline.pop().is_none() {
-                    self.mode = Mode::Normal;
-                }
-            }
-            Key::Ctrl('u') => self.cmdline.clear(),
-            Key::Char(c) => self.cmdline.push(c),
-            Key::Tab => self.cmdline.push('\t'),
-            _ => {}
-        }
-    }
 
     // ---- files ----------------------------------------------------------
 

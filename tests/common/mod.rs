@@ -107,6 +107,8 @@ let s:out = []
 for [s:lines, s:keys] in g:cases
   silent! set autoindent& expandtab& shiftwidth& softtabstop& smarttab& tabstop&
   silent! set ignorecase& smartcase& wrapscan& scrolloff& hlsearch& incsearch&
+  silent! call histdel(':')
+  silent! call histdel('/')
   let s:old = bufnr('%')
   enew!
   exe 'silent! bwipe! ' . s:old

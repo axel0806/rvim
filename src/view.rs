@@ -277,7 +277,13 @@ impl View {
             _ => None,
         };
         if let Some(text) = typed {
-            let used: usize = text.chars().map(|c| char_width(c, 0)).sum();
+            // The cursor sits at the edit position of a `:` command line.
+            let upto = if ed.mode() == Mode::CmdLine {
+                1 + ed.cmdline_pos()
+            } else {
+                usize::MAX
+            };
+            let used: usize = text.chars().take(upto).map(|c| char_width(c, 0)).sum();
             *cursor = (used.min(width - 1), bottom);
             return (pad(truncate(&text, width), width), false);
         }
