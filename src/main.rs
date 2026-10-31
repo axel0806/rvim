@@ -1,7 +1,10 @@
 //! Terminal front end: `rvim [file]`.
 
 use crossterm::cursor::{Hide, MoveTo, SetCursorStyle, Show};
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{
+    self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEvent, KeyEventKind,
+    KeyModifiers,
+};
 use crossterm::style::{Attribute, Color, Print, ResetColor, SetAttribute, SetForegroundColor};
 use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::{execute, queue};
@@ -19,7 +22,7 @@ fn main() -> io::Result<()> {
     ed.show_intro();
 
     terminal::enable_raw_mode()?;
-    execute!(io::stdout(), EnterAlternateScreen)?;
+    execute!(io::stdout(), EnterAlternateScreen, EnableBracketedPaste)?;
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         restore_terminal();
@@ -35,6 +38,7 @@ fn restore_terminal() {
     let _ = execute!(
         io::stdout(),
         SetCursorStyle::DefaultUserShape,
+        DisableBracketedPaste,
         LeaveAlternateScreen,
         Show
     );
@@ -55,11 +59,7 @@ fn run(ed: &mut Editor) -> io::Result<()> {
                     }
                 }
             }
-            Event::Paste(text) => {
-                for c in text.chars() {
-                    ed.handle_key(if c == '\n' { Key::Enter } else { Key::Char(c) });
-                }
-            }
+            Event::Paste(text) => ed.paste(&text),
             _ => {}
         }
     }

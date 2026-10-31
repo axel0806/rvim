@@ -527,8 +527,10 @@ have unit tests (for layout, on the styled `Frame` once milestone 4 lands).
   `hlsearch`, `incsearch` etc. are accepted and ignored.
 - Visual selections are not drawn yet (plain-string frame); fixed in
   milestone 4.
-- Bracketed paste is not enabled, so a paste in Normal mode runs as commands;
-  Alt, F-keys and Shift-Tab are ignored; there is no recovery file after a
-  crash. All three are fixed in milestone 4.
+- Alt, F-keys and Shift-Tab are ignored; there is no recovery file after a
+  crash. Both are fixed in milestone 4. (Bracketed paste is done: it is
+  enabled in `main.rs`, handled by `Editor::paste`, and tested in
+  `tests/paste.rs`; step (e) of milestone 4 still needs modifiers and the
+  kitty protocol.)
 - The test harness cannot test state carried between cases (last search,
   last `:s`, `.`), since rvim starts each case fresh and Vim does not.

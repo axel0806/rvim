@@ -351,6 +351,41 @@ impl Editor {
         }
     }
 
+    /// Text delivered by the terminal as a bracketed paste. It is data, never
+    /// commands: in Insert mode it is typed literally (one undo step, no
+    /// mappings), in Normal mode it is inserted as if `i` had been pressed,
+    /// in Visual mode it replaces the selection, and on the command line it
+    /// is appended without newlines.
+    pub fn paste(&mut self, text: &str) {
+        let text = text.replace("\r\n", "\n").replace('\r', "\n");
+        let keys = text.chars().filter_map(|c| match c {
+            '\n' => Some(Key::Enter),
+            '\t' => Some(Key::Tab),
+            c if c.is_control() => None,
+            c => Some(Key::Char(c)),
+        });
+        match self.mode {
+            Mode::Insert | Mode::Replace => keys.for_each(|k| self.handle_key(k)),
+            Mode::CmdLine => self
+                .cmdline
+                .extend(text.chars().filter(|c| !c.is_control())),
+            Mode::Normal | Mode::Visual(_) => {
+                if !self.pending.is_empty() {
+                    // Half-typed command: drop it so the paste cannot complete it.
+                    self.pending.clear();
+                }
+                let start = if matches!(self.mode, Mode::Visual(_)) {
+                    Key::Char('c')
+                } else {
+                    Key::Char('i')
+                };
+                self.handle_key(start);
+                keys.for_each(|k| self.handle_key(k));
+                self.handle_key(Key::Esc);
+            }
+        }
+    }
+
     // ---- helpers --------------------------------------------------------
 
     pub(crate) fn beep(&mut self) {
