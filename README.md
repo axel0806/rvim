@@ -42,10 +42,10 @@ use:
   error ends a running macro as in Vim.
 - No scrolling commands (`<C-f> <C-b> <C-d> <C-u> <C-e> <C-y> zt zz zb`), no
   `H M L`, no `scrolloff`.
-- The `:` command line has Vim's editing keys (`<Left> <Right> <Home> <End>
-  <C-b> <C-e> <C-w> <C-u> <Del> <C-r>{reg}` and `<Up>`/`<Down>`/`<C-p>`/`<C-n>`
-  history). The `/` and `?` prompts only support `<BS> <C-u> <C-w>` and have no
-  history yet; there is no command-line window or completion.
+- The `:`, `/` and `?` command lines have Vim's editing keys (`<Left> <Right>
+  <Home> <End> <C-b> <C-e> <C-w> <C-u> <Del> <C-r>{reg}` and `<Up>`/`<Down>`/
+  `<C-p>`/`<C-n>` history). There is no command-line window (`q:`, `q/`) or
+  completion.
 - No syntax highlighting, `hlsearch`, `incsearch`, or line numbers. The
   Visual area is drawn (reverse video).
 - Few options. `:set` supports `ignorecase`, `smartcase`, `wrapscan`,

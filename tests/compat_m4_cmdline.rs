@@ -66,6 +66,75 @@ fn editing_keys() {
     check(&cross(TEXTS, &keys));
 }
 
+/// `/` and `?` prompts: the same editing keys, `<C-r>` and history as `:`.
+/// Cancelling with `<Esc>` is not compared: Vim's silent Ex mode types the
+/// `<Esc>` into the prompt, so those cases are in tests/search_prompt.rs.
+#[test]
+fn search_prompt_keys() {
+    let keys = [
+        "/fo<Left>o<CR>",
+        "/qx<Left><Left><Right>u<CR>",
+        "/fooo<Left><Del><CR>",
+        "/foo<Home>x<CR>",
+        "/o<C-b>fo<CR>",
+        "/foo baz<C-w>quux<CR>",
+        "/foo bar<C-u>qux<CR>",
+        "/fooo<Left><Left>x<C-u>qux<CR>",
+        "/qu<BS><BS>fo<CR>",
+        "2/foo<CR>",
+        "G?fo<Left>o<CR>",
+        "d?foo<CR>",
+        "c/qux<CR>X<Esc>",
+        "y/qux<CR>P",
+        "/fxo<Left><BS>o<CR>",
+        "ggd/fxo<Left><BS>o<CR>.",
+        "f/x<CR>",
+        "r/x",
+        "g??",
+        "yiw/<C-r>\"<CR>",
+        "\"ayiw/<C-r>a<CR>",
+        "yiw/<C-r>0<CR>",
+        "yiw/<C-r><C-r>\"<CR>",
+        "yiw/<C-r>\"<Left>x<CR>",
+        "w/<C-r><C-w><CR>",
+        "w/<C-r><C-a><CR>",
+        "/<C-r><C-l><CR>",
+        "/qux<CR>gg/<C-r>/<CR>",
+        "/qux<CR>gg?<C-r>/<CR>",
+        "yiwwd/<C-r>\"<CR>",
+        "v/qux<CR>d",
+        "vl/qux<C-u>foo<CR>d",
+        "V/qux<CR>d",
+        "v/qux<CR>/foo<CR>x",
+        "/qux<CR>/<Up><CR>",
+        "/foo<CR>/qux<CR>/<Up><Up><CR>",
+        "/foo<CR>/qux<CR>/<Up><Up><Up><CR>",
+        "/foo<CR>/qux<CR>/<Up><Up><Down><CR>",
+        "/foo<CR>/qux<CR>/<C-p><C-p><C-n><CR>",
+        "/foo<CR>/qux<CR>/f<Up><CR>",
+        "/foo<CR>/qux<CR>/z<Up><CR>",
+        "/foo<CR>/qux<CR>/fo<Up><Down><CR>",
+        "/foo<CR>/qux<CR>/<Up><BS>x<CR>",
+        "/foo<CR>/qux<CR>?<Up><CR>",
+        "/foo<CR>/qux<CR>gg?<Up><CR>",
+        "/foo<CR>/qux<CR>ggd/<Up><CR>",
+        "/qux<CR>ggd/<Up><CR>.",
+        "/qux<CR>ggd/<Up><CR>j.",
+        "/qux<CR>:s/o/0/<CR>/<Up><CR>",
+        "/qux<CR>:s/o/0/<CR>:<Up><CR>",
+        ":s/o/0/<CR>/<Up><CR>",
+        "/qux<CR>/qu<Down><CR>",
+        "/foo/e<CR>n",
+        "*/<Up><CR>",
+        "#/<Up><CR>",
+        "g*/<Up><CR>",
+        ":g/qux/d<CR>/<Up><CR>",
+        "/qux<CR>:/foo/d<CR>/<Up><CR>",
+        "/foo<CR>/qux<CR>/<Up><Up><Up><Up><CR>",
+    ];
+    check(&cross(TEXTS, &keys));
+}
+
 #[test]
 fn ampersand() {
     let keys = [

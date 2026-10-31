@@ -533,6 +533,7 @@ impl Editor {
         } else {
             self.search.pat = Some(pat.to_string());
             self.last_pat = Some(pat.to_string());
+            crate::cmdline::push_history(&mut self.search_hist, pat);
             pat.to_string()
         };
         let re = Regex::new(&pattern, &self.re_opts())?;
@@ -892,6 +893,7 @@ impl Editor {
         } else {
             self.search.pat = Some(pat.clone());
             self.last_pat = Some(pat.clone());
+            crate::cmdline::push_history(&mut self.search_hist, &pat);
             pat
         };
         let re = Regex::new(&pattern, &self.re_opts())?;
@@ -1147,6 +1149,7 @@ impl Editor {
                 .clone()
                 .ok_or_else(|| "E35: No previous regular expression".to_string())
         } else {
+            crate::cmdline::push_history(&mut self.search_hist, pat);
             Ok(pat.to_string())
         }
     }

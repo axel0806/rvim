@@ -15,7 +15,7 @@ clean at the last commit.
 | Milestone | State |
 |---|---|
 | 1 Core, 2 Vim grammar | Done |
-| 3 Search and Ex | ~90%. Left: `/`-prompt editing and history, `:s` flag `c` and `\=`, `gn`, `:r`, `:k` |
+| 3 Search and Ex | ~95%. Left: `:s` flag `c` and `\=`, `gn`, `:r`, `:k` |
 | 4 Foundation | ~70%. Left: the Document/Window/Editor split (the biggest item; see "Foundation"), kitty keyboard protocol, cell-level diff redraw, `:setlocal`/`:setglobal`, recovery on terminal close (SIGHUP) |
 | 5 Windows and buffers | ~10%. Done: macros (`q`, `@`, `@@`, `@:`). Left: splits, buffer list, marks (and `'a` in Ex addresses), jumplist, scrolling commands, `scrolloff`, swap files |
 | 6 Modern editing experience | 0%. Not started (hlsearch, incsearch, syntax, line numbers, config file, palette, mouse) |
@@ -28,7 +28,8 @@ Shift-Tab, Visual area drawn through `view::Hl` groups, row-level diff redraw,
 the options registry (`options.rs`: `autoindent`, `expandtab`, `shiftwidth`
 work), panic recovery files (`recovery.rs`), the channel-based event loop
 (`event.rs`), `:` command-line editing and history (`cmdline.rs`), `&`/`g&`,
-macros (`macros.rs`).
+macros (`macros.rs`), `/` and `?` prompts with the same editing keys, `<C-r>`
+and history (also in `cmdline.rs`).
 
 **Suggested order for what is left:** (1) Document/Window split, (2) marks +
 splits + buffers + scrolling, (3) the ACP connector and file-change reload
@@ -52,6 +53,10 @@ milestone lands; `.github/workflows/release.yml` builds the binaries.
   case in `SCRIPT_BODY`; Vim died on `qaf{char}x q @a` style cases (recording
   an `f` motion), so they are left out. Register lines are compared with
   trailing `\r` kept.
+- `<Esc>` and `<C-c>` in a `:` or `/` prompt are not compared: in silent Ex
+  mode Vim types the following keys into the prompt instead of cancelling
+  (`/qux<Esc>x` gives the pattern `quxx`). Cancel behaviour is tested in
+  `tests/search_prompt.rs`. `<Esc>` in Normal and Visual mode is compared.
 - Every behaviour needs cases in `tests/compat_*.rs`; when Vim and rvim
   differ, rvim is wrong. Verify with `RVIM_REQUIRE_VIM=1 cargo test`, then
   `cargo clippy --all-targets && cargo fmt --check`.
@@ -135,8 +140,9 @@ What the revised milestones fix, as the code stands today:
    offsets, Vim regex, Ex ranges, `:s :g :v :d :y :pu :m :t :j :> :<
    :normal :undo :redo :set` (ic/scs/ws), Visual `:` (`'<,'>`).
    Done since: `:` command-line editing keys, `<C-r>` insertion and history,
-   `&`/`g&`. Left: `/` prompt editing and history, `:s` flags `c` and `\=`
-   expressions, `gn`, `:r`, `:k`.
+   `&`/`g&`, and the same for the `/` and `?` prompts (search history also
+   takes the patterns of `:s`, `:g`, `:v`, `*`, `#` and Ex addresses, as in
+   Vim). Left: `:s` flags `c` and `\=` expressions, `gn`, `:r`, `:k`.
    Marks in Ex addresses (`'a`) move to milestone 5 with the marks.
 4. **Foundation (in progress).** Done: bracketed paste, Alt/F-keys/Insert/Shift-Tab, Visual area drawn via highlight groups, row-level diff redraw, options registry (`autoindent`, `expandtab`, `shiftwidth`), panic recovery files, channel-based event loop with an input thread. Left: the Document/Window/Editor split, kitty keyboard protocol, cell-level diff, `:setlocal`, SIGHUP recovery. Original description: Restructure before adding more features, because windows,
    agents and prediction all depend on it. Order, each step landing with the

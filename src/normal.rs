@@ -202,44 +202,20 @@ fn char_arg(k: Option<&Key>) -> Res<char> {
     }
 }
 
-pub(crate) enum SearchText {
-    Incomplete,
-    Cancel,
-    /// The typed text and the number of keys used, including `<CR>`.
-    Done(String, usize),
-}
-
-/// The command-line text typed after `/` or `?`, up to `<CR>`.
-pub(crate) fn search_text(k: &[Key]) -> SearchText {
+/// The pattern of a `/` or `?` motion and the keys used up to `<CR>`
+/// (`None` until `<CR>`). The editing keys of the prompt are handled by
+/// cmdline.rs, which hands the parser the finished text as plain characters.
+pub(crate) fn search_text(k: &[Key]) -> Option<(String, usize)> {
     let mut s = String::new();
     for (i, key) in k.iter().enumerate() {
         match key {
-            Key::Enter => return SearchText::Done(s, i + 1),
-            Key::Esc | Key::Ctrl('c') => return SearchText::Cancel,
-            Key::Backspace => {
-                if s.pop().is_none() {
-                    return SearchText::Cancel;
-                }
-            }
-            Key::Ctrl('u') => s.clear(),
-            Key::Ctrl('w') => {
-                while s.ends_with([' ', '\t']) {
-                    s.pop();
-                }
-                let cls = |c: char| crate::motion::char_class(c);
-                if let Some(last) = s.chars().last() {
-                    let c0 = cls(last);
-                    while s.chars().last().is_some_and(|c| cls(c) == c0) {
-                        s.pop();
-                    }
-                }
-            }
+            Key::Enter => return Some((s, i + 1)),
             Key::Char(c) => s.push(*c),
             Key::Tab => s.push('\t'),
             _ => {}
         }
     }
-    SearchText::Incomplete
+    None
 }
 
 pub(crate) fn parse_motion(k: &[Key]) -> Res<(Motion, usize)> {
@@ -281,9 +257,8 @@ pub(crate) fn parse_motion(k: &[Key]) -> Res<(Motion, usize)> {
         },
         Key::Char(d @ ('/' | '?')) => {
             return match search_text(&k[1..]) {
-                SearchText::Incomplete => Ok(None),
-                SearchText::Cancel => Err(()),
-                SearchText::Done(_, n) => Ok(Some((
+                None => Ok(None),
+                Some((_, n)) => Ok(Some((
                     Motion::Search {
                         fwd: d == '/',
                         klen: 1 + n,
@@ -726,10 +701,7 @@ pub(crate) fn parse(keys: &[Key], visual: bool) -> Parse {
                 | Body::Op {
                     target: Target::Motion(Motion::Search { klen, .. }),
                     ..
-                } => match search_text(&used[n - klen + 1..]) {
-                    SearchText::Done(t, _) => Some(t),
-                    _ => None,
-                },
+                } => search_text(&used[n - klen + 1..]).map(|(t, _)| t),
                 _ => None,
             };
             Parse::Done(Cmd {
@@ -1018,6 +990,7 @@ impl Editor {
                 }
                 self.cursor.col = col;
                 let saved = self.cursor;
+                crate::cmdline::push_history(&mut self.search_hist, &pat);
                 let r = self.search_motion(Some(if fwd { '/' } else { '?' }), Some(pat), count1);
                 if r.is_none() {
                     self.cursor = saved;
@@ -1202,8 +1175,17 @@ impl Editor {
     /// A key in Normal or Visual mode.
     pub(crate) fn normal_key(&mut self, key: Key) {
         self.pending.push(key);
+        self.run_pending(key);
+    }
+
+    /// Runs the pending keys if they now form a command. `key` is the last
+    /// key typed.
+    pub(crate) fn run_pending(&mut self, key: Key) {
         match parse(&self.pending, self.is_visual()) {
-            Parse::Incomplete => self.keep_curswant = true,
+            Parse::Incomplete => {
+                self.keep_curswant = true;
+                self.search_prompt_start(key);
+            }
             Parse::Invalid => {
                 self.pending.clear();
                 self.keep_curswant = true;
@@ -1379,7 +1361,7 @@ impl Editor {
                 } else {
                     String::new()
                 };
-                self.cmd_start(&initial);
+                self.cmd_start(crate::cmdline::PromptKind::Ex, Mode::Normal, &initial);
             }
             Simple::Record(c) => self.start_recording(c),
             Simple::Macro(c) => self.exec_register(c, count1),

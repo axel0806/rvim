@@ -43,7 +43,7 @@ pub enum Hl {
 /// Linear cell ranges (within the wrapped line) covered by the Visual area on
 /// `line`.
 fn visual_cells(ed: &Editor, line: usize, lay: &Layout) -> Vec<(usize, usize)> {
-    let Mode::Visual(vm) = ed.mode() else {
+    let Some(vm) = ed.shown_visual() else {
         return Vec::new();
     };
     let b = ed.cursor();
@@ -271,18 +271,11 @@ impl View {
         below: usize,
     ) -> (String, bool) {
         let bottom = height.saturating_sub(1);
-        let typed = match ed.mode() {
-            Mode::CmdLine => Some(format!(":{}", ed.cmdline())),
-            Mode::Normal | Mode::Visual(_) => ed.search_prompt(),
-            _ => None,
-        };
+        let typed = (ed.mode() == Mode::CmdLine)
+            .then(|| format!("{}{}", ed.cmdline_prompt(), ed.cmdline()));
         if let Some(text) = typed {
-            // The cursor sits at the edit position of a `:` command line.
-            let upto = if ed.mode() == Mode::CmdLine {
-                1 + ed.cmdline_pos()
-            } else {
-                usize::MAX
-            };
+            // The cursor sits at the edit position of the command line.
+            let upto = 1 + ed.cmdline_pos();
             let used: usize = text.chars().take(upto).map(|c| char_width(c, 0)).sum();
             *cursor = (used.min(width - 1), bottom);
             return (pad(truncate(&text, width), width), false);

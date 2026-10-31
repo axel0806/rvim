@@ -163,7 +163,13 @@ pub struct Editor {
     pub(crate) beeps: usize,
     /// Nesting level of register execution (keys are not recorded inside).
     pub(crate) replaying: usize,
+    pub(crate) cmd_kind: crate::cmdline::PromptKind,
+    /// The mode the command line returns to (Visual for a search from Visual).
+    pub(crate) cmd_return: Mode,
+    /// Keys typed before a search prompt (count, register, operator).
+    pub(crate) cmd_prefix: Vec<Key>,
     pub(crate) cmd_hist: Vec<String>,
+    pub(crate) search_hist: Vec<String>,
     pub(crate) hist_idx: Option<usize>,
     pub(crate) hist_prefix: String,
     pub(crate) cmd_paste: Option<crate::cmdline::PasteState>,
@@ -229,7 +235,11 @@ impl Editor {
             last_macro: None,
             beeps: 0,
             replaying: 0,
+            cmd_kind: crate::cmdline::PromptKind::Ex,
+            cmd_return: Mode::Normal,
+            cmd_prefix: Vec::new(),
             cmd_hist: Vec::new(),
+            search_hist: Vec::new(),
             hist_idx: None,
             hist_prefix: String::new(),
             cmd_paste: None,
@@ -266,35 +276,21 @@ impl Editor {
         self.cursor
     }
 
-    /// The other end of the Visual area, when Visual mode is active.
+    /// The other end of the Visual area, when the area is shown.
     pub fn visual_start(&self) -> Option<Pos> {
-        matches!(self.mode, Mode::Visual(_)).then_some(self.vstart)
+        self.shown_visual().map(|_| self.vstart)
     }
 
-    /// The `/` or `?` command being typed, with its prompt character.
-    pub fn search_prompt(&self) -> Option<String> {
-        let k = &self.pending;
-        let i = (0..k.len()).find(|&i| match k[i] {
-            Key::Char('/') => true,
-            Key::Char('?') => !(i > 0 && k[i - 1] == Key::Char('g')),
-            _ => false,
-        })?;
-        let Key::Char(lead) = k[i] else { return None };
-        let mut s = String::new();
-        for key in &k[i + 1..] {
-            match key {
-                Key::Char(c) => s.push(*c),
-                Key::Tab => s.push('\t'),
-                Key::Backspace => {
-                    s.pop();
-                }
-                Key::Ctrl('u') => s.clear(),
-                _ => {}
-            }
+    /// The Visual mode whose area is drawn. That includes a `/` or `?` prompt
+    /// started from Visual mode, which keeps the area on screen.
+    pub fn shown_visual(&self) -> Option<VisualMode> {
+        match (self.mode, self.cmd_return) {
+            (Mode::Visual(m), _) | (Mode::CmdLine, Mode::Visual(m)) => Some(m),
+            _ => None,
         }
-        Some(format!("{lead}{s}"))
     }
 
+    /// The text of the command line (after its prompt character).
     pub fn cmdline(&self) -> &str {
         &self.cmdline
     }

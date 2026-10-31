@@ -1,10 +1,24 @@
-//! Command-line mode (`:`): editing keys, `<C-r>` insertion and history.
-//! (`/` and `?` text is parsed with the Normal-mode keys, see normal.rs.)
+//! Command-line mode: editing keys, `<C-r>` insertion and history. It serves
+//! `:` and the `/` and `?` prompts that complete a search motion (`/pat`,
+//! `d/pat`, `v?pat`). For a search the keys before the prompt wait in
+//! `cmd_prefix`, and `<CR>` replays the whole command with the typed text, so
+//! `.` repeats the final pattern rather than the keys that recalled it.
 
 use crate::editor::{Editor, Mode};
 use crate::key::Key;
+use crate::normal::{Body, Cmd, Motion, Parse, Target, parse};
 
-const HISTORY_SIZE: usize = 50;
+/// Vim's default 'history'.
+const HISTORY_SIZE: usize = 200;
+
+/// What the command line is for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PromptKind {
+    /// `:`
+    Ex,
+    /// `/` or `?`, with the prompt character.
+    Search(char),
+}
 
 /// State of a `<C-r>` waiting for its register name.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -23,15 +37,60 @@ fn byte_at(s: &str, char_idx: usize) -> usize {
     s.char_indices().nth(char_idx).map_or(s.len(), |(b, _)| b)
 }
 
+/// Adds `s` as the newest entry, dropping an older copy (Vim's `histadd`).
+/// Empty text is not kept. Every search pattern goes here, whether typed at
+/// a prompt or used by `*`, `:s`, `:g` or an Ex address (as in Vim).
+pub(crate) fn push_history(hist: &mut Vec<String>, s: &str) {
+    if s.is_empty() {
+        return;
+    }
+    hist.retain(|h| h != s);
+    hist.push(s.to_string());
+    if hist.len() > HISTORY_SIZE {
+        hist.remove(0);
+    }
+}
+
 impl Editor {
-    /// Enters Command-line mode with `initial` already typed.
-    pub(crate) fn cmd_start(&mut self, initial: &str) {
+    /// Enters Command-line mode with `initial` already typed. `ret` is the
+    /// mode to come back to when the prompt ends.
+    pub(crate) fn cmd_start(&mut self, kind: PromptKind, ret: Mode, initial: &str) {
         self.mode = Mode::CmdLine;
+        self.cmd_kind = kind;
+        self.cmd_return = ret;
         self.cmdline = initial.to_string();
         self.cmdpos = chars_len(initial);
         self.hist_idx = None;
         self.cmd_paste = None;
         self.message = None;
+    }
+
+    /// `/` or `?` that completes a search motion (`/`, `d/`, `2?`) opens the
+    /// prompt, keeping the keys before it. Other keys are left alone.
+    pub(crate) fn search_prompt_start(&mut self, key: Key) {
+        let Key::Char(lead @ ('/' | '?')) = key else {
+            return;
+        };
+        let mut probe = self.pending.clone();
+        probe.push(Key::Enter);
+        let is_search = matches!(
+            parse(&probe, self.is_visual()),
+            Parse::Done(Cmd {
+                body: Body::Motion(Motion::Search { .. })
+                    | Body::Op {
+                        target: Target::Motion(Motion::Search { .. }),
+                        ..
+                    },
+                ..
+            })
+        );
+        if !is_search {
+            return;
+        }
+        self.cmd_prefix = std::mem::take(&mut self.pending);
+        self.cmd_prefix.pop();
+        let ret = self.mode;
+        self.cmd_start(PromptKind::Search(lead), ret, "");
     }
 
     /// Inserts text at the cursor of the command line.
@@ -47,17 +106,28 @@ impl Editor {
         self.cmdpos.min(chars_len(&self.cmdline))
     }
 
+    /// The prompt character shown before the text: `:`, `/` or `?`.
+    pub fn cmdline_prompt(&self) -> char {
+        match self.cmd_kind {
+            PromptKind::Ex => ':',
+            PromptKind::Search(c) => c,
+        }
+    }
+
     fn cmd_delete(&mut self, from: usize, to: usize) {
         let (a, b) = (byte_at(&self.cmdline, from), byte_at(&self.cmdline, to));
         self.cmdline.replace_range(a..b, "");
         self.cmdpos = from;
     }
 
+    /// Esc, Ctrl-C, or `<BS>` on an empty line: back to the mode the prompt
+    /// was opened from (Visual mode for a search started there).
     fn cmd_cancel(&mut self) {
-        self.mode = Mode::Normal;
+        self.mode = self.cmd_return;
         self.cmdline.clear();
         self.cmdpos = 0;
         self.hist_idx = None;
+        self.cmd_prefix.clear();
     }
 
     pub(crate) fn cmdline_key(&mut self, key: Key) {
@@ -88,11 +158,14 @@ impl Editor {
             Key::Ctrl('r') => self.cmd_paste = Some(PasteState::Reg),
             Key::Esc | Key::Ctrl('c') => self.cmd_cancel(),
             Key::Enter => {
-                self.mode = Mode::Normal;
                 let cmd = std::mem::take(&mut self.cmdline);
                 self.cmdpos = 0;
                 self.hist_idx = None;
-                self.remember_command(&cmd);
+                if let PromptKind::Search(lead) = self.cmd_kind {
+                    return self.search_finish(lead, &cmd);
+                }
+                self.mode = Mode::Normal;
+                push_history(&mut self.cmd_hist, &cmd);
                 self.execute_ex(&cmd);
             }
             Key::Backspace => {
@@ -138,14 +211,11 @@ impl Editor {
         }
     }
 
-    fn remember_command(&mut self, cmd: &str) {
-        if cmd.is_empty() {
-            return;
-        }
-        self.cmd_hist.retain(|h| h != cmd);
-        self.cmd_hist.push(cmd.to_string());
-        if self.cmd_hist.len() > HISTORY_SIZE {
-            self.cmd_hist.remove(0);
+    /// The history `<Up>` and friends walk: `:` commands or search patterns.
+    fn history(&self) -> &[String] {
+        match self.cmd_kind {
+            PromptKind::Ex => &self.cmd_hist,
+            PromptKind::Search(_) => &self.search_hist,
         }
     }
 
@@ -159,7 +229,8 @@ impl Editor {
         } else {
             String::new()
         };
-        let n = self.cmd_hist.len();
+        let hist = self.history();
+        let n = hist.len();
         let mut i = self.hist_idx.unwrap_or(n);
         let found = loop {
             if older {
@@ -173,7 +244,7 @@ impl Editor {
                     break Some(None);
                 }
             }
-            if self.cmd_hist[i].starts_with(&prefix) {
+            if hist[i].starts_with(&prefix) {
                 break Some(Some(i));
             }
         };
@@ -191,10 +262,27 @@ impl Editor {
             }
             Some(Some(i)) => {
                 self.hist_idx = Some(i);
-                self.cmdline = self.cmd_hist[i].clone();
+                self.cmdline = self.history()[i].clone();
                 self.cmdpos = chars_len(&self.cmdline);
             }
         }
+    }
+
+    /// `<CR>` on a search prompt: the pattern goes to the search history and
+    /// the search motion runs with the typed text, as if its keys had been
+    /// typed in one go (the keys before the prompt are restored first).
+    fn search_finish(&mut self, lead: char, text: &str) {
+        push_history(&mut self.search_hist, text);
+        self.mode = self.cmd_return;
+        let mut keys = std::mem::take(&mut self.cmd_prefix);
+        keys.push(Key::Char(lead));
+        keys.extend(text.chars().map(Key::Char));
+        keys.push(Key::Enter);
+        self.pending = keys;
+        // The prompt's own keys set the desired column to keep; the search
+        // resets it like any other command.
+        self.keep_curswant = false;
+        self.run_pending(Key::Enter);
     }
 
     /// The key after `<C-r>`: a register name or `<C-w>`, `<C-a>`, `<C-l>`.
