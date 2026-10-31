@@ -38,6 +38,8 @@ by the buffer's line methods, saved and restored by undo in `undo.rs`).
 entry is removed when its branch lands on main):
 
 - `:s` flag `c` (confirm): being built by a Haiku agent (branch name pending).
+- Jumplist (`<C-o>`, `<C-i>`/`<Tab>`, `''`, ``` `` ```, `:jumps`, context mark):
+  being built by a Haiku agent (branch name pending).
 - Scrolling (`<C-f> <C-b> <C-d> <C-u> <C-e> <C-y> zt zz zb H M L`,
   `scrolloff`): branch `worktree-agent-aa9509a3085f2e7dc`, being built.
 
