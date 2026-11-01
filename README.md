@@ -99,7 +99,8 @@ use:
   fixed. `:setglobal` leaves the current buffer's and window's local values
   alone; `:setlocal opt<` and `:set opt<` are supported, and `:setglobal opt<`
   does nothing, as in Vim.
-- No config file (`vimrc`), plugins, Vimscript, `:help`, folds, completion,
+- No `vimrc`: rvim reads its own `config.toml` instead (see
+  [Configuration](#configuration)). No plugins, Vimscript, `:help`, folds, completion,
   spell checking, `:terminal`, or `:!` shell commands.
 - `:s`: `\=` expressions are a subset (no floats, dictionaries, user functions
   or `v:` variables; see PLAN.md, Known differences); the `\n` (NUL)
@@ -146,6 +147,34 @@ of and connection to coding agents (Claude Code, Codex, Cursor, Kimi Code)
 over the Agent Client Protocol; and optional inline code prediction. All of
 them will be off unless you configure them, so rvim stays `vim -N -u NONE`
 by default.
+
+## Configuration
+
+rvim reads one optional file, `config.toml`, once at startup:
+
+- Linux and macOS: `$XDG_CONFIG_HOME/rvim/config.toml`, or
+  `~/.config/rvim/config.toml` when `XDG_CONFIG_HOME` is unset.
+- Windows: `%APPDATA%\rvim\config.toml`.
+
+Without the file, rvim behaves as `vim -N -u NONE`. `rvim -u NONE` (or
+`--clean`) skips the file. Example:
+
+```toml
+[options]
+shiftwidth = 2      # any option by its :set name or short name
+expandtab = true    # true or false for a flag, a number for a number
+scrolloff = 5
+
+[start]
+menu = true         # the start menu when no --start-menu/--no-start-menu flag is given
+```
+
+Problems never stop rvim: an unknown key or option, or a value of the wrong
+type, is skipped and reported on the message line, and the rest of the file
+still applies. A syntax error reports its line and leaves the defaults in
+place. Files over 256 KiB are not read. Not yet read: `[profile]` and `[lua]`
+(reserved, reported as not supported), mappings and themes. See
+[PLAN.md](PLAN.md) ("Config") for the full rules.
 
 ## Documentation
 

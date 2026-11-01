@@ -113,7 +113,8 @@ given. It is off by default; `--no-start-menu` is the default and can be
 given explicitly. `--help` (or `-h`) prints the options and `--version` (or
 `-v`) prints the version and the modified-Vim notice; both exit at once.
 Any other argument is the file name, and `--` ends the options. Without a
-config file, rvim behaves as `vim -N -u NONE`.
+config file, rvim behaves as `vim -N -u NONE`. `-u NONE` (or `--clean`) skips
+the config file, and `-N` is accepted; see the README, "Configuration".
 
 Platform notes:
 
@@ -147,7 +148,9 @@ that `make install` copies.
 
 ## Files rvim writes
 
-- Config: none in this version.
+- Config: `config.toml` in the rvim config directory (`$XDG_CONFIG_HOME/rvim`,
+  `~/.config/rvim`, or `%APPDATA%\rvim` on Windows), read once at startup.
+  Optional; see the README, "Configuration". `rvim -u NONE` skips it.
 - Recovery files: written only when rvim panics, when the terminal is closed
   (SIGHUP) or on SIGTERM on Unix, with unsaved changes; the path is printed. The directory is `$XDG_STATE_HOME/rvim/recovery` if
   `XDG_STATE_HOME` is an absolute path; otherwise `%LOCALAPPDATA%\rvim\recovery`
