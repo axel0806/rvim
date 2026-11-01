@@ -308,6 +308,63 @@ fn screen_motions_set_the_context_mark() {
     }
 }
 
+/// `m'` and ``m` `` keep the desired column, as `m{a-z}` does (Vim's
+/// nv_mark()), so the cursor column of later vertical motions is the one
+/// from before the mark was set.
+#[test]
+fn context_mark_keeps_the_desired_column() {
+    let keys = [
+        "lllm'jix<Esc>",
+        "lllm'jjix<Esc>",
+        "lllm'jjjix<Esc>",
+        "lllm'jkix<Esc>",
+        "lllm'jjkix<Esc>",
+        "lllm`jix<Esc>",
+        "lllm`jjix<Esc>",
+        "lllm`jkix<Esc>",
+        "lllm`jjkix<Esc>",
+        "lllm'jjj'j'kix<Esc>",
+        "llllm'jlix<Esc>",
+        "llllm'jjjix<Esc>",
+        "$m'jix<Esc>",
+        "$m'jjix<Esc>",
+        "$m'jjjjix<Esc>",
+        "lllll3Gm'jix<Esc>",
+        "lllm'Gkix<Esc>",
+        "lllm'Gkkix<Esc>",
+    ];
+    check(&cross(TEXTS, &keys));
+}
+
+/// `:ju` is `:jumps` (a message only), and `:j` still joins lines.
+#[test]
+fn jumps_abbreviation_and_join_are_distinct() {
+    let keys = [
+        ":ju<CR>ix<Esc>",
+        ":jum<CR>ix<Esc>",
+        "3G:jumps<CR>ix<Esc>",
+        ":j<CR>ix<Esc>",
+        ":j!<CR>ix<Esc>",
+        "3G:j<CR>ix<Esc>",
+        ":2,3j<CR>ix<Esc>",
+        ":1,3j<CR>ix<Esc>",
+    ];
+    check(&cross(TEXTS, &keys));
+}
+
+#[test]
+fn jumps_message_and_cursor_are_unchanged() {
+    use rvim::Editor;
+    let mut ed = Editor::from_text("a\nb\nc\nd\ne");
+    ed.feed("3G5G");
+    let before = ed.cursor();
+    ed.feed(":ju<CR>");
+    let msg = ed.message().map(|m| m.text.clone());
+    assert!(msg.as_deref().is_some_and(|m| m.starts_with("jumps:")), "{msg:?}");
+    assert_eq!(ed.cursor(), before);
+    assert_eq!(ed.buf.lines(), ["a", "b", "c", "d", "e"]);
+}
+
 #[test]
 fn ctrl_o_after_an_insert_and_visual_mode() {
     let keys = [
