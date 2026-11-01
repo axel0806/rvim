@@ -351,7 +351,7 @@ impl Editor {
         pat: Option<&str>,
         count: usize,
     ) -> Option<(Pos, bool, bool)> {
-        let mut pos = self.win.cursor;
+        let mut pos = self.win().cursor;
         let reverse = false;
         let dirc_val = match dirc {
             Some(d) => {
@@ -460,9 +460,9 @@ impl Editor {
                 let mut left = off.off.abs();
                 while left > 0 {
                     let r = if off.off > 0 {
-                        decl(&self.doc.buf, &mut p)
+                        decl(&self.doc().buf, &mut p)
                     } else {
-                        incl(&self.doc.buf, &mut p)
+                        incl(&self.doc().buf, &mut p)
                     };
                     if r == -1 {
                         break;
@@ -487,7 +487,7 @@ impl Editor {
                 end: off.end,
                 wrapscan: self.opts.wrapscan(),
             };
-            let found = searchit(&self.doc.buf, &re, start, dirc == '/', count, &fl);
+            let found = searchit(&self.doc().buf, &re, start, dirc == '/', count, &fl);
             let Some(f) = found else {
                 self.search_error(format!("E486: Pattern not found: {pattern}"));
                 return None;
@@ -498,18 +498,18 @@ impl Editor {
             echo = format!("{dirc}{pattern}");
             if off.line {
                 let l = pos.line as i64 + off.off;
-                pos.line = l.clamp(0, self.doc.buf.last_line() as i64) as usize;
+                pos.line = l.clamp(0, self.doc().buf.last_line() as i64) as usize;
                 pos.col = 0;
                 retval_line = true;
             } else if off.off > 0 {
                 for _ in 0..off.off {
-                    if incl(&self.doc.buf, &mut pos) == -1 {
+                    if incl(&self.doc().buf, &mut pos) == -1 {
                         break;
                     }
                 }
             } else if off.off < 0 {
                 for _ in 0..(-off.off) {
-                    if decl(&self.doc.buf, &mut pos) == -1 {
+                    if decl(&self.doc().buf, &mut pos) == -1 {
                         break;
                     }
                 }
@@ -566,27 +566,27 @@ impl Editor {
             return false;
         };
         let visual = self.is_visual();
-        let orig_cursor = self.win.cursor;
-        let orig_vstart = self.win.vstart;
+        let orig_cursor = self.win().cursor;
+        let orig_vstart = self.win().vstart;
         // Visual forward with the cursor before the anchor: the first
         // backward search would not move the cursor, so it is skipped.
-        let skip_first_backward = forward && visual && self.win.cursor < self.win.vstart;
+        let skip_first_backward = forward && visual && self.win().cursor < self.win().vstart;
 
-        let mut pos = self.win.cursor;
+        let mut pos = self.win().cursor;
         if visual {
             if forward {
-                incl(&self.doc.buf, &mut pos);
+                incl(&self.doc().buf, &mut pos);
             } else {
-                decl(&self.doc.buf, &mut pos);
+                decl(&self.doc().buf, &mut pos);
             }
         }
 
         // Is the pattern zero-width at the cursor? (Only matters for the
         // SEARCH_END search below.)
         let zero_width = match searchit(
-            &self.doc.buf,
+            &self.doc().buf,
             &re,
-            Start::At(self.win.cursor),
+            Start::At(self.win().cursor),
             true,
             1,
             &SearchFlags {
@@ -617,15 +617,15 @@ impl Editor {
                 wrapscan: i == 1 && self.opts.wrapscan(),
             };
             let cnt = if i == 1 { count.max(1) } else { 1 };
-            match searchit(&self.doc.buf, &re, from, dir_fwd, cnt, &fl) {
+            match searchit(&self.doc().buf, &re, from, dir_fwd, cnt, &fl) {
                 Some(f) => {
                     pos = f.pos;
                     end_pos = f.other;
                     from = Start::At(pos);
                 }
                 None if i == 1 => {
-                    self.win.cursor = orig_cursor;
-                    self.win.vstart = orig_vstart;
+                    self.win_mut().cursor = orig_cursor;
+                    self.win_mut().vstart = orig_vstart;
                     return false;
                 }
                 None => {
@@ -633,8 +633,8 @@ impl Editor {
                     if forward {
                         from = Start::Outside;
                     } else {
-                        let last = self.doc.buf.last_line();
-                        pos = Pos::new(last, self.doc.buf.line_len(last));
+                        let last = self.doc().buf.last_line();
+                        pos = Pos::new(last, self.doc().buf.line_len(last));
                         from = Start::At(pos);
                     }
                 }
@@ -643,19 +643,20 @@ impl Editor {
 
         let start_pos = pos;
         if !visual {
-            self.win.vstart = start_pos;
+            self.win_mut().vstart = start_pos;
         }
-        self.win.cursor = end_pos;
-        if self.win.vstart < end_pos && forward {
+        self.win_mut().cursor = end_pos;
+        if self.win().vstart < end_pos && forward {
             if skip_first_backward {
                 // Put the cursor on the start of the match.
-                self.win.cursor = pos;
+                self.win_mut().cursor = pos;
             } else {
                 // Put the cursor on the last char of the match.
-                decl(&self.doc.buf, &mut self.win.cursor);
+                let (doc, win) = self.parts_mut();
+                decl(&doc.buf, &mut win.cursor);
             }
-        } else if visual && self.win.cursor < self.win.vstart && forward {
-            self.win.cursor = pos;
+        } else if visual && self.win().cursor < self.win().vstart && forward {
+            self.win_mut().cursor = pos;
         }
         self.mode = Mode::Visual(VisualMode::Char);
         true
@@ -664,12 +665,17 @@ impl Editor {
     /// The identifier or string under or after the cursor (Vim's
     /// `find_ident_under_cursor` with `FIND_IDENT|FIND_STRING`).
     pub(crate) fn ident_under_cursor(&self) -> Option<(usize, String)> {
-        let line: Vec<char> = self.doc.buf.line(self.win.cursor.line).chars().collect();
+        let line: Vec<char> = self
+            .doc()
+            .buf
+            .line(self.win().cursor.line)
+            .chars()
+            .collect();
         let cls = |c: Option<&char>| c.map_or(0, |&c| keyword_class(c));
         let mut col = 0;
         let mut this_class = 0;
         for i in 0..2 {
-            col = self.win.cursor.col.min(line.len());
+            col = self.win().cursor.col.min(line.len());
             while col < line.len() {
                 let c = cls(line.get(col));
                 if c != 0 && (i == 1 || c != 1) {

@@ -16,6 +16,11 @@ pub(crate) struct ULine {
     pub col: usize,
 }
 
+/// Index of a document in `Editor::documents`. Ids stay stable: documents are
+/// not removed yet.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub(crate) struct DocId(pub(crate) usize);
+
 pub(crate) struct Document {
     pub(crate) buf: Buffer,
     pub(crate) undo: UndoTree,

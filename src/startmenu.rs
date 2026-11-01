@@ -234,8 +234,11 @@ impl Editor {
     /// buffer is empty and unmodified. Returns whether it is shown; when it
     /// is not, the caller shows the intro message as before.
     pub fn show_start_menu(&mut self) -> bool {
-        let empty = self.doc.buf.line_count() == 1 && self.doc.buf.line_len(0) == 0;
-        if !self.opts.startmenu() || self.doc.buf.path.is_some() || self.doc.buf.modified || !empty
+        let empty = self.doc().buf.line_count() == 1 && self.doc().buf.line_len(0) == 0;
+        if !self.opts.startmenu()
+            || self.doc().buf.path.is_some()
+            || self.doc().buf.modified
+            || !empty
         {
             return false;
         }
