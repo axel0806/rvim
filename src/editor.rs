@@ -6,7 +6,7 @@
 //! are in normal.rs, operators in ops.rs. No terminal dependency: tests
 //! drive it with key strings.
 
-use crate::buffer::{Buffer, FileStats};
+use crate::buffer::{Buffer, FileStats, read_file};
 use crate::document::{DocId, Document, ULine};
 use crate::jumplist::JumpList;
 use crate::key::{Key, parse_keys};
@@ -14,8 +14,9 @@ use crate::motion::{self, Pos};
 use crate::ops::OpArg;
 use crate::options::Options;
 use crate::register::Registers;
+use crate::reload::{Change, DiskState, LineMap};
 use crate::text;
-use crate::undo::Step;
+use crate::undo::{Step, UndoSource};
 use crate::window::{WinId, Window};
 use std::path::Path;
 
@@ -1242,11 +1243,18 @@ impl Editor {
 
     // ---- files ----------------------------------------------------------
 
-    /// Replaces the buffer with `path`, reporting like Vim's `:e`.
+    /// Replaces the buffer with `path`, reporting like Vim's `:e`. The disk
+    /// state is taken from the same read as the text.
     pub(crate) fn edit_file(&mut self, path: &Path) {
-        match Buffer::load(path) {
-            Ok((buf, stats)) => {
+        match read_file(path) {
+            Ok(read) => {
+                let (buf, stats) =
+                    Buffer::from_file_bytes(path, read.as_ref().map(|(_, b)| b.as_slice()));
+                let disk = read
+                    .as_ref()
+                    .map(|(mtime, bytes)| DiskState::of(*mtime, bytes));
                 self.doc_mut().reload(buf);
+                self.doc_mut().disk = disk;
                 self.win_mut().cursor = Pos::default();
                 self.win_mut().curswant = 0;
                 self.win_mut().keep_curswant = false;
@@ -1260,6 +1268,90 @@ impl Editor {
             }
             Err(e) => self.error(format!("E484: Can't open file {}: {e}", path.display())),
         }
+    }
+
+    /// Replaces the text of document `doc` with `new`, the file's contents as
+    /// `Buffer::from_file_bytes` decodes them, as one undo step tagged
+    /// `source` (PLAN.md, "Reload as one undo step"). This is a reload, not
+    /// an edit: the cursor and scroll top of each window on the document
+    /// follow their lines (`reload.rs`), the marks, the jumplist and the
+    /// context mark move with the lines too, and the buffer is not modified
+    /// afterwards. `u` goes back to the old text, modified, and `<C-r>` to the
+    /// new one, unmodified. The disk state is for the caller to record.
+    ///
+    /// Returns `None` when the text is the same: only the line ends or the
+    /// empty state changed, which is no undo step.
+    pub(crate) fn apply_external_change(
+        &mut self,
+        doc: DocId,
+        new: Buffer,
+        source: UndoSource,
+    ) -> Option<Change> {
+        let old_lines = self.documents[doc.0].buf.lines();
+        let new_lines = new.lines();
+        if old_lines == new_lines {
+            self.documents[doc.0]
+                .buf
+                .set_file_flags(new.crlf, new.has_no_lines());
+            return None;
+        }
+        let map = LineMap::new(&old_lines, &new_lines);
+        let cursor = {
+            let win = &self.windows[self.cur_win.0];
+            if win.doc == doc {
+                win.cursor
+            } else {
+                Pos::default()
+            }
+        };
+        let d = &mut self.documents[doc.0];
+        // Close the user's open change first, so the reload is a step of its own.
+        if d.undo.is_open() {
+            let snap = d.buf.snapshot();
+            d.undo.sync(snap);
+        }
+        // The whole span of changed lines is saved, with the cursor from
+        // before the reload, as an ordinary change. `modified` is true, so
+        // that undoing the reload leaves the buffer different from the file.
+        d.undo.save(
+            map.top,
+            map.old_count,
+            old_lines.len(),
+            cursor,
+            true,
+            d.buf.marks,
+        );
+        d.undo.tag_open(source);
+        let remap = map.clone();
+        d.buf.replace_text(new, move |p| remap.pos(p, p.col));
+        for slot in d.buf.marks.iter_mut().flatten() {
+            *slot = map.pos(*slot, slot.col);
+        }
+        d.op_start = map.pos(d.op_start, d.op_start.col);
+        d.op_end = map.pos(d.op_end, d.op_end.col);
+        if let Some(v) = d.last_visual.as_mut() {
+            v.start = map.pos(v.start, v.start.col);
+            v.end = map.pos(v.end, v.end.col);
+        }
+        // The `U` line refers to the old text.
+        d.uline = None;
+        d.buf.modified = false;
+        let snap = d.buf.snapshot();
+        d.undo.sync(snap);
+        for win in self.windows.iter_mut().filter(|w| w.doc == doc) {
+            let (new_line, exact) = map.line(win.cursor.line);
+            win.top = map.top(win.top, win.cursor.line, new_line);
+            win.cursor = map.pos(win.cursor, win.curswant);
+            if exact {
+                win.curswant = win.cursor.col;
+            }
+            win.vstart = map.pos(win.vstart, win.vstart.col);
+        }
+        Some(Change {
+            added: map.added,
+            removed: map.removed,
+            fallback: map.fallback,
+        })
     }
 }
 
@@ -1325,5 +1417,131 @@ mod tests {
         ed.set_screen_size(40, 5);
         assert_eq!(ed.win().height, 4);
         assert_eq!(version(&ed), v0);
+    }
+
+    fn lines_of(ed: &Editor) -> Vec<String> {
+        ed.buf().lines()
+    }
+
+    #[test]
+    fn external_change_is_one_undo_step_tagged_external() {
+        let mut ed = Editor::from_text("one\ntwo\nthree");
+        ed.feed("ix<Esc>");
+        let before = lines_of(&ed);
+        let user_seq = ed.doc().undo.seq();
+        let new = Buffer::from_text("one\nTWO\nthree\nfour");
+        let v0 = version(&ed);
+        let change = ed
+            .apply_external_change(DocId::default(), new, UndoSource::External)
+            .unwrap();
+        assert_eq!(lines_of(&ed), ["one", "TWO", "three", "four"]);
+        assert!(!ed.buf().modified, "the buffer equals the file");
+        assert!(version(&ed) > v0, "version goes up");
+        // "three" is the only line in both; "xone", "two" went and "TWO", "four" came.
+        assert_eq!(
+            (change.added, change.removed, change.fallback),
+            (3, 2, false)
+        );
+        let seq = ed.doc().undo.seq();
+        assert_eq!(seq, user_seq + 1, "one step");
+        assert_eq!(ed.doc().undo.source(seq), Some(UndoSource::External));
+        assert_eq!(ed.doc().undo.source(user_seq), Some(UndoSource::User));
+
+        // `u` restores the text before the reload in one step; it is modified now.
+        ed.feed("u");
+        assert_eq!(lines_of(&ed), before);
+        assert!(ed.buf().modified);
+        assert_eq!(ed.doc().undo.seq(), user_seq);
+        // `<C-r>` applies the reload again, and the buffer is unmodified.
+        ed.feed("<C-r>");
+        assert_eq!(lines_of(&ed), ["one", "TWO", "three", "four"]);
+        assert!(!ed.buf().modified);
+        // The user's change is still one step below.
+        ed.feed("u");
+        ed.feed("u");
+        assert_eq!(lines_of(&ed), ["one", "two", "three"]);
+    }
+
+    #[test]
+    fn external_change_keeps_the_cursor_on_its_line() {
+        let mut ed = Editor::from_text("one\ntwo\nthree");
+        ed.feed("jl");
+        // Lines inserted above: the cursor stays on "two", now line 2.
+        let new = Buffer::from_text("zero\none\ntwo\nthree");
+        ed.apply_external_change(DocId::default(), new, UndoSource::External);
+        assert_eq!(ed.cursor(), Pos::new(2, 1));
+    }
+
+    #[test]
+    fn external_change_moves_the_cursor_off_a_replaced_line_to_the_desired_column() {
+        let mut ed = Editor::from_text("one\ntwo\nthree");
+        ed.feed("jl");
+        assert_eq!(ed.cursor(), Pos::new(1, 1));
+        let new = Buffer::from_text("one\nTWO-LONGER\nthree");
+        ed.apply_external_change(DocId::default(), new, UndoSource::External);
+        // The line was replaced: first new line of the replacement, the
+        // desired column (1, set by `l`).
+        assert_eq!(ed.cursor(), Pos::new(1, 1));
+        // And a replacement that is shorter is clipped to its last character.
+        let mut ed = Editor::from_text("one\ntwo\nthree");
+        ed.feed("jll");
+        let new = Buffer::from_text("one\nX\nthree");
+        ed.apply_external_change(DocId::default(), new, UndoSource::External);
+        assert_eq!(ed.cursor(), Pos::new(1, 0));
+    }
+
+    #[test]
+    fn external_change_moves_marks_and_the_jumplist_with_the_lines() {
+        let mut ed = Editor::from_text("one\ntwo\nthree\nfour");
+        ed.feed("jjma");
+        ed.feed("G");
+        // G set the context mark to where the cursor was: line 2.
+        let new = Buffer::from_text("zero\none\ntwo\nthree\nfour");
+        ed.apply_external_change(DocId::default(), new, UndoSource::External);
+        assert_eq!(ed.buf().mark('a'), Some(Pos::new(3, 0)));
+        // The context mark followed the line too: `''` goes to "two"'s new line.
+        ed.feed("''");
+        assert_eq!(ed.cursor().line, 3);
+    }
+
+    #[test]
+    fn external_change_keeps_the_scroll_top_on_its_line() {
+        let text: String = (0..50).map(|i| format!("line {i}\n")).collect();
+        let mut ed = Editor::from_text(&text);
+        ed.set_screen_size(40, 11);
+        ed.feed("30G");
+        let top = ed.win().top;
+        assert!(top > 0);
+        let mut lines = ed.buf().lines();
+        lines.insert(0, "inserted".to_string());
+        let new = Buffer::from_text(&lines.join("\n"));
+        ed.apply_external_change(DocId::default(), new, UndoSource::External);
+        assert_eq!(ed.win().top, top + 1);
+        assert_eq!(ed.cursor().line, 30);
+    }
+
+    #[test]
+    fn external_change_keeps_line_ends_of_the_new_content() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("crlf.txt");
+        std::fs::write(&path, b"one\r\ntwo\r\n").unwrap();
+        let mut ed = Editor::open(&path);
+        assert!(ed.buf().crlf);
+        // The file gets LF endings and one more line.
+        let (new, _) = Buffer::from_file_bytes(&path, Some(b"one\ntwo\nthree\n"));
+        assert!(!new.crlf);
+        ed.apply_external_change(DocId::default(), new, UndoSource::External);
+        assert!(!ed.buf().crlf);
+        assert_eq!(ed.buf().to_bytes(), b"one\ntwo\nthree\n");
+        // Same text with CRLF ends: flags only, no undo step.
+        let seq = ed.doc().undo.seq();
+        let (new, _) = Buffer::from_file_bytes(&path, Some(b"one\r\ntwo\r\nthree\r\n"));
+        assert!(
+            ed.apply_external_change(DocId::default(), new, UndoSource::External)
+                .is_none()
+        );
+        assert!(ed.buf().crlf);
+        assert_eq!(ed.doc().undo.seq(), seq);
+        assert!(!ed.buf().modified);
     }
 }

@@ -21,6 +21,7 @@ pub mod recovery;
 pub mod redraw;
 pub mod regex;
 pub mod register;
+pub(crate) mod reload;
 mod scroll;
 mod search;
 pub mod signals;

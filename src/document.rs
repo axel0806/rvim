@@ -9,6 +9,7 @@ use crate::buffer::Buffer;
 use crate::editor::LastVisual;
 use crate::motion::Pos;
 use crate::options::{Local, Options};
+use crate::reload::{DiskState, Stale};
 use crate::undo::UndoTree;
 
 /// The line `U` restores (Vim's `b_u_line_*`).
@@ -40,6 +41,13 @@ pub(crate) struct Document {
     /// The buffer-local option values (`'autoindent'`, `'shiftwidth'`, ...).
     /// A new document copies the global values, see `options.rs`.
     pub(crate) local: Local,
+    /// The file as the text was last read from it or written to it (PLAN.md,
+    /// "No echo"). `None` for a buffer with no file, or a file that did not
+    /// exist when it was read.
+    pub(crate) disk: Option<DiskState>,
+    /// The file has changed or gone since the text was read or written, and
+    /// nothing has reloaded or written it since (set by `:checktime`).
+    pub(crate) stale: Option<Stale>,
 }
 
 impl Document {
@@ -59,6 +67,8 @@ impl Document {
             op_start: Pos::default(),
             op_end: Pos::default(),
             local,
+            disk: None,
+            stale: None,
         }
     }
 

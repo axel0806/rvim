@@ -11,11 +11,33 @@
 
 use crate::buffer::{Marks, Snapshot};
 use crate::motion::Pos;
+use std::fmt;
+
+/// Who made an undo step (PLAN.md, "Agent experience": the source tags shown
+/// by `:AgentChanges`). Steps made by the user's typing are `User`; a reload
+/// of a file changed on disk is `External`. More sources come with their
+/// features (agent, paste, prediction).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UndoSource {
+    User,
+    External,
+}
+
+impl fmt::Display for UndoSource {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            UndoSource::User => "user",
+            UndoSource::External => "external",
+        })
+    }
+}
 
 struct Node {
     parent: usize,
     /// Text after this change.
     snap: Snapshot,
+    /// Who made the change.
+    source: UndoSource,
     /// Lines above the changed region.
     top: usize,
     /// Lines below the changed region (unchanged by the change).
@@ -37,6 +59,7 @@ struct Open {
     cursor: Pos,
     changed: bool,
     marks: Marks,
+    source: UndoSource,
 }
 
 /// What an undo or redo step did, for placing the cursor and the marks.
@@ -65,6 +88,7 @@ impl UndoTree {
             nodes: vec![Node {
                 parent: 0,
                 snap: initial,
+                source: UndoSource::User,
                 top: 0,
                 below: 0,
                 cursor: Pos::default(),
@@ -103,6 +127,7 @@ impl UndoTree {
                     cursor,
                     changed: modified,
                     marks,
+                    source: UndoSource::User,
                 });
             }
         }
@@ -110,6 +135,22 @@ impl UndoTree {
 
     pub fn is_open(&self) -> bool {
         self.open.is_some()
+    }
+
+    /// Sets who makes the open change (it must have been started by `save`).
+    pub fn tag_open(&mut self, source: UndoSource) {
+        match &mut self.open {
+            Some(o) => o.source = source,
+            None => debug_assert!(false, "tag_open without an open change"),
+        }
+    }
+
+    /// Who made the change that ends at node `seq` (as `seq()` numbers it).
+    /// The oldest node, the text as loaded, is `User`. Read by the tests now,
+    /// and by `:AgentChanges` (its source tags) later.
+    #[allow(dead_code)]
+    pub fn source(&self, seq: usize) -> Option<UndoSource> {
+        self.nodes.get(seq).map(|n| n.source)
     }
 
     /// Ends the open change (Vim's `u_sync`), recording `snap` as its result.
@@ -122,6 +163,7 @@ impl UndoTree {
             top: o.top,
             below: o.below,
             cursor: o.cursor,
+            source: o.source,
             redo_child: None,
             changed: o.changed,
             marks: o.marks,

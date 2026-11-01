@@ -6,7 +6,7 @@
 //! (`:d :y :pu :m :t :j :> :<`), `:s`, `:g`, `:normal`, `:undo`, `:set`.
 //! `:r` reads a file's lines (`:r !cmd` is not supported).
 
-use crate::buffer::{Buffer, PosEdit};
+use crate::buffer::{Buffer, PosEdit, read_file};
 use crate::editor::{Editor, Message, Mode, describe};
 use crate::key::Key;
 use crate::motion::{Pos, first_non_blank};
@@ -14,7 +14,9 @@ use crate::normal::Op;
 use crate::ops::OpArg;
 use crate::options::Target;
 use crate::regex::{Match, Regex};
+use crate::reload::{DiskState, Stale};
 use crate::search::{SearchFlags, Start, searchit};
+use crate::undo::UndoSource;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -346,6 +348,8 @@ impl Editor {
             self.info(crate::VERSION_MESSAGE);
         } else if abbrev(n, "edit", 1) {
             self.cmd_edit(&p);
+        } else if abbrev(n, "checktime", 6) {
+            self.ex_checktime(p.arg)?;
         } else if abbrev(n, "read", 1) {
             self.ex_read(range, p.bang, p.arg)?;
         } else if abbrev(n, "delete", 1) {
@@ -694,6 +698,13 @@ impl Editor {
                 }
                 if self.buf().path.as_deref() == Some(target.as_path()) {
                     self.mark_saved();
+                    // The disk state of what was written (echo suppression).
+                    // The modification time is taken after the write; the hash
+                    // is of the bytes `write_to` wrote.
+                    let mtime = fs::metadata(&target).ok().and_then(|m| m.modified().ok());
+                    let disk = DiskState::of(mtime, &self.buf().to_bytes());
+                    self.doc_mut().disk = Some(disk);
+                    self.doc_mut().stale = None;
                 }
                 let new = if is_new { " [New]" } else { "" };
                 self.info(format!(
@@ -725,6 +736,133 @@ impl Editor {
             PathBuf::from(p.arg)
         };
         self.edit_file(Path::new(&path));
+    }
+
+    /// `:checktime`: compares the current file with what the buffer was last
+    /// read from or written to (Vim's `checktime`). Nothing is said when the
+    /// file is as it was. A changed file is reloaded as one undo step tagged
+    /// `external` when the buffer is unmodified and 'autoread' is on; otherwise
+    /// the buffer is left alone and Vim's warning says so (W11, W12, W13), and
+    /// the document is marked stale. A file that is gone gives E211.
+    ///
+    /// This reads the file synchronously, which is acceptable because the
+    /// user asked for it. The file watcher (PLAN.md, milestone 7 step 2b) does
+    /// the same reads on a worker thread, not here.
+    fn ex_checktime(&mut self, arg: &str) -> ExRes<()> {
+        // The argument is a buffer address, as in Vim (probed with Vim 9.1.1914):
+        // a number is a buffer number, and a missing buffer is silently
+        // skipped; `0` is E939; a name matches a buffer name, else E94.
+        // rvim has one buffer, numbered 1, and no alternate buffer.
+        let arg = arg.trim();
+        if arg.is_empty() || arg == "%" {
+            return self.checktime_current();
+        }
+        if arg.bytes().all(|b| b.is_ascii_digit()) {
+            return match arg.parse::<u64>() {
+                Ok(0) => Err("E939: Positive count required: checktime 0".into()),
+                Ok(1) => self.checktime_current(),
+                // A number of a buffer that does not exist: nothing to check.
+                _ => Ok(()),
+            };
+        }
+        let matches_name = self
+            .buf()
+            .path
+            .as_ref()
+            .is_some_and(|p| p.display().to_string().contains(arg));
+        if matches_name {
+            return self.checktime_current();
+        }
+        Err(format!("E94: No matching buffer for {arg}"))
+    }
+
+    /// The check of the current buffer's file (see `ex_checktime`).
+    fn checktime_current(&mut self) -> ExRes<()> {
+        let Some(path) = self.buf().path.clone() else {
+            return Ok(());
+        };
+        let name = path.display().to_string();
+        let read = match read_file(&path) {
+            Ok(read) => read,
+            Err(e) => return Err(format!("E211: File \"{name}\" no longer available ({e})")),
+        };
+        let Some((mtime, bytes)) = read else {
+            // Gone. A buffer that never had a file on disk has nothing to lose.
+            if self.doc().disk.is_some() {
+                self.doc_mut().stale = Some(Stale::Deleted);
+                return Err(format!("E211: File \"{name}\" no longer available"));
+            }
+            return Ok(());
+        };
+        let now = DiskState::of(mtime, &bytes);
+        let disk = self.doc().disk.clone();
+        if disk.as_ref().is_some_and(|d| d.same_as(&now)) {
+            self.doc_mut().stale = None;
+            return Ok(());
+        }
+        if disk.as_ref().is_some_and(|d| d.hash == now.hash) {
+            // Same contents, a new modification time or size (touched, or
+            // written by rvim itself and read back). Not a change: record it.
+            self.doc_mut().disk = Some(now);
+            self.doc_mut().stale = None;
+            return Ok(());
+        }
+        if disk.is_none() {
+            // The file was created after editing started.
+            self.doc_mut().stale = Some(Stale::Changed);
+            self.info(format!(
+                "W13: Warning: File \"{name}\" has been created after editing started"
+            ));
+            return Ok(());
+        }
+        let modified = self.buf().modified;
+        if modified || !self.autoread_on() {
+            // The buffer is not touched. Its disk state stays as it was, so the
+            // change is still seen (and reported again) by the next check.
+            self.doc_mut().stale = Some(Stale::Changed);
+            let warning = if modified {
+                "W12: Warning"
+            } else {
+                "W11: Warning"
+            };
+            let what = if modified {
+                "has changed and the buffer was changed in Vim as well"
+            } else {
+                "has changed since editing started"
+            };
+            self.info(format!("{warning}: File \"{name}\" {what}"));
+            return Ok(());
+        }
+        // Unmodified, and 'autoread' is on: reload as one undo step.
+        let (new, _) = Buffer::from_file_bytes(&path, Some(&bytes));
+        let doc = self.win().doc;
+        let change = self.apply_external_change(doc, new, UndoSource::External);
+        let d = self.doc_mut();
+        d.disk = Some(now);
+        d.stale = None;
+        self.info(match change {
+            None => format!("\"{name}\" changed on disk"),
+            Some(c) if c.fallback => {
+                format!("\"{name}\" changed on disk; line diff too large, cursor kept on its line")
+            }
+            Some(c) => format!(
+                "\"{name}\" changed on disk: +{} -{} lines",
+                c.added, c.removed
+            ),
+        });
+        Ok(())
+    }
+
+    /// The effective value of 'autoread' for the current document and window.
+    /// It is global-local: an unset local value means the global one.
+    fn autoread_on(&self) -> bool {
+        let i = crate::options::Options::find("autoread");
+        i.is_some_and(|i| {
+            matches!(
+                self.eff().value(i),
+                crate::options::Val::Bool(true)
+            )
+        })
     }
 
     // ---- line commands --------------------------------------------------
@@ -2474,5 +2612,255 @@ mod tests {
         ed.feed(&format!(":e {}<CR>", path.display()));
         ed.feed(":r<CR>");
         assert_eq!(ed.buf().lines(), ["s", "s"]);
+    }
+
+    // `:checktime`, with real files.
+
+    use crate::motion::Pos;
+    use crate::reload::{DiskState, Stale};
+    use crate::undo::UndoSource;
+    use std::time::{Duration, SystemTime};
+
+    /// A file `f.txt` in a new temp dir, opened in an editor.
+    fn open_file(dir: &tempfile::TempDir, contents: &str) -> (Editor, std::path::PathBuf) {
+        let path = dir.path().join("f.txt");
+        fs::write(&path, contents).unwrap();
+        (Editor::open(&path), path)
+    }
+
+    fn message_of(ed: &Editor) -> String {
+        ed.message().map(|m| m.text.clone()).unwrap_or_default()
+    }
+
+    #[test]
+    fn checktime_with_no_change_says_nothing_and_changes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut ed, _) = open_file(&dir, "one\ntwo\n");
+        ed.feed("jl");
+        let seq = ed.doc().undo.seq();
+        ed.feed(":checktime<CR>");
+        assert_eq!(message_of(&ed), "", "no message");
+        assert_eq!(ed.buf().lines(), ["one", "two"]);
+        assert_eq!(ed.cursor(), Pos::new(1, 1));
+        assert_eq!(ed.doc().undo.seq(), seq, "no undo step");
+        assert!(!ed.buf().modified);
+        assert_eq!(ed.doc().stale, None);
+    }
+
+    #[test]
+    fn echo_suppression_a_write_does_not_count_as_a_change() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut ed, path) = open_file(&dir, "one\n");
+        ed.feed("ix<Esc>:w<CR>");
+        assert_eq!(fs::read_to_string(&path).unwrap(), "xone\n");
+        // Even with autoread on, our own write is not reloaded.
+        ed.feed(":set autoread<CR>");
+        let seq = ed.doc().undo.seq();
+        ed.feed(":checktime<CR>");
+        assert!(!message_of(&ed).starts_with('W'), "{}", message_of(&ed));
+        assert_eq!(ed.buf().lines(), ["xone"]);
+        assert_eq!(ed.doc().undo.seq(), seq);
+        assert!(!ed.buf().modified);
+        assert_eq!(ed.doc().stale, None);
+    }
+
+    #[test]
+    fn a_change_after_our_write_is_still_seen() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut ed, path) = open_file(&dir, "one\n");
+        ed.feed("ix<Esc>:w<CR>");
+        fs::write(&path, "other\n").unwrap();
+        ed.feed(":checktime<CR>");
+        assert!(message_of(&ed).starts_with("W11"), "{}", message_of(&ed));
+        assert_eq!(ed.buf().lines(), ["xone"]);
+    }
+
+    #[test]
+    fn changed_with_autoread_reloads_as_one_external_undo_step() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut ed, path) = open_file(&dir, "one\ntwo\nthree\n");
+        ed.feed("jj:set autoread<CR>");
+        let seq = ed.doc().undo.seq();
+        fs::write(&path, "one\nTWO\nthree\nfour\n").unwrap();
+        ed.feed(":checktime<CR>");
+        assert_eq!(ed.buf().lines(), ["one", "TWO", "three", "four"]);
+        assert!(!ed.buf().modified);
+        assert_eq!(ed.doc().undo.seq(), seq + 1);
+        assert_eq!(ed.doc().undo.source(seq + 1), Some(UndoSource::External));
+        assert!(
+            message_of(&ed).contains("changed on disk"),
+            "{}",
+            message_of(&ed)
+        );
+        assert_eq!(ed.doc().stale, None);
+        // `u` goes back in one step.
+        ed.feed("u");
+        assert_eq!(ed.buf().lines(), ["one", "two", "three"]);
+        ed.feed("<C-r>");
+        assert_eq!(ed.buf().lines(), ["one", "TWO", "three", "four"]);
+        // And the disk state now is the new file: a second check does nothing.
+        let seq = ed.doc().undo.seq();
+        ed.feed(":checktime<CR>");
+        assert_eq!(ed.doc().undo.seq(), seq);
+    }
+
+    #[test]
+    fn changed_without_autoread_is_reported_and_the_buffer_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut ed, path) = open_file(&dir, "one\n");
+        fs::write(&path, "two\n").unwrap();
+        ed.feed(":checktime<CR>");
+        let want = format!(
+            "W11: Warning: File \"{}\" has changed since editing started",
+            path.display()
+        );
+        assert_eq!(message_of(&ed), want);
+        assert_eq!(ed.buf().lines(), ["one"]);
+        assert!(!ed.buf().modified);
+        assert_eq!(ed.doc().stale, Some(Stale::Changed));
+        // Still reported by the next check: the disk state was not taken.
+        ed.feed(":checktime<CR>");
+        assert!(message_of(&ed).starts_with("W11"));
+    }
+
+    #[test]
+    fn changed_and_modified_is_w12_and_the_buffer_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut ed, path) = open_file(&dir, "one\n");
+        ed.feed("ix<Esc>:set autoread<CR>");
+        fs::write(&path, "two\n").unwrap();
+        ed.feed(":checktime<CR>");
+        assert!(message_of(&ed).starts_with("W12"), "{}", message_of(&ed));
+        assert_eq!(ed.buf().lines(), ["xone"]);
+        assert!(ed.buf().modified);
+        assert_eq!(ed.doc().stale, Some(Stale::Changed));
+    }
+
+    #[test]
+    fn deleted_file_is_e211_and_the_buffer_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut ed, path) = open_file(&dir, "one\n");
+        fs::remove_file(&path).unwrap();
+        ed.feed(":checktime<CR>");
+        assert!(message_of(&ed).starts_with("E211"), "{}", message_of(&ed));
+        assert_eq!(ed.buf().lines(), ["one"]);
+        assert_eq!(ed.doc().stale, Some(Stale::Deleted));
+    }
+
+    #[test]
+    fn a_file_created_after_editing_started_is_w13() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("new.txt");
+        let mut ed = Editor::open(&path);
+        ed.feed(":checktime<CR>");
+        assert!(
+            !message_of(&ed).starts_with('W'),
+            "nothing before the file exists"
+        );
+        fs::write(&path, "made\n").unwrap();
+        ed.feed(":checktime<CR>");
+        assert!(message_of(&ed).starts_with("W13"), "{}", message_of(&ed));
+        assert_eq!(ed.buf().lines(), [""]);
+    }
+
+    #[test]
+    fn a_touched_file_with_the_same_contents_is_not_a_change() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut ed, path) = open_file(&dir, "one\n");
+        ed.feed(":set autoread<CR>");
+        let later = SystemTime::now() + Duration::from_secs(3600);
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(later)
+            .unwrap();
+        let seq = ed.doc().undo.seq();
+        ed.feed(":checktime<CR>");
+        assert_eq!(ed.doc().undo.seq(), seq);
+        assert_eq!(ed.buf().lines(), ["one"]);
+        assert_eq!(message_of(&ed), "");
+        // The recorded modification time is now the file's.
+        let mtime = fs::metadata(&path).unwrap().modified().ok();
+        assert_eq!(ed.doc().disk.as_ref().unwrap().mtime, mtime);
+    }
+
+    #[test]
+    fn disk_state_is_the_hash_and_mtime_of_what_was_read_and_written() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut ed, path) = open_file(&dir, "one\r\ntwo\r\n");
+        let read = fs::read(&path).unwrap();
+        let mtime = fs::metadata(&path).unwrap().modified().ok();
+        assert_eq!(ed.doc().disk, Some(DiskState::of(mtime, &read)));
+        assert_eq!(
+            ed.doc().disk.as_ref().unwrap().hash,
+            crate::reload::fnv1a(&read)
+        );
+        // A write records the bytes written, with their line ends.
+        ed.feed("ix<Esc>:w<CR>");
+        let written = fs::read(&path).unwrap();
+        assert_eq!(written, b"xone\r\ntwo\r\n");
+        let mtime = fs::metadata(&path).unwrap().modified().ok();
+        assert_eq!(ed.doc().disk, Some(DiskState::of(mtime, &written)));
+        // A buffer with no file has no disk state.
+        assert_eq!(Editor::from_text("x").doc().disk, None);
+    }
+
+    #[test]
+    fn checktime_argument_is_a_buffer_address_as_in_vim() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut ed, path) = open_file(&dir, "one\n");
+        ed.feed(":set autoread<CR>");
+        // Buffer 1 is the current buffer: it is checked.
+        fs::write(&path, "two\n").unwrap();
+        ed.feed(":checktime 1<CR>");
+        assert_eq!(ed.buf().lines(), ["two"]);
+        assert!(message_of(&ed).contains("changed on disk"));
+        // Another buffer number is silently skipped (Vim does the same).
+        fs::write(&path, "three\n").unwrap();
+        ed.feed(":checktime 2<CR>");
+        assert_eq!(ed.buf().lines(), ["two"]);
+        assert_eq!(message_of(&ed), "");
+        // The current buffer by `%` or by a part of its name.
+        ed.feed(":checktime %<CR>");
+        assert_eq!(ed.buf().lines(), ["three"]);
+        fs::write(&path, "four\n").unwrap();
+        ed.feed(":checktime f.tx<CR>");
+        assert_eq!(ed.buf().lines(), ["four"]);
+        // Zero is E939; a name that matches nothing is E94.
+        ed.feed(":checktime 0<CR>");
+        assert!(message_of(&ed).starts_with("E939"), "{}", message_of(&ed));
+        ed.feed(":checktime nosuch<CR>");
+        assert_eq!(message_of(&ed), "E94: No matching buffer for nosuch");
+        ed.feed(":checktime 1,2<CR>");
+        assert!(message_of(&ed).starts_with("E94"), "{}", message_of(&ed));
+    }
+
+    #[test]
+    fn autoread_uses_the_effective_global_local_value() {
+        // 'autoread' is global-local: a local value set with `:setlocal` wins
+        // over the global one, and an unset local value means the global one.
+        let dir = tempfile::tempdir().unwrap();
+        let (mut ed, path) = open_file(&dir, "one\n");
+        fs::write(&path, "two\n").unwrap();
+        ed.feed(":checktime<CR>");
+        assert!(message_of(&ed).starts_with("W11"), "{}", message_of(&ed));
+        ed.feed(":setlocal autoread<CR>:checktime<CR>");
+        assert_eq!(ed.buf().lines(), ["two"]);
+        assert!(!ed.buf().modified);
+        // Set the global value only: the local one is still unset, so it counts.
+        let dir2 = tempfile::tempdir().unwrap();
+        let (mut ed2, path2) = open_file(&dir2, "one\n");
+        ed2.feed(":setglobal autoread<CR>");
+        fs::write(&path2, "two\n").unwrap();
+        ed2.feed(":checktime<CR>");
+        assert_eq!(ed2.buf().lines(), ["two"]);
+    }
+
+    #[test]
+    fn checktime_name_match_without_a_file_is_e94() {
+        let mut ed = Editor::from_text("x");
+        ed.feed(":checktime f<CR>");
+        assert_eq!(message_of(&ed), "E94: No matching buffer for f");
     }
 }

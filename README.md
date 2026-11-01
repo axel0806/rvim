@@ -43,7 +43,11 @@ Prebuilt binaries for Windows, Linux and macOS are attached to the
 - Search: `/ ? n N * # g* g# gn gN` with offsets and `;`, on a Vim-compatible regex
   engine (`\v \m \M \V`, `\{}`, look-around, `\zs`, `\_x`, collections, ...).
 - Ex commands: ranges (`%`, `.`, `$`, `'<,'>`, `'a`, `/pat/`, `;`, offsets), `:d :y
-  :pu :m :t :j :> :< :k :mark :s :g :v :normal :undo :redo :set :setl :setg :r :w :q :wq :x :e`.
+  :pu :m :t :j :> :< :k :mark :s :g :v :normal :undo :redo :set :setl :setg :r :w :q :wq :x :e
+  :checktime`.
+- `:checktime` (`:checkt`) reports a file changed on disk (W11, W12, W13, E211).
+  With `autoread` set and the buffer unmodified, it reloads the file as one undo
+  step, which `u` undoes. Nothing reloads by itself yet (see PLAN.md, milestone 7).
 - Lowercase marks `a`-`z` (`m{a-z}`, `'a`, `` `a ``).
 - Jumplist and context mark: `<C-o>` and `<Tab>` with counts, `''`, `` `` ``,
   `m'`, `` m` ``, and `:jumps` (a one-line message). `G`, `gg`, `/`, `?`, `n`,
@@ -80,8 +84,9 @@ use:
 - Few options. `:set`, `:setlocal` and `:setglobal` (`:setl`, `:setg`) support
   `ignorecase`, `smartcase`, `wrapscan`, `autoindent`, `expandtab`,
   `shiftwidth`, `tabstop`, `softtabstop`, `smarttab`, `shiftround` and
-  `scrolloff`, and store `hlsearch`, `incsearch`, `number`, `relativenumber`,
-  `wrap` and `autoread` without using them yet. Each option has Vim's scope:
+  `scrolloff`, and store `hlsearch`, `incsearch`, `number`, `relativenumber`
+  and `wrap` without using them yet; `autoread` (global-local) only applies to
+  `:checktime`. Each option has Vim's scope:
   `autoindent`, `expandtab`, `shiftwidth`, `tabstop` and `softtabstop` are
   buffer-local, `scrolloff` and `autoread` are global-local, `number`,
   `relativenumber` and `wrap` are window-local, the rest are global. Tab

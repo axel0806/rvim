@@ -10,6 +10,7 @@ use ropey::{Rope, RopeSlice};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 /// The lowercase marks `a` to `z` (Vim's `b_namedm`). A mark that was
 /// deleted with its line is `None`.
@@ -92,6 +93,22 @@ fn line_of(rope: &Rope, l: usize) -> RopeSlice<'_> {
         s.slice(..s.len_chars() - 1)
     } else {
         s
+    }
+}
+
+/// The bytes of file `path` and its modification time, or `None` when it does
+/// not exist. The modification time is read before the contents, so a write
+/// made during the read shows up as a change later rather than being missed.
+pub(crate) fn read_file(path: &Path) -> io::Result<Option<(Option<SystemTime>, Vec<u8>)>> {
+    let mtime = match fs::metadata(path) {
+        Ok(m) => m.modified().ok(),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e),
+    };
+    match fs::read(path) {
+        Ok(bytes) => Ok(Some((mtime, bytes))),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e),
     }
 }
 
@@ -253,18 +270,24 @@ impl Buffer {
     /// Loads `path`. A missing file gives an empty buffer with that name and
     /// `None` stats (Vim's "[New]").
     pub fn load(path: &Path) -> io::Result<(Self, Option<FileStats>)> {
-        let bytes = match fs::read(path) {
-            Ok(b) => b,
-            Err(e) if e.kind() == io::ErrorKind::NotFound => {
-                let buf = Self {
-                    path: Some(path.to_owned()),
-                    ..Self::new()
-                };
-                return Ok((buf, None));
-            }
-            Err(e) => return Err(e),
+        let read = read_file(path)?;
+        Ok(Self::from_file_bytes(
+            path,
+            read.as_ref().map(|(_, b)| b.as_slice()),
+        ))
+    }
+
+    /// The buffer for file `path` whose contents are `bytes` (`None` for a
+    /// missing file), decoded as `load` does.
+    pub(crate) fn from_file_bytes(path: &Path, bytes: Option<&[u8]>) -> (Self, Option<FileStats>) {
+        let Some(bytes) = bytes else {
+            let buf = Self {
+                path: Some(path.to_owned()),
+                ..Self::new()
+            };
+            return (buf, None);
         };
-        let d = decode(&bytes);
+        let d = decode(bytes);
         let buf = Self {
             rope: Rope::from_str(&d.text),
             path: Some(path.to_owned()),
@@ -272,7 +295,29 @@ impl Buffer {
             no_lines: d.no_lines,
             ..Self::new()
         };
-        Ok((buf, Some(d.stats)))
+        (buf, Some(d.stats))
+    }
+
+    /// Sets the line-end style and the empty state of a reloaded file whose
+    /// text is the same as the buffer's. Not a change of text, so no undo.
+    pub(crate) fn set_file_flags(&mut self, crlf: bool, no_lines: bool) {
+        self.crlf = crlf;
+        self.no_lines = no_lines;
+    }
+
+    /// Replaces the whole text with the text of `new` (a file changed on
+    /// disk, read by `from_file_bytes`), including its line-end style and
+    /// its empty state. The position log gets `remap`, which moves the
+    /// positions outside the buffer (the jumplist, the context mark) to the
+    /// new lines. Marks are not touched here; the caller maps them. The
+    /// buffer is modified afterwards; the caller clears that when the text
+    /// is the file's.
+    pub(crate) fn replace_text(&mut self, new: Buffer, remap: impl Fn(Pos) -> Pos + 'static) {
+        self.rope = new.rope;
+        self.crlf = new.crlf;
+        self.touch();
+        self.no_lines = new.no_lines;
+        self.pos_edits.push(PosEdit::Remap(Box::new(remap)));
     }
 
     /// The lines of file contents `bytes`, decoded as `load` does (for

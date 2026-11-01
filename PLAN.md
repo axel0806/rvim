@@ -7,8 +7,8 @@ a real Vim by the differential harness in `tests/common/mod.rs`.
 
 ## Status: read this first
 
-Last updated 2026-11-01 (milestone 4 option scopes: `:setlocal` and `:setglobal`, buffer-local, window-local and global-local values, see "Options registry"; Document/Window/Editor split steps 1 to 3 of milestone 4 (ids, collections, accessors, version counter, marks, `buf_mut()`, window size); CI first ran on GitHub; Linux builds Vim 9.1.1914 from source, and all three OS jobs require Vim; cell-level diff redraw in `redraw.rs`, with its escape sequences tested in `main.rs`; kitty keyboard protocol, with `RVIM_NO_KITTY=1` to turn it off and no support query when `TERM` is unset, empty or `dumb`; SIGHUP/SIGTERM recovery on Unix, milestone 4; Makefile packaging targets `install` with `PREFIX`/`DESTDIR`, `uninstall` and `dist`). **rvim is an alpha, roughly 25-30% of this plan.**
-As of 2026-11-01 milestones 1-3 are done; 4 and 5 are partly done; 6 has the start menu only; 7-9 are plans.
+Last updated 2026-11-01 (milestone 7 step 2a: undo steps record their source, the disk state per document with a hash, `:checktime`, and the reload of an unmodified buffer as one undo step with cursor and scroll mapping; milestone 4 option scopes: `:setlocal` and `:setglobal`, buffer-local, window-local and global-local values, see "Options registry"; Document/Window/Editor split steps 1 to 3 of milestone 4 (ids, collections, accessors, version counter, marks, `buf_mut()`, window size); CI first ran on GitHub; Linux builds Vim 9.1.1914 from source, and all three OS jobs require Vim; cell-level diff redraw in `redraw.rs`, with its escape sequences tested in `main.rs`; kitty keyboard protocol, with `RVIM_NO_KITTY=1` to turn it off and no support query when `TERM` is unset, empty or `dumb`; SIGHUP/SIGTERM recovery on Unix, milestone 4; Makefile packaging targets `install` with `PREFIX`/`DESTDIR`, `uninstall` and `dist`). **rvim is an alpha, roughly 25-30% of this plan.**
+As of 2026-11-01 milestones 1-3 are done; 4 and 5 are partly done; 6 has the start menu only; 7 has its first step (file reload, 2a), 8-9 are plans.
 Released as `v0.1.0-alpha.1`, `v0.1.0-alpha.2` and `v0.1.0-alpha.3`. The next release is `v0.1.0-alpha.4`, not yet tagged. All tests pass against Vim 9.1 and clippy/fmt are
 clean at the last commit.
 
@@ -19,7 +19,7 @@ clean at the last commit.
 | 4 Foundation | 100%. The Document/Window/Editor split: steps 1 to 3 done (one document and one window, with `DocId`/`WinId` collections and window size from the screen; see "Foundation"). Option scopes done: `:setlocal`, `:setglobal`, buffer-, window- and global-local values (see "Options registry"). Foundation is complete; the rest is milestone 5 (layout and splits, several documents and windows in use) |
 | 5 Windows and buffers | ~30%. Done: macros (`q`, `@`, `@@`, `@:`), lowercase marks (`m{a-z}`, `'a`, `` `a ``, `:k`, `:mark`, `'a` addresses), the jumplist (`<C-o>`, `<Tab>` with counts, `:jumps`) and the context mark (`''`, `` `` ``, `m'`, `` m` ``), scrolling (`<C-e> <C-y> <C-f> <C-b> <C-d> <C-u> zt zz zb z<CR> z. z- H M L`, counts, `scrolloff`, wrapped lines). Left: splits, buffer list, the other marks (uppercase, `'[`/`']`, `'<`/`'>` motions), swap files |
 | 6 Modern editing experience | Started, not near done. Landed: the start menu (opt-in `--start-menu`, `startmenu` option). Left: hlsearch, incsearch, syntax, line numbers, config file, palette, mouse, `:Start`, the start menu's recent files, Config and agent entries, and its modern-profile default (see "Start menu") |
-| 7 Agent integration | 0%. Not started (file-change reload as an undo step, diff view, ACP connector, agent detection). Research is in "Detecting and connecting to agents" |
+| 7 Agent integration | ~5%. Step 2a done (2026-11-01): undo steps record their source (`UndoSource`), the disk state per document (`DiskState`, FNV-1a hash, mtime and size, taken by `:e`, `:w` and `:checktime`), `:checktime` with W11, W12, W13 and E211, and a changed file reloaded when unmodified and `autoread` is on, as one undo step tagged `external` with the cursor and scroll mapped (`src/reload.rs`, `Editor::apply_external_change`). Left of step 2: the file watcher thread (2b) and echo suppression with it; the conflict prompt is step 3. Not started: the diff view, ACP connector, agent detection (research is in "Detecting and connecting to agents") |
 | 8 Prediction | 0%. Not started |
 | 9 Extras | 0%. Not started |
 
@@ -1364,7 +1364,7 @@ needs no splits. Splits gate step 7 alone.
 | Step | Lands | Depends on | Tests |
 |---|---|---|---|
 | 1 | Document/Window split (milestone 4, item (a)) | none | Existing compat suite unchanged. Unit: two windows on one document share undo and marks, keep their own cursors |
-| 2 | Undo step source and hash, file watcher (worker), `checktime`, `autoread`, reload as one undo step with cursor and scroll mapping, echo suppression | 1 (per-document version) | Unit: mapping table (equal, inserted above, deleted under cursor, replaced, deleted top line); `u` and `<C-r>` after reload. Scripted watcher with fake clock and fake file contents. Echo: a `:w` does not reload itself. Differential: `autoread` value and `:checktime` with no change. Add the cursor-placement difference to "Known differences" |
+| 2 | **2a done (2026-11-01):** undo step source and hash, `checktime`, `autoread`, reload as one undo step with cursor and scroll mapping (`reload.rs`, `Editor::apply_external_change`), echo suppression by hash and by the stat taken after `:w`. **2b left:** file watcher (worker), `FileChanged` events, echo suppression with the watcher, and the watcher's stat polling | 1 (per-document version) | Unit: mapping table (equal, inserted above, deleted under cursor, replaced, deleted top line); `u` and `<C-r>` after reload. Scripted watcher with fake clock and fake file contents. Echo: a `:w` does not reload itself. Differential: `autoread` value and `:checktime` with no change. Add the cursor-placement difference to "Known differences" |
 | 3 | Conflict prompt (`l k d m`) with the opt-in, baseline (`[base]` scratch) and gutter, `:w` W11/W12 guard, deleted file, `:AgentChanges`, merge with markers (marker refusal of `:w` with the opt-in only) | 2 | Unit: each conflict key on a fixed state; merge (clean, conflicting, identical); Frame golden of the gutter and of the prompt line. With no opt-in: a modified buffer is not reloaded and `:w` gives W11. No differential (messages) |
 | 4 | Opt-in config table, registry, detection, `:AgentScan`, status-line states without connection | minimal config loader (shared with milestone 6), options | Detection with a temporary fake home and `PATH`: found, not found, found under the config dir only. Frame golden for each indicator. Golden with no opt-in and no Agent command: no indicator, identical to Vim's frame. Golden after `:AgentScan` with no opt-in: indicator shown |
 | 5 | ACP connector: consent, approval store, `:Agent`, `:AgentConnect`, `:AgentUse`, `:AgentCancel`, `:AgentDisconnect`, agent log document, `\a` and `\al`, lifecycle and backoff, `Editor::prediction_allowed` (returns false) | 4 | Fake agent (test helper binary) replays recorded JSON-RPC transcripts both ways: success, auth failure, reply timeout, EOF mid-turn, malformed line. Pure transition table test. Fake timer for backoff. Approval store round trip and unreadable file. Consent keys. `:AgentUse` with two fake agents: listing, switching, and the choice prompt when several are found and none is active. Cases: `:Agent` without opt-in still works, keys stay unbound |
@@ -2014,7 +2014,9 @@ plan, kept for the record; the files are the source of truth.
   (d) block yank and put with 'tabstop' 2 and tabs. There is no `smartindent`,
   `backspace=indent,eol,start`, `whichwrap=b,s` and `startofline` are fixed,
   and the ruler is always shown. `hlsearch`, `incsearch`, `number`,
-  `relativenumber`, `wrap` and `autoread` are stored but have no effect yet.
+  `relativenumber` and `wrap` are stored but have no effect yet. `autoread`
+  acts only on `:checktime` and the reload it makes (the items at the end of
+  this list).
   `scrolloff` works. 'scroll' is not an option yet: a count on CTRL-D/CTRL-U
   sets a per-editor value (as Vim does), with no `:set scroll`.
 - Scrolling (milestone 5), not verified against Vim, or only in part:
@@ -2156,3 +2158,51 @@ plan, kept for the record; the files are the source of truth.
   them on the joined line with Vim's column mapping.
 - The test harness cannot test state carried between cases (last search,
   last `:s`, `.`), since rvim starts each case fresh and Vim does not.
+- Reload of a changed file (milestone 7 step 2a), cursor placement. Vim's
+  `autoread` reload keeps the cursor's line number and column. Probed with
+  Vim 9.1.1914 outside the harness, which cannot write files between keys:
+  with `autoread` set, a cursor on line 4 stayed on line 4 when a line was
+  inserted above it and the line itself was replaced, and a cursor on line 3
+  stayed on line 3 when a line above it was deleted. rvim maps the cursor
+  through the line diff, as PLAN.md "Reload as one undo step" says: a line
+  equal in both texts goes with its text, and a changed line goes to the
+  first new line of its replacement. Vim's exact rule is not known beyond
+  these probes, so the difference stays until it is.
+- Where PLAN.md is silent, the rules in `src/reload.rs` are these. A pure
+  deletion sends its lines to the line before it, but a deletion at the top
+  of the file sends them to the first line after it. The scroll top follows
+  its line when that line is equal; when it changed, the view keeps the
+  cursor on the same row. A mark on a changed line goes where the cursor
+  rule sends its line; Vim's `mark_adjust()` deletes such marks, but rvim
+  keeps them. The desired column is kept on an equal line; a changed line
+  takes it, clipped to the line.
+- Above 20,000 lines, 4 MiB of text, or a changed middle part of 4,000,000
+  cells (the LCS table), there is no line diff. The cursor and the scroll top
+  keep their line numbers, clamped to the new text, and the message says
+  "line diff too large".
+- The reload message is `"f" changed on disk: +N -M lines`, not Vim's
+  file-information message. The W11, W12, W13 and E211 messages are their
+  first line only: Vim's "See :help" line and its prompt are not shown. A
+  changed buffer is kept as it is; nothing asks.
+- `:checktime {N}` takes Vim's buffer address, probed with Vim 9.1.1914.
+  Rvim has one buffer, numbered 1: `1`, `%` and a part of the file name check
+  it. Another number is skipped silently, as Vim skips a missing buffer, `0` is
+  E939, and a name that matches nothing is E94. Vim's `#` (alternate buffer)
+  is not supported. Vim checks every buffer when there is no argument, and
+  rvim checks its one buffer. The command reads the file itself, as it is
+  user-triggered; the watcher (step 2b) will read on a worker thread instead.
+- `:checktime` decides by content: a file whose contents are the same is not
+  a change even when its modification time moved. Vim warns on a new
+  modification time; this was not probed. A rewrite that keeps the size and
+  the time is still seen, because the contents are read and hashed.
+- `:w` does not ask when the file changed on disk since it was read: it
+  overwrites it. Vim asks with W11 ("WARNING: The file has been changed since
+  reading it!!!"). That prompt is step 3 of milestone 7.
+- `u` restores the text of a reload, not the line-end style: a reload that
+  changes CRLF to LF, or the reverse, keeps the new style after `u`.
+- Undo sources are `user` and `external` only. The watcher, agent, paste and
+  prediction sources come with their features.
+- The harness covers `:checktime` only where the buffer has no file (no
+  change is possible there), and checks that the text, the cursor and the
+  modified state match Vim (`tests/compat_reload.rs`). A changed file is
+  tested in unit tests in `src/ex.rs`, `src/editor.rs` and `src/reload.rs`.
