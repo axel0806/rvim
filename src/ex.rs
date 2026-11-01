@@ -142,7 +142,7 @@ impl Editor {
                     }
                 }
                 ExTask::GlobalLines { cmd, next } => {
-                    if self.quit || next >= self.doc.buf.tracked.len() {
+                    if self.quit || next >= self.doc().buf.tracked.len() {
                         continue;
                     }
                     self.ex_tasks.push(ExTask::GlobalLines {
@@ -150,25 +150,25 @@ impl Editor {
                         next: next + 1,
                     });
                     // Lines deleted by an earlier command are marked usize::MAX.
-                    let l = self.doc.buf.tracked[next];
+                    let l = self.doc().buf.tracked[next];
                     if l != usize::MAX {
-                        self.win.cursor = Pos::new(l.min(self.doc.buf.last_line()), 0);
+                        self.win_mut().cursor = Pos::new(l.min(self.doc_mut().buf.last_line()), 0);
                         self.ex_tasks.push(ExTask::Ex(cmd));
                     }
                 }
                 ExTask::GlobalEnd { old_lines } => {
                     self.global_busy = false;
-                    self.doc.buf.tracked.clear();
+                    self.doc_mut().buf.tracked.clear();
                     if self.global_need_beginline {
-                        self.win.cursor.col =
-                            first_non_blank(&self.doc.buf, self.win.cursor.line, true);
+                        self.win_mut().cursor.col =
+                            first_non_blank(&self.doc().buf, self.win().cursor.line, true);
                     } else {
-                        let len = self.doc.buf.line_len(self.win.cursor.line);
-                        if self.win.cursor.col >= len {
-                            self.win.cursor.col = len.saturating_sub(1);
+                        let len = self.doc().buf.line_len(self.win().cursor.line);
+                        if self.win().cursor.col >= len {
+                            self.win_mut().cursor.col = len.saturating_sub(1);
                         }
                     }
-                    let diff = self.doc.buf.line_count() as i64 - old_lines;
+                    let diff = self.doc().buf.line_count() as i64 - old_lines;
                     if diff.abs() > 2 {
                         let what = if diff > 0 {
                             "more lines"
@@ -262,7 +262,7 @@ impl Editor {
             if range.count > 0 {
                 // `:N` is a jump.
                 self.set_pcmark();
-                let l = range.line2.clamp(1, self.doc.buf.line_count());
+                let l = range.line2.clamp(1, self.doc().buf.line_count());
                 self.goto_line_first_non_blank(l - 1);
             }
             return Ok(());
@@ -331,13 +331,13 @@ impl Editor {
         } else if n == "wq" {
             self.cmd_write(&p, true);
         } else if abbrev(n, "xit", 1) || abbrev(n, "exit", 3) {
-            if self.doc.buf.modified || !p.arg.is_empty() {
+            if self.doc().buf.modified || !p.arg.is_empty() {
                 self.cmd_write(&p, true);
             } else {
                 self.quit = true;
             }
         } else if abbrev(n, "quit", 1) || abbrev(n, "qall", 2) {
-            if self.doc.buf.modified && !p.bang {
+            if self.doc().buf.modified && !p.bang {
                 return Err("E37: No write since last change (add ! to override)".into());
             }
             self.quit = true;
@@ -385,13 +385,13 @@ impl Editor {
             || n == "#"
             || abbrev(n, "list", 1)
         {
-            let l = range.line2.clamp(1, self.doc.buf.line_count());
+            let l = range.line2.clamp(1, self.doc().buf.line_count());
             self.goto_line_first_non_blank(l - 1);
-            let text = self.doc.buf.line_string(l - 1);
+            let text = self.doc().buf.line_string(l - 1);
             self.info(text);
         } else if n == "=" {
             let l = if range.count == 0 {
-                self.doc.buf.line_count()
+                self.doc().buf.line_count()
             } else {
                 range.line2
             };
@@ -410,8 +410,8 @@ impl Editor {
 
     fn parse_range<'a>(&mut self, s: &'a str) -> ExRes<(Range, &'a str)> {
         let mut rest = skip_ws(s);
-        let cur = self.win.cursor.line + 1;
-        let last = self.doc.buf.line_count();
+        let cur = self.win().cursor.line + 1;
+        let last = self.doc().buf.line_count();
         let mut base = cur;
         let mut lines: Vec<usize> = Vec::new();
         let mut count = 0usize;
@@ -462,7 +462,7 @@ impl Editor {
                             return Err("E16: Invalid range".into());
                         }
                         base = l.max(1);
-                        self.win.cursor.line = base - 1;
+                        self.win_mut().cursor.line = base - 1;
                     }
                 }
                 _ => break,
@@ -492,7 +492,7 @@ impl Editor {
     }
 
     fn visual_lines(&self) -> ExRes<(usize, usize)> {
-        match self.doc.last_visual {
+        match self.doc().last_visual {
             Some(v) => {
                 let (a, b) = (v.start.line.min(v.end.line), v.start.line.max(v.end.line));
                 Ok((a + 1, b + 1))
@@ -505,7 +505,7 @@ impl Editor {
     /// relative address or pattern starts from.
     fn get_address<'a>(&mut self, s: &'a str, base: usize) -> ExRes<(Option<usize>, &'a str)> {
         let mut rest = skip_ws(s);
-        let last = self.doc.buf.line_count();
+        let last = self.doc().buf.line_count();
         let mut line: Option<i64> = None;
         match rest.chars().next() {
             Some('.') => {
@@ -525,7 +525,7 @@ impl Editor {
                         rest = &rest[2..];
                     }
                     Some(c @ 'a'..='z') => {
-                        let p = self.doc.buf.mark(c).ok_or("E20: Mark not set")?;
+                        let p = self.doc().buf.mark(c).ok_or("E20: Mark not set")?;
                         line = Some(p.line as i64 + 1);
                         rest = &rest[2..];
                     }
@@ -622,7 +622,7 @@ impl Editor {
     }
 
     fn visual_lines_exact(&self, start: bool) -> ExRes<(usize, usize)> {
-        match self.doc.last_visual {
+        match self.doc().last_visual {
             Some(v) => {
                 let (a, b) = if v.start <= v.end {
                     (v.start, v.end)
@@ -649,7 +649,7 @@ impl Editor {
             pat.to_string()
         };
         let re = Regex::new(&pattern, &self.re_opts())?;
-        let line = base.clamp(1, self.doc.buf.line_count()) - 1;
+        let line = base.clamp(1, self.doc().buf.line_count()) - 1;
         let start = if fwd {
             Pos::new(line, usize::MAX / 4)
         } else {
@@ -660,7 +660,7 @@ impl Editor {
             end: false,
             wrapscan: self.opts.wrapscan(),
         };
-        match searchit(&self.doc.buf, &re, Start::At(start), fwd, 1, &fl) {
+        match searchit(&self.doc().buf, &re, Start::At(start), fwd, 1, &fl) {
             Some(f) => Ok(f.pos.line + 1),
             None => Err(format!("E486: Pattern not found: {pattern}")),
         }
@@ -670,31 +670,31 @@ impl Editor {
 
     fn cmd_write(&mut self, p: &Parsed, then_quit: bool) {
         let target: PathBuf = if p.arg.is_empty() {
-            match &self.doc.buf.path {
+            match &self.doc().buf.path {
                 Some(path) => path.clone(),
                 None => return self.error("E32: No file name"),
             }
         } else {
             PathBuf::from(p.arg)
         };
-        let own_file = self.doc.buf.path.as_deref() == Some(target.as_path());
+        let own_file = self.doc().buf.path.as_deref() == Some(target.as_path());
         if !own_file && !p.bang && target.exists() {
             return self.error("E13: File exists (add ! to override)");
         }
         let is_new = !target.exists();
-        match self.doc.buf.write_to(&target) {
+        match self.doc().buf.write_to(&target) {
             Ok(stats) => {
-                if self.doc.buf.path.is_none() {
-                    self.doc.buf.path = Some(target.clone());
+                if self.doc().buf.path.is_none() {
+                    self.doc_mut().buf.path = Some(target.clone());
                 }
-                if self.doc.buf.path.as_deref() == Some(target.as_path()) {
+                if self.doc().buf.path.as_deref() == Some(target.as_path()) {
                     self.mark_saved();
                 }
                 let new = if is_new { " [New]" } else { "" };
                 self.info(format!(
                     "\"{}\"{new} {} written",
                     target.display(),
-                    describe(stats, self.doc.buf.crlf)
+                    describe(stats, self.doc().buf.crlf)
                 ));
                 if then_quit {
                     self.quit = true;
@@ -708,11 +708,11 @@ impl Editor {
     }
 
     fn cmd_edit(&mut self, p: &Parsed) {
-        if self.doc.buf.modified && !p.bang {
+        if self.doc().buf.modified && !p.bang {
             return self.error("E37: No write since last change (add ! to override)");
         }
         let path = if p.arg.is_empty() {
-            match &self.doc.buf.path {
+            match &self.doc().buf.path {
                 Some(path) => path.clone(),
                 None => return self.error("E32: No file name"),
             }
@@ -725,7 +725,7 @@ impl Editor {
     // ---- line commands --------------------------------------------------
 
     fn check_range_lines(&self, r: Range) -> ExRes<()> {
-        if r.line1 < 1 || r.line2 > self.doc.buf.line_count() || r.line1 > r.line2 {
+        if r.line1 < 1 || r.line2 > self.doc().buf.line_count() || r.line1 > r.line2 {
             return Err("E16: Invalid range".into());
         }
         Ok(())
@@ -752,7 +752,7 @@ impl Editor {
                     return Err("E939: Positive count required".into());
                 }
                 r.line1 = r.line2;
-                r.line2 = (r.line2 + n - 1).min(self.doc.buf.line_count());
+                r.line2 = (r.line2 + n - 1).min(self.doc().buf.line_count());
             } else {
                 return Err(format!("E488: Trailing characters: {rest}"));
             }
@@ -761,20 +761,20 @@ impl Editor {
             r.line1 = 1;
         }
         self.check_range_lines(r)?;
-        if self.doc.buf.has_no_lines() && delete {
+        if self.doc().buf.has_no_lines() && delete {
             return Ok(());
         }
-        let saved = self.win.cursor;
-        self.win.cursor = Pos::new(r.line1 - 1, 0);
-        self.win.cursor.col = first_non_blank(&self.doc.buf, self.win.cursor.line, true);
+        let saved = self.win().cursor;
+        self.win_mut().cursor = Pos::new(r.line1 - 1, 0);
+        self.win_mut().cursor.col = first_non_blank(&self.doc().buf, self.win().cursor.line, true);
         let mut oa = self.line_oparg(if delete { Op::Delete } else { Op::Yank }, r, reg);
         if delete {
             self.op_delete(&mut oa);
-            self.win.keep_curswant = false;
+            self.win_mut().keep_curswant = false;
         } else {
             self.op_yank(&oa, false, true);
             // The cursor does not move for :yank.
-            self.win.cursor = saved;
+            self.win_mut().cursor = saved;
         }
         Ok(())
     }
@@ -821,11 +821,11 @@ impl Editor {
         self.u_save(at, 0, false);
         let n = lines.len();
         for (i, l) in lines.iter().enumerate() {
-            self.doc.buf.insert_line(at + i, l);
+            self.doc_mut().buf.insert_line(at + i, l);
         }
-        self.win.cursor.line = at + n - 1;
-        self.win.cursor.col = first_non_blank(&self.doc.buf, self.win.cursor.line, true);
-        self.doc.uline = None;
+        self.win_mut().cursor.line = at + n - 1;
+        self.win_mut().cursor.col = first_non_blank(&self.doc().buf, self.win().cursor.line, true);
+        self.doc_mut().uline = None;
         if n > 2 {
             self.info(format!("{n} more lines"));
         }
@@ -842,11 +842,11 @@ impl Editor {
             return Err("rvim: :read !{cmd} is not supported".into());
         }
         let path = if arg.is_empty() {
-            self.doc.buf.path.clone().ok_or("E32: No file name")?
+            self.doc().buf.path.clone().ok_or("E32: No file name")?
         } else {
             PathBuf::from(arg)
         };
-        if r.line2 > self.doc.buf.line_count() {
+        if r.line2 > self.doc().buf.line_count() {
             return Err("E16: Invalid range".into());
         }
         let bytes =
@@ -856,16 +856,16 @@ impl Editor {
         let at = r.line2;
         self.u_save(at, 0, false);
         for (i, l) in lines.iter().enumerate() {
-            self.doc.buf.insert_line(at + i, l);
+            self.doc_mut().buf.insert_line(at + i, l);
         }
         let last = if lines.is_empty() {
             r.line2.max(1) - 1
         } else {
             at + lines.len() - 1
         };
-        self.win.cursor.line = last;
-        self.win.cursor.col = first_non_blank(&self.doc.buf, last, true);
-        self.doc.uline = None;
+        self.win_mut().cursor.line = last;
+        self.win_mut().cursor.col = first_non_blank(&self.doc_mut().buf, last, true);
+        self.doc_mut().uline = None;
         self.info(format!(
             "\"{}\" {}L, {}B",
             path.display(),
@@ -877,7 +877,7 @@ impl Editor {
 
     /// Parses the destination of `:m` / `:t`.
     fn copymove_dest(&mut self, arg: &str) -> ExRes<usize> {
-        let (addr, rest) = self.get_address(arg, self.win.cursor.line + 1)?;
+        let (addr, rest) = self.get_address(arg, self.win().cursor.line + 1)?;
         if !skip_ws(rest).is_empty() {
             return Err(format!("E488: Trailing characters: {rest}"));
         }
@@ -894,39 +894,40 @@ impl Editor {
             }
             if dest == r.line2 || dest + 1 == r.line1 {
                 // Already there: the cursor still moves.
-                self.win.cursor.line = (if dest >= r.line2 { dest } else { r.line2 }) - 1;
-                self.win.cursor.line = r.line2 - 1;
-                self.win.cursor.col = first_non_blank(&self.doc.buf, self.win.cursor.line, true);
+                self.win_mut().cursor.line = (if dest >= r.line2 { dest } else { r.line2 }) - 1;
+                self.win_mut().cursor.line = r.line2 - 1;
+                self.win_mut().cursor.col =
+                    first_non_blank(&self.doc().buf, self.win().cursor.line, true);
                 return Ok(());
             }
             let moved: Vec<String> = (r.line1 - 1..r.line2)
-                .map(|l| self.doc.buf.line_string(l))
+                .map(|l| self.doc().buf.line_string(l))
                 .collect();
-            self.u_save(0, self.doc.buf.line_count(), false);
+            self.u_save(0, self.doc().buf.line_count(), false);
             // Marks on the moved lines go with them (Vim's do_move()): they
             // are taken out here and put back where the lines land.
             let first = r.line1 - 1;
-            let carried = self.doc.buf.take_marks_in(first, r.line2 - 1);
-            let pos_mark = self.doc.buf.pos_edit_count();
+            let carried = self.doc_mut().buf.take_marks_in(first, r.line2 - 1);
+            let pos_mark = self.doc().buf.pos_edit_count();
             if dest >= r.line2 {
                 for (i, l) in moved.iter().enumerate() {
-                    self.doc.buf.insert_line(dest + i, l);
+                    self.doc_mut().buf.insert_line(dest + i, l);
                 }
-                self.doc.buf.delete_lines(r.line1 - 1, n);
-                self.win.cursor.line = dest - 1;
+                self.doc_mut().buf.delete_lines(r.line1 - 1, n);
+                self.win_mut().cursor.line = dest - 1;
             } else {
-                self.doc.buf.delete_lines(r.line1 - 1, n);
+                self.doc_mut().buf.delete_lines(r.line1 - 1, n);
                 for (i, l) in moved.iter().enumerate() {
-                    self.doc.buf.insert_line(dest + i, l);
+                    self.doc_mut().buf.insert_line(dest + i, l);
                 }
-                self.win.cursor.line = dest + n - 1;
+                self.win_mut().cursor.line = dest + n - 1;
             }
             let new_first = if dest >= r.line2 { dest - n } else { dest };
             // The jumplist and the context mark follow the move as one
             // mapping: the moved block lands at `new_first`, the lines
             // between the two places shift the other way.
             let (a, b, down) = (first, r.line2 - 1, dest >= r.line2);
-            self.doc.buf.replace_pos_edits_from(
+            self.doc_mut().buf.replace_pos_edits_from(
                 pos_mark,
                 PosEdit::Remap(Box::new(move |p: Pos| {
                     let l = p.line;
@@ -943,7 +944,7 @@ impl Editor {
                 })),
             );
             for (mark, p) in carried {
-                self.doc
+                self.doc_mut()
                     .buf
                     .set_mark(mark, Pos::new(new_first + p.line - first, p.col));
             }
@@ -952,19 +953,19 @@ impl Editor {
             }
         } else {
             let copied: Vec<String> = (r.line1 - 1..r.line2)
-                .map(|l| self.doc.buf.line_string(l))
+                .map(|l| self.doc().buf.line_string(l))
                 .collect();
             self.u_save(dest, 0, false);
             for (i, l) in copied.iter().enumerate() {
-                self.doc.buf.insert_line(dest + i, l);
+                self.doc_mut().buf.insert_line(dest + i, l);
             }
-            self.win.cursor.line = dest + n - 1;
+            self.win_mut().cursor.line = dest + n - 1;
             if n > 2 {
                 self.info(format!("{n} more lines"));
             }
         }
-        self.doc.uline = None;
-        self.win.cursor.col = first_non_blank(&self.doc.buf, self.win.cursor.line, true);
+        self.doc_mut().uline = None;
+        self.win_mut().cursor.col = first_non_blank(&self.doc().buf, self.win().cursor.line, true);
         Ok(())
     }
 
@@ -972,8 +973,8 @@ impl Editor {
     /// entry `<C-o>` counts from (a message, not Vim's listing).
     fn ex_jumps(&mut self) {
         self.sync_jumps();
-        self.win.jumps.cleanup();
-        let (entries, idx) = self.win.jumps.entries();
+        self.win_mut().jumps.cleanup();
+        let (entries, idx) = self.win().jumps.entries();
         let mut items: Vec<String> = entries
             .iter()
             .enumerate()
@@ -1003,16 +1004,16 @@ impl Editor {
             return Err("E191: Argument must be a letter or forward/backward quote".into());
         }
         let line = r.line2 - 1;
-        let col = first_non_blank(&self.doc.buf, line, true);
-        self.doc.buf.set_mark(c, Pos::new(line, col));
+        let col = first_non_blank(&self.doc().buf, line, true);
+        self.doc_mut().buf.set_mark(c, Pos::new(line, col));
         // Vim's beginline() on the temporary cursor sets the desired column,
         // so `:k` resets it even though the cursor does not move.
-        self.win.keep_curswant = false;
+        self.win_mut().keep_curswant = false;
         Ok(())
     }
 
     fn ex_join(&mut self, mut r: Range, bang: bool, arg: &str) -> ExRes<()> {
-        self.win.cursor.line = (r.line1 - 1).min(self.doc.buf.last_line());
+        self.win_mut().cursor.line = (r.line1 - 1).min(self.doc_mut().buf.last_line());
         let arg = arg.trim();
         if let Ok(n) = arg.parse::<usize>() {
             if n == 0 {
@@ -1026,19 +1027,19 @@ impl Editor {
             if r.count >= 2 {
                 return Ok(());
             }
-            if r.line2 == self.doc.buf.line_count() {
+            if r.line2 == self.doc().buf.line_count() {
                 self.beep();
                 return Ok(());
             }
             r.line2 += 1;
         }
-        r.line2 = r.line2.min(self.doc.buf.line_count());
+        r.line2 = r.line2.min(self.doc().buf.line_count());
         if r.line1 == r.line2 {
             return Ok(());
         }
-        self.win.cursor = Pos::new(r.line1 - 1, 0);
+        self.win_mut().cursor = Pos::new(r.line1 - 1, 0);
         self.do_join(r.line2 - r.line1 + 1, !bang, true);
-        self.win.cursor.col = first_non_blank(&self.doc.buf, self.win.cursor.line, true);
+        self.win_mut().cursor.col = first_non_blank(&self.doc().buf, self.win().cursor.line, true);
         Ok(())
     }
 
@@ -1052,17 +1053,17 @@ impl Editor {
         }
         if let Ok(n) = rest.parse::<usize>() {
             r.line1 = r.line2;
-            r.line2 = (r.line2 + n - 1).min(self.doc.buf.line_count());
+            r.line2 = (r.line2 + n - 1).min(self.doc().buf.line_count());
         } else if !rest.is_empty() {
             return Err(format!("E488: Trailing characters: {rest}"));
         }
         self.check_range_lines(r)?;
-        self.win.cursor = Pos::new(r.line1 - 1, 0);
-        self.win.cursor.col = first_non_blank(&self.doc.buf, self.win.cursor.line, true);
+        self.win_mut().cursor = Pos::new(r.line1 - 1, 0);
+        self.win_mut().cursor.col = first_non_blank(&self.doc().buf, self.win().cursor.line, true);
         let oa = self.line_oparg(if left { Op::LShift } else { Op::RShift }, r, None);
         self.op_shift(&oa, false, amount);
-        self.win.cursor.line = r.line2 - 1;
-        self.win.cursor.col = first_non_blank(&self.doc.buf, self.win.cursor.line, true);
+        self.win_mut().cursor.line = r.line2 - 1;
+        self.win_mut().cursor.col = first_non_blank(&self.doc().buf, self.win().cursor.line, true);
         Ok(())
     }
 
@@ -1086,7 +1087,7 @@ impl Editor {
         } else {
             let mut l = r.line1.max(1);
             loop {
-                self.win.cursor = Pos::new((l - 1).min(self.doc.buf.last_line()), 0);
+                self.win_mut().cursor = Pos::new((l - 1).min(self.doc_mut().buf.last_line()), 0);
                 run(self);
                 l += 1;
                 if l > r.line2 {
@@ -1101,7 +1102,7 @@ impl Editor {
             return Err("E147: Cannot do :global recursive with a range".into());
         }
         let (l1, l2) = if r.count == 0 {
-            (1, self.doc.buf.line_count())
+            (1, self.doc().buf.line_count())
         } else {
             (r.line1, r.line2)
         };
@@ -1126,7 +1127,7 @@ impl Editor {
         };
         let re = Regex::new(&pattern, &self.re_opts())?;
         let marked: Vec<usize> = (l1 - 1..l2)
-            .filter(|&l| re.is_match(&self.doc.buf, l) != invert)
+            .filter(|&l| re.is_match(&self.doc().buf, l) != invert)
             .collect();
         if marked.is_empty() {
             let msg = if invert {
@@ -1138,8 +1139,8 @@ impl Editor {
             return Ok(());
         }
         let cmd = if cmd.trim().is_empty() { "p" } else { cmd };
-        let old_lines = self.doc.buf.line_count() as i64;
-        self.doc.buf.tracked = marked;
+        let old_lines = self.doc().buf.line_count() as i64;
+        self.doc_mut().buf.tracked = marked;
         // The context mark is set once for the whole command.
         self.set_pcmark();
         self.global_busy = true;
@@ -1350,7 +1351,7 @@ impl Editor {
                 return Err("E939: Positive count required".into());
             }
             r.line1 = r.line2;
-            r.line2 = (r.line2 + cnt - 1).min(self.doc.buf.line_count());
+            r.line2 = (r.line2 + cnt - 1).min(self.doc().buf.line_count());
         }
         self.do_substitute(r, &pattern, &rep, flags)
     }
@@ -1393,7 +1394,7 @@ impl Editor {
             nlines: 0,
             last_line: None,
             multiline_pat: re_multiline(pattern),
-            saved_cursor: self.win.cursor,
+            saved_cursor: self.win().cursor,
             got_match: false,
             found: false,
             got_quit: false,
@@ -1417,10 +1418,10 @@ impl Editor {
     fn sub_drive(&mut self, st: &mut SubRun) -> ExRes<bool> {
         loop {
             if st.line.is_none() {
-                if st.got_quit || st.lnum >= st.line2 || st.lnum >= self.doc.buf.line_count() {
+                if st.got_quit || st.lnum >= st.line2 || st.lnum >= self.doc().buf.line_count() {
                     break;
                 }
-                let Some(m) = st.re.match_line(&self.doc.buf, st.lnum, 0) else {
+                let Some(m) = st.re.match_line(&self.doc().buf, st.lnum, 0) else {
                     st.lnum += 1;
                     continue;
                 };
@@ -1489,7 +1490,7 @@ impl Editor {
                         } else if st.ask {
                             // Like Vim, the cursor goes to the match asked about.
                             st.awaiting = true;
-                            self.win.cursor = Pos::new(st.lnum, m.start.1);
+                            self.win_mut().cursor = Pos::new(st.lnum, m.start.1);
                             self.message = Some(Message {
                                 text: format!("replace with {} (y/n/a/q/l/^E/^Y)?", st.rep),
                                 error: false,
@@ -1520,7 +1521,7 @@ impl Editor {
                 // 3. Substitute the string. Like Vim, the cursor then sits at
                 // the start of the line (also where undo returns to).
                 if action == Action::Substitute {
-                    self.win.cursor = Pos::new(st.lnum, 0);
+                    self.win_mut().cursor = Pos::new(st.lnum, 0);
                     let out = match expr_text {
                         Some(text) => text
                             .chars()
@@ -1554,7 +1555,7 @@ impl Editor {
                     if nmatch > 1 {
                         // The match joined lines: replace them now and
                         // continue in the joined line.
-                        let last = self.doc.buf.line_count() - 1;
+                        let last = self.doc().buf.line_count() - 1;
                         let end_l = m.end.0.min(last);
                         if m.end.0 > last {
                             ln.skip_match = true;
@@ -1576,7 +1577,7 @@ impl Editor {
                         // others move to the joined line.
                         let last_new = st.lnum + new_lines.len() - 1;
                         let moved: Vec<(char, Pos)> = self
-                            .doc
+                            .doc_mut()
                             .buf
                             .take_marks_in(st.lnum, end_l)
                             .into_iter()
@@ -1594,11 +1595,13 @@ impl Editor {
                         // Insert the new lines first so that the buffer
                         // never becomes empty.
                         for (i, l) in new_lines.iter().enumerate() {
-                            self.doc.buf.insert_line(st.lnum + i, l);
+                            self.doc_mut().buf.insert_line(st.lnum + i, l);
                         }
-                        self.doc.buf.delete_lines(st.lnum + new_lines.len(), n_old);
+                        self.doc_mut()
+                            .buf
+                            .delete_lines(st.lnum + new_lines.len(), n_old);
                         for (c, p) in moved {
-                            self.doc.buf.set_mark(c, p);
+                            self.doc_mut().buf.set_mark(c, p);
                         }
                         let added = new_lines.len();
                         st.line2 = (st.line2 + added).saturating_sub(n_old);
@@ -1625,7 +1628,7 @@ impl Editor {
                     break;
                 }
                 let (lnum, col) = (st.lnum, ln.matchcol);
-                match st.re.match_line(&self.doc.buf, lnum, col) {
+                match st.re.match_line(&self.doc().buf, lnum, col) {
                     Some(n) if n.start.0 == lnum => st.m = Some(n),
                     _ => break,
                 }
@@ -1643,16 +1646,16 @@ impl Editor {
                     }
                     self.u_save_line_start(st.lnum, 1);
                     let added = ln.out_lines.len();
-                    let pos_mark = self.doc.buf.pos_edit_count();
+                    let pos_mark = self.doc().buf.pos_edit_count();
                     // The length of the text after the last break (the tail
                     // without the rest of the line).
                     let rest = ln.sub_line.len().saturating_sub(ln.copycol);
                     let ylen = ns.len().saturating_sub(rest);
-                    self.doc
+                    self.doc_mut()
                         .buf
                         .set_line(st.lnum, &ns.iter().collect::<String>());
                     for (i, l) in ln.out_lines.iter().enumerate() {
-                        self.doc.buf.insert_line(st.lnum + i, l);
+                        self.doc_mut().buf.insert_line(st.lnum + i, l);
                     }
                     if added > 0 {
                         // The first piece stays on this line and the tail
@@ -1661,7 +1664,7 @@ impl Editor {
                         // positions after it move to the tail.
                         let at = st.lnum;
                         let (cut_s, cut_e) = ln.last_cut;
-                        self.doc.buf.replace_pos_edits_from(
+                        self.doc_mut().buf.replace_pos_edits_from(
                             pos_mark,
                             PosEdit::Remap(Box::new(move |p: Pos| {
                                 if p.line > at {
@@ -1685,7 +1688,7 @@ impl Editor {
         }
 
         if st.flags.count_only {
-            self.win.cursor = st.saved_cursor;
+            self.win_mut().cursor = st.saved_cursor;
             if st.nsubs > 0 {
                 self.info(format!(
                     "{} match{} on {} line{}",
@@ -1700,7 +1703,7 @@ impl Editor {
             return Ok(false);
         }
         if st.nsubs > 0 {
-            self.doc.uline = None;
+            self.doc_mut().uline = None;
             if self.global_busy {
                 self.global_need_beginline = true;
             }
@@ -1712,11 +1715,11 @@ impl Editor {
             if !st.ask
                 && let Some(l) = st.last_line
             {
-                self.win.cursor.line = l.min(self.doc.buf.last_line());
-                self.win.cursor.col = 0;
+                self.win_mut().cursor.line = l.min(self.doc_mut().buf.last_line());
+                self.win_mut().cursor.col = 0;
                 if !self.global_busy {
-                    self.win.cursor.col =
-                        first_non_blank(&self.doc.buf, self.win.cursor.line, true);
+                    self.win_mut().cursor.col =
+                        first_non_blank(&self.doc().buf, self.win().cursor.line, true);
                 }
             }
             if st.nsubs > 2 {
@@ -1768,7 +1771,7 @@ impl Editor {
             groups,
             line: lnum as i64 + 1,
             col: col as i64,
-            last_line: self.doc.buf.line_count() as i64,
+            last_line: self.doc().buf.line_count() as i64,
             ignorecase: self.opts.ignorecase(),
         };
         crate::expr::eval_text(&expr.iter().collect::<String>(), &env)
@@ -1780,7 +1783,7 @@ impl Editor {
     pub(crate) fn confirm_key(&mut self, key: Key) {
         if let Key::Ctrl(c @ ('e' | 'y')) = key {
             self.scroll_window_for_prompt(c == 'e');
-            self.win.keep_curswant = true;
+            self.win_mut().keep_curswant = true;
             return;
         }
         let answer = match key {
@@ -1837,7 +1840,7 @@ impl Editor {
             }
         }
         // Waiting keeps the desired column; a finished `:s` moves the cursor.
-        self.win.keep_curswant = self.sub.is_some();
+        self.win_mut().keep_curswant = self.sub.is_some();
     }
 
     /// The match a `c` flag prompt asks about: start and end (exclusive), for
@@ -1853,10 +1856,10 @@ impl Editor {
     /// Vim's `u_save()` for a change at the start of line `first`: the undo
     /// cursor is at column 0, whatever the cursor does during a prompt.
     fn u_save_line_start(&mut self, first: usize, count: usize) {
-        let at = self.win.cursor;
-        self.win.cursor = Pos::new(first, 0);
+        let at = self.win().cursor;
+        self.win_mut().cursor = Pos::new(first, 0);
         self.u_save(first, count, false);
-        self.win.cursor = at;
+        self.win_mut().cursor = at;
     }
 }
 
@@ -2272,7 +2275,7 @@ impl Editor {
     }
 
     fn line_vec_or_empty(&self, l: usize) -> Vec<char> {
-        if l < self.doc.buf.line_count() {
+        if l < self.doc().buf.line_count() {
             self.line_vec(l)
         } else {
             Vec::new()
@@ -2309,7 +2312,7 @@ mod tests {
         fs::write(&path, "one\n  two\nthree\n").unwrap();
         let mut ed = Editor::new();
         ed.feed(&format!(":e {}<CR>", path.display()));
-        assert_eq!(ed.doc.buf.line_count(), 3);
+        assert_eq!(ed.doc().buf.line_count(), 3);
         assert!(ed.message().unwrap().text.ends_with("3L, 16B"));
         ed.feed(":2<CR>");
         assert_eq!((ed.cursor().line, ed.cursor().col), (1, 2));
@@ -2344,7 +2347,7 @@ mod tests {
         let path = file_in(&dir, "ins.txt", b"  p\n\tq\n  r\n");
         let mut ed = Editor::from_text("a\n  b\nc");
         ed.feed(&format!(":2r {}<CR>", path.display()));
-        assert_eq!(ed.doc.buf.lines(), ["a", "  b", "  p", "\tq", "  r", "c"]);
+        assert_eq!(ed.doc().buf.lines(), ["a", "  b", "  p", "\tq", "  r", "c"]);
         // The cursor goes to the last new line, on its first non-blank.
         assert_eq!((ed.cursor().line, ed.cursor().col), (4, 2));
         assert!(ed.message().unwrap().text.ends_with("3L, 11B"));
@@ -2357,7 +2360,7 @@ mod tests {
         let path = file_in(&dir, "top.txt", b"x\ny\n");
         let mut ed = Editor::from_text("a\nb");
         ed.feed(&format!(":0r {}<CR>", path.display()));
-        assert_eq!(ed.doc.buf.lines(), ["x", "y", "a", "b"]);
+        assert_eq!(ed.doc().buf.lines(), ["x", "y", "a", "b"]);
         assert_eq!((ed.cursor().line, ed.cursor().col), (1, 0));
         ed.feed(":1r<CR>");
         assert!(ed.message().unwrap().text.starts_with("E32"));
@@ -2370,7 +2373,7 @@ mod tests {
         let mut ed = Editor::from_text("a\nb\nc");
         ed.feed("j");
         ed.feed(&format!(":r {}<CR>", path.display()));
-        assert_eq!(ed.doc.buf.lines(), ["a", "b", "new", "c"]);
+        assert_eq!(ed.doc().buf.lines(), ["a", "b", "new", "c"]);
         assert_eq!(ed.cursor().line, 2);
     }
 
@@ -2380,7 +2383,7 @@ mod tests {
         let path = file_in(&dir, "empty.txt", b"");
         let mut ed = Editor::from_text("a\n  b\nc");
         ed.feed(&format!(":2r {}<CR>", path.display()));
-        assert_eq!(ed.doc.buf.lines(), ["a", "  b", "c"]);
+        assert_eq!(ed.doc().buf.lines(), ["a", "  b", "c"]);
         assert_eq!((ed.cursor().line, ed.cursor().col), (1, 2));
     }
 
@@ -2390,7 +2393,7 @@ mod tests {
         let path = file_in(&dir, "into.txt", b"one\ntwo");
         let mut ed = Editor::new();
         ed.feed(&format!(":r {}<CR>", path.display()));
-        assert_eq!(ed.doc.buf.lines(), ["", "one", "two"]);
+        assert_eq!(ed.doc().buf.lines(), ["", "one", "two"]);
         assert_eq!(ed.cursor().line, 2);
     }
 
@@ -2401,11 +2404,11 @@ mod tests {
         let crlf = file_in(&dir, "crlf.txt", b"a\r\nb\r\n");
         let mut ed = Editor::from_text("x");
         ed.feed(&format!(":r {}<CR>", crlf.display()));
-        assert_eq!(ed.doc.buf.lines(), ["x", "a", "b"]);
+        assert_eq!(ed.doc().buf.lines(), ["x", "a", "b"]);
         // No final newline: the last line still counts.
         let noeol = file_in(&dir, "noeol.txt", b"c\nd");
         ed.feed(&format!(":r {}<CR>", noeol.display()));
-        assert_eq!(ed.doc.buf.lines(), ["x", "a", "b", "c", "d"]);
+        assert_eq!(ed.doc().buf.lines(), ["x", "a", "b", "c", "d"]);
     }
 
     #[test]
@@ -2414,11 +2417,11 @@ mod tests {
         let path = file_in(&dir, "undo.txt", b"1\n2\n3\n");
         let mut ed = Editor::from_text("a\nb");
         ed.feed(&format!(":1r {}<CR>", path.display()));
-        assert_eq!(ed.doc.buf.line_count(), 5);
+        assert_eq!(ed.doc().buf.line_count(), 5);
         ed.feed("u");
-        assert_eq!(ed.doc.buf.lines(), ["a", "b"]);
+        assert_eq!(ed.doc().buf.lines(), ["a", "b"]);
         ed.feed("<C-r>");
-        assert_eq!(ed.doc.buf.line_count(), 5);
+        assert_eq!(ed.doc().buf.line_count(), 5);
     }
 
     #[test]
@@ -2429,17 +2432,17 @@ mod tests {
         ed.feed(&format!(":2r {}<CR>", missing.display()));
         assert!(ed.message().unwrap().text.starts_with("E484"));
         assert!(ed.message().unwrap().error);
-        assert_eq!(ed.doc.buf.lines(), ["a", "b"]);
-        assert!(!ed.doc.buf.modified);
+        assert_eq!(ed.doc().buf.lines(), ["a", "b"]);
+        assert!(!ed.doc().buf.modified);
         // A directory cannot be read either.
         ed.feed(&format!(":r {}<CR>", dir.path().display()));
         assert!(ed.message().unwrap().text.starts_with("E484"));
-        assert_eq!(ed.doc.buf.lines(), ["a", "b"]);
+        assert_eq!(ed.doc().buf.lines(), ["a", "b"]);
         ed.feed(":9r missing.txt<CR>");
         assert!(ed.message().unwrap().text.starts_with("E16"));
         ed.feed(":r!ls<CR>");
         assert!(ed.message().unwrap().text.contains("not supported"));
-        assert_eq!(ed.doc.buf.lines(), ["a", "b"]);
+        assert_eq!(ed.doc().buf.lines(), ["a", "b"]);
     }
 
     #[test]
@@ -2449,6 +2452,6 @@ mod tests {
         let mut ed = Editor::new();
         ed.feed(&format!(":e {}<CR>", path.display()));
         ed.feed(":r<CR>");
-        assert_eq!(ed.doc.buf.lines(), ["s", "s"]);
+        assert_eq!(ed.doc().buf.lines(), ["s", "s"]);
     }
 }

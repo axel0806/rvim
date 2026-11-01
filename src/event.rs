@@ -35,7 +35,7 @@ mod tests {
         ed.handle_event(Event::Paste("zz".into()));
         ed.handle_event(Event::Resize(80, 24));
         ed.handle_event(Event::FocusGained);
-        assert_eq!(ed.doc.buf.text(), "zzb\n");
+        assert_eq!(ed.doc().buf.text(), "zzb\n");
         assert!(ed.next_deadline().is_none());
     }
 }

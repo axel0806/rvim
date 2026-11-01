@@ -196,8 +196,8 @@ mod tests {
     fn writes_text_and_avoids_overwriting() {
         let dir = tempfile::tempdir().unwrap();
         let ed = sample();
-        let a = write_recovery(&ed.doc.buf, dir.path()).unwrap().path;
-        let b = write_recovery(&ed.doc.buf, dir.path()).unwrap().path;
+        let a = write_recovery(&ed.doc().buf, dir.path()).unwrap().path;
+        let b = write_recovery(&ed.doc().buf, dir.path()).unwrap().path;
         assert_ne!(a, b);
         assert_eq!(std::fs::read_to_string(a).unwrap(), "ne\ntwo\n");
     }

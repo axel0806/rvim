@@ -41,7 +41,11 @@ pub(crate) enum ScrollCmd {
 impl Editor {
     /// Screen rows of buffer line `l` (wrapped).
     fn line_rows(&self, l: usize) -> usize {
-        view::line_height(self.doc.buf.line(l), self.screen_cols, self.opts.tabstop())
+        view::line_height(
+            self.doc().buf.line(l),
+            self.screen_cols,
+            self.opts.tabstop(),
+        )
     }
 
     /// Rows of the text area (the screen minus the command line).
@@ -57,7 +61,7 @@ impl Editor {
     /// Rows of lines `from..to`, stopping early once the sum exceeds `limit`.
     fn rows_upto(&self, from: usize, to: usize, limit: usize) -> usize {
         let mut sum = 0;
-        for l in from..to.min(self.doc.buf.line_count()) {
+        for l in from..to.min(self.doc().buf.line_count()) {
             sum += self.line_rows(l);
             if sum > limit {
                 break;
@@ -70,7 +74,7 @@ impl Editor {
     fn rows_below(&self, cur: usize, so: usize) -> usize {
         let mut sum = 0;
         let mut l = cur + 1;
-        while l < self.doc.buf.line_count() && sum < so {
+        while l < self.doc().buf.line_count() && sum < so {
             sum += self.line_rows(l);
             l += 1;
         }
@@ -81,7 +85,7 @@ impl Editor {
     /// at `top` (Vim's `w_botline`, exclusive). A line taller than the window
     /// counts as shown.
     pub(crate) fn bottom_of(&self, top: usize) -> usize {
-        let n = self.doc.buf.line_count();
+        let n = self.doc().buf.line_count();
         let r = self.text_rows();
         let mut used = 0;
         let mut l = top;
@@ -113,7 +117,7 @@ impl Editor {
 
     /// Top line that puts `cur` at the bottom, with `so` rows below it.
     fn top_for_cursor_bottom(&self, cur: usize, so: usize) -> usize {
-        let n = self.doc.buf.line_count();
+        let n = self.doc().buf.line_count();
         let r = self.text_rows();
         let mut used = self.line_rows(cur);
         let mut below = 0;
@@ -143,7 +147,7 @@ impl Editor {
     /// until the window is full (near the end of the file, lines above fill
     /// the rest).
     fn top_for_cursor_middle(&self, cur: usize) -> usize {
-        let n = self.doc.buf.line_count();
+        let n = self.doc().buf.line_count();
         let r = self.text_rows();
         let mut top = cur;
         let mut bot = cur + 1;
@@ -170,12 +174,12 @@ impl Editor {
     /// First line the cursor may use in the current window (after
     /// 'scrolloff' rows above it).
     pub(crate) fn first_visible(&self) -> usize {
-        if self.win.top == 0 {
+        if self.win().top == 0 {
             return 0;
         }
         let so = self.so_rows();
-        let last = self.doc.buf.last_line();
-        let mut l = self.win.top;
+        let last = self.doc().buf.last_line();
+        let mut l = self.win().top;
         let mut acc = 0;
         while acc < so && l < last {
             acc += self.line_rows(l);
@@ -187,14 +191,14 @@ impl Editor {
     /// Last line the cursor may use in the current window (after
     /// 'scrolloff' rows below it).
     pub(crate) fn last_visible(&self) -> usize {
-        let bot = self.bottom_of(self.win.top);
-        if bot >= self.doc.buf.line_count() {
-            return self.doc.buf.last_line();
+        let bot = self.bottom_of(self.win().top);
+        if bot >= self.doc().buf.line_count() {
+            return self.doc().buf.last_line();
         }
         let so = self.so_rows();
         let mut l = bot - 1;
         let mut acc = 0;
-        while acc < so && l > self.win.top {
+        while acc < so && l > self.win().top {
             acc += self.line_rows(l);
             l -= 1;
         }
@@ -205,30 +209,33 @@ impl Editor {
     fn clamp_cursor_to_window(&mut self) {
         let first = self.first_visible();
         let last = self.last_visible().max(first);
-        self.win.cursor.line = self.win.cursor.line.clamp(first, last);
+        self.win_mut().cursor.line = self.win_mut().cursor.line.clamp(first, last);
     }
 
     /// Vim's `update_topline()`: keeps the cursor in the window with
     /// 'scrolloff'. A cursor far outside the window is centred, a close one
     /// scrolls the minimum. Called after every key and on resize.
     pub(crate) fn update_topline(&mut self) {
-        let n = self.doc.buf.line_count();
+        let n = self.doc().buf.line_count();
         let r = self.text_rows();
         let so = self.so_rows();
-        let cur = self.win.cursor.line.min(n - 1);
-        self.win.top = self.win.top.min(n - 1);
-        if self.win.top > 0 && (cur < self.win.top || self.rows_upto(self.win.top, cur, so) < so) {
+        let cur = self.win().cursor.line.min(n - 1);
+        self.win_mut().top = self.win_mut().top.min(n - 1);
+        if self.win().top > 0
+            && (cur < self.win().top || self.rows_upto(self.win().top, cur, so) < so)
+        {
             let halfheight = (r / 2).saturating_sub(1).max(2);
-            self.win.top = if cur < self.win.top && self.win.top - cur >= halfheight {
-                self.top_for_cursor_middle(cur)
-            } else {
-                self.top_for_cursor_top(cur)
-            };
+            self.win_mut().top =
+                if cur < self.win_mut().top && self.win_mut().top - cur >= halfheight {
+                    self.top_for_cursor_middle(cur)
+                } else {
+                    self.top_for_cursor_top(cur)
+                };
         }
-        let need = self.rows_upto(self.win.top, cur + 1, r) + self.rows_below(cur, so);
+        let need = self.rows_upto(self.win().top, cur + 1, r) + self.rows_below(cur, so);
         if need > r {
-            let bot = self.bottom_of(self.win.top);
-            self.win.top = if self.rows_upto(bot, cur + 1, r) <= r {
+            let bot = self.bottom_of(self.win().top);
+            self.win_mut().top = if self.rows_upto(bot, cur + 1, r) <= r {
                 self.top_for_cursor_bottom(cur, so)
             } else {
                 self.top_for_cursor_middle(cur)
@@ -238,7 +245,7 @@ impl Editor {
 
     /// The first buffer line shown in the window (0-based).
     pub fn top_line(&self) -> usize {
-        self.win.top
+        self.win().top
     }
 
     /// Sets the window size in cells (the command line is the last row) and
@@ -254,7 +261,7 @@ impl Editor {
     fn page_down_top(&self, bot: usize) -> usize {
         let mut t = bot;
         let mut used = 0;
-        while t > self.win.top + 1 {
+        while t > self.win().top + 1 {
             let h = self.line_rows(t - 1);
             if used + h > 2 {
                 break;
@@ -268,9 +275,9 @@ impl Editor {
     /// The top line for `CTRL-B`: the first two lines of the old window
     /// become the last two lines of the new one.
     fn page_up_top(&self) -> usize {
-        let old = self.win.top;
+        let old = self.win().top;
         let r = self.text_rows();
-        let mut t = (old + 2).min(self.doc.buf.line_count());
+        let mut t = (old + 2).min(self.doc().buf.line_count());
         let mut used = 0;
         while t > 0 {
             let h = self.line_rows(t - 1);
@@ -288,11 +295,11 @@ impl Editor {
     /// kept around the cursor as after any key, so a scroll that would take
     /// the match out of the window stops short of it.
     pub(crate) fn scroll_window_for_prompt(&mut self, down: bool) {
-        let n = self.doc.buf.line_count();
-        self.win.top = if down {
-            (self.win.top + 1).min(n - 1)
+        let n = self.doc().buf.line_count();
+        self.win_mut().top = if down {
+            (self.win().top + 1).min(n - 1)
         } else {
-            self.win.top.saturating_sub(1)
+            self.win().top.saturating_sub(1)
         };
         self.update_topline();
     }
@@ -300,41 +307,41 @@ impl Editor {
     /// Runs a scroll command with its count (Vim's `nv_scroll_line`,
     /// `nv_halfpage`, `nv_zet`, `pagescroll`).
     pub(crate) fn scroll_cmd(&mut self, cmd: ScrollCmd, count: Option<usize>) {
-        let n = self.doc.buf.line_count();
+        let n = self.doc().buf.line_count();
         let count1 = count.unwrap_or(1).max(1);
         match cmd {
             ScrollCmd::LineDown => {
-                let top = (self.win.top + count1).min(n - 1);
-                if top == self.win.top {
+                let top = (self.win().top + count1).min(n - 1);
+                if top == self.win().top {
                     return;
                 }
-                self.win.top = top;
+                self.win_mut().top = top;
                 self.clamp_cursor_to_window();
-                self.win.keep_curswant = true;
-                self.coladvance(self.win.curswant);
+                self.win_mut().keep_curswant = true;
+                self.coladvance(self.win().curswant);
             }
             ScrollCmd::LineUp => {
-                let top = self.win.top.saturating_sub(count1);
-                if top == self.win.top {
+                let top = self.win().top.saturating_sub(count1);
+                if top == self.win().top {
                     return;
                 }
-                self.win.top = top;
+                self.win_mut().top = top;
                 self.clamp_cursor_to_window();
-                self.win.keep_curswant = true;
-                self.coladvance(self.win.curswant);
+                self.win_mut().keep_curswant = true;
+                self.coladvance(self.win().curswant);
             }
             ScrollCmd::PageDown => {
                 let mut moved = false;
                 for _ in 0..count1 {
-                    let bot = self.bottom_of(self.win.top);
+                    let bot = self.bottom_of(self.win().top);
                     if bot >= n {
                         // The end is shown: the last line goes to the top.
-                        if self.win.top + 1 >= n {
+                        if self.win().top + 1 >= n {
                             break;
                         }
-                        self.win.top = n - 1;
+                        self.win_mut().top = n - 1;
                     } else {
-                        self.win.top = self.page_down_top(bot);
+                        self.win_mut().top = self.page_down_top(bot);
                     }
                     moved = true;
                 }
@@ -342,23 +349,23 @@ impl Editor {
                     self.beep();
                     return;
                 }
-                self.win.cursor.line = self.first_visible();
+                self.win_mut().cursor.line = self.first_visible();
                 self.cursor_fnb();
             }
             ScrollCmd::PageUp => {
                 let mut moved = false;
                 for _ in 0..count1 {
-                    if self.win.top == 0 {
+                    if self.win().top == 0 {
                         break;
                     }
-                    self.win.top = self.page_up_top();
+                    self.win_mut().top = self.page_up_top();
                     moved = true;
                 }
                 if !moved {
                     self.beep();
                     return;
                 }
-                self.win.cursor.line = self.last_visible();
+                self.win_mut().cursor.line = self.last_visible();
                 self.cursor_fnb();
             }
             ScrollCmd::HalfDown | ScrollCmd::HalfUp => {
@@ -370,7 +377,7 @@ impl Editor {
                     0 => (r / 2).max(1),
                     v => v,
                 };
-                let cur = self.win.cursor.line;
+                let cur = self.win().cursor.line;
                 // Like Vim's halfpage() loop: `amt` is in screen rows, whole
                 // lines are scrolled while the rows left stay non-negative,
                 // and the cursor moves by the number of lines scrolled.
@@ -384,8 +391,8 @@ impl Editor {
                     }
                     // Stop scrolling once the last line is at the bottom.
                     let max_top = self.top_for_cursor_bottom(n - 1, 0);
-                    while left > 0 && self.win.top + lines < max_top {
-                        let h = self.line_rows(self.win.top + lines) as isize;
+                    while left > 0 && self.win().top + lines < max_top {
+                        let h = self.line_rows(self.win().top + lines) as isize;
                         left -= h;
                         if left < 0 && scrolled > 0 {
                             break;
@@ -393,17 +400,17 @@ impl Editor {
                         lines += 1;
                         scrolled += h;
                     }
-                    self.win.top += lines;
+                    self.win_mut().top += lines;
                     // At the end of the file the cursor still moves by the count.
                     let step = if lines > 0 { lines } else { amt };
-                    self.win.cursor.line = (cur + step).min(n - 1);
+                    self.win_mut().cursor.line = (cur + step).min(n - 1);
                 } else {
                     if cur == 0 {
                         self.beep();
                         return;
                     }
-                    while left > 0 && self.win.top > lines {
-                        let h = self.line_rows(self.win.top - 1 - lines) as isize;
+                    while left > 0 && self.win().top > lines {
+                        let h = self.line_rows(self.win().top - 1 - lines) as isize;
                         left -= h;
                         if left < 0 && scrolled > 0 {
                             break;
@@ -411,9 +418,9 @@ impl Editor {
                         lines += 1;
                         scrolled += h;
                     }
-                    self.win.top -= lines;
+                    self.win_mut().top -= lines;
                     let step = if lines > 0 { lines } else { amt };
-                    self.win.cursor.line = cur.saturating_sub(step);
+                    self.win_mut().cursor.line = cur.saturating_sub(step);
                 }
                 self.clamp_cursor_to_window();
                 self.cursor_fnb();
@@ -422,10 +429,10 @@ impl Editor {
             | ScrollCmd::Middle { first_non_blank }
             | ScrollCmd::Bottom { first_non_blank } => {
                 if let Some(c) = count {
-                    self.win.cursor.line = c.saturating_sub(1).min(n - 1);
+                    self.win_mut().cursor.line = c.saturating_sub(1).min(n - 1);
                 }
-                let cur = self.win.cursor.line;
-                self.win.top = match cmd {
+                let cur = self.win().cursor.line;
+                self.win_mut().top = match cmd {
                     ScrollCmd::Top { .. } => self.top_for_cursor_top(cur),
                     ScrollCmd::Middle { .. } => self.top_for_cursor_middle(cur),
                     _ => self.top_for_cursor_bottom(cur, self.so_rows()),
@@ -433,7 +440,7 @@ impl Editor {
                 if first_non_blank {
                     self.cursor_fnb();
                 } else {
-                    self.win.keep_curswant = true;
+                    self.win_mut().keep_curswant = true;
                 }
             }
         }
@@ -446,23 +453,23 @@ impl Editor {
             // The count and 'scrolloff' combine with max(), as in Vim's
             // nv_scroll(): the count is counted from the window edge and the
             // margin is the limit it may not pass.
-            'H' => (self.win.top + count1 - 1)
+            'H' => (self.win().top + count1 - 1)
                 .max(self.first_visible())
-                .min(self.bottom_of(self.win.top) - 1),
+                .min(self.bottom_of(self.win().top) - 1),
             'L' => {
-                let bot = self.bottom_of(self.win.top);
+                let bot = self.bottom_of(self.win().top);
                 (bot - 1)
                     .saturating_sub(count1 - 1)
                     .min(self.last_visible())
-                    .max(self.win.top)
+                    .max(self.win().top)
             }
             _ => {
                 // The line that splits the shown rows in half.
-                let bot = self.bottom_of(self.win.top);
-                let total = self.rows_upto(self.win.top, bot, usize::MAX);
+                let bot = self.bottom_of(self.win().top);
+                let total = self.rows_upto(self.win().top, bot, usize::MAX);
                 let half = total.div_ceil(2);
                 let mut acc = 0;
-                let mut l = self.win.top;
+                let mut l = self.win().top;
                 while l + 1 < bot {
                     acc += self.line_rows(l);
                     if acc >= half {
@@ -477,7 +484,7 @@ impl Editor {
 
     /// Moves to the first non-blank of the cursor line (Vim's `beginline`).
     fn cursor_fnb(&mut self) {
-        self.win.cursor.col =
-            crate::motion::first_non_blank(&self.doc.buf, self.win.cursor.line, true);
+        self.win_mut().cursor.col =
+            crate::motion::first_non_blank(&self.doc().buf, self.win().cursor.line, true);
     }
 }

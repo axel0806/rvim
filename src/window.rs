@@ -4,11 +4,18 @@
 //! desired column; the Visual start and the jumplist and scroll position
 //! follow in later steps of the split.
 
+use crate::document::DocId;
 use crate::jumplist::JumpList;
 use crate::motion::Pos;
 
+/// Index of a window in `Editor::windows`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub(crate) struct WinId(pub(crate) usize);
+
 #[derive(Default)]
 pub(crate) struct Window {
+    /// The document this window shows (Vim's `w_buffer`).
+    pub(crate) doc: DocId,
     pub(crate) cursor: Pos,
     /// Desired virtual column for vertical motions; `usize::MAX` after `$`.
     pub(crate) curswant: usize,
