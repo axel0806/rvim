@@ -3,14 +3,15 @@
 //! Terminal-free: `main.rs` prints the text and decides what to do.
 
 use crate::VERSION_MESSAGE;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 
 /// What the command line asks `rvim` to do.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Action {
     /// Start the editor on `path` (or an empty buffer). `start_menu` is set
     /// by `--start-menu`; the last of `--start-menu` and `--no-start-menu`
-    /// wins.
+    /// wins. It is false when neither is given (see
+    /// [`Invocation::start_menu`], which tells the two apart).
     Edit {
         start_menu: bool,
         path: Option<OsString>,
@@ -19,6 +20,26 @@ pub enum Action {
     Help,
     /// Print `version_text()` to stdout and exit 0.
     Version,
+    /// The command line is wrong: print the message to stderr and exit 2.
+    Usage(String),
+}
+
+/// Whether the config file is read. `-u NONE` and `--clean` skip it.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum ConfigUse {
+    Read,
+    Skip,
+}
+
+/// The command line in full: what [`parse`] gives, plus the settings the
+/// config file may supply, so the caller can tell "not given" from "false".
+#[derive(Debug, PartialEq, Eq)]
+pub struct Invocation {
+    pub action: Action,
+    /// `--start-menu` or `--no-start-menu`, the last one given. None when
+    /// neither is given, so the config's `[start] menu` decides.
+    pub start_menu: Option<bool>,
+    pub config: ConfigUse,
 }
 
 /// Parses the arguments after the program name, as Vim does: options may
@@ -30,26 +51,64 @@ pub fn parse<I>(args: I) -> Action
 where
     I: IntoIterator<Item = OsString>,
 {
-    let mut start_menu = false;
+    parse_invocation(args).action
+}
+
+/// [`parse`] with the settings the config file may supply. Besides the
+/// start menu flags it accepts `-u NONE` (skip the config file, as Vim's
+/// `-u NONE` skips the vimrc), `--clean` (the same) and `-N` (accepted:
+/// rvim always behaves as Vim with `-N`). Any other `-u` value is a usage
+/// error, because rvim reads no other vimrc.
+pub fn parse_invocation<I>(args: I) -> Invocation
+where
+    I: IntoIterator<Item = OsString>,
+{
+    let mut start_menu = None;
+    let mut config = ConfigUse::Read;
     let mut path = None;
     let mut options = true;
-    for arg in args {
+    let mut args = args.into_iter();
+    while let Some(arg) = args.next() {
         if options {
             match arg.to_str() {
                 Some("--") => {
                     options = false;
                     continue;
                 }
-                Some("-h" | "--help") => return Action::Help,
-                Some("-v" | "--version") => return Action::Version,
+                Some("-h" | "--help") => return invocation(Action::Help, start_menu, config),
+                Some("-v" | "--version") => {
+                    return invocation(Action::Version, start_menu, config);
+                }
                 Some("--start-menu") => {
-                    start_menu = true;
+                    start_menu = Some(true);
                     continue;
                 }
                 Some("--no-start-menu") => {
-                    start_menu = false;
+                    start_menu = Some(false);
                     continue;
                 }
+                Some("--clean") => {
+                    config = ConfigUse::Skip;
+                    continue;
+                }
+                Some("-N") => continue,
+                Some("-u") => {
+                    let Some(value) = args.next() else {
+                        return usage("-u needs an argument: -u NONE".into());
+                    };
+                    match use_value(&value) {
+                        Ok(c) => config = c,
+                        Err(msg) => return usage(msg),
+                    }
+                    continue;
+                }
+                Some(s) if s.starts_with("-u") => match use_value(OsStr::new(&s[2..])) {
+                    Ok(c) => {
+                        config = c;
+                        continue;
+                    }
+                    Err(msg) => return usage(msg),
+                },
                 _ => {}
             }
         }
@@ -57,7 +116,38 @@ where
             path = Some(arg);
         }
     }
-    Action::Edit { start_menu, path }
+    invocation(
+        Action::Edit {
+            start_menu: start_menu.unwrap_or(false),
+            path,
+        },
+        start_menu,
+        config,
+    )
+}
+
+fn invocation(action: Action, start_menu: Option<bool>, config: ConfigUse) -> Invocation {
+    Invocation {
+        action,
+        start_menu,
+        config,
+    }
+}
+
+fn usage(message: String) -> Invocation {
+    invocation(Action::Usage(message), None, ConfigUse::Read)
+}
+
+/// The value of `-u`: only `NONE` is supported.
+fn use_value(value: &OsStr) -> Result<ConfigUse, String> {
+    if value == "NONE" {
+        Ok(ConfigUse::Skip)
+    } else {
+        Err(format!(
+            "-u {} is not supported; use -u NONE to skip the config file",
+            value.to_string_lossy()
+        ))
+    }
 }
 
 /// The `--help` text. It lists only the options `parse` accepts.
@@ -71,11 +161,16 @@ Only the first file name is opened; later ones are ignored.
 Options:
   --                 Only file names after this (for names starting with -)
   --start-menu       Show the start menu when no file is given
-  --no-start-menu    Do not show the start menu (the default)
+  --no-start-menu    Do not show the start menu (overrides [start] menu)
+  -u NONE            Do not read the config file
+  --clean            The same as -u NONE
+  -N                 Accepted; rvim always behaves as Vim with -N
   -h, --help         Print this help and exit
   -v, --version      Print the version and exit
 
-Without a config file, rvim uses Vim's defaults and reads no vimrc.
+The config file is $XDG_CONFIG_HOME/rvim/config.toml (default
+~/.config/rvim/config.toml; on Windows %APPDATA%\\rvim\\config.toml). Without
+one, rvim uses Vim's defaults and reads no vimrc.
 "
     .to_string()
 }
@@ -173,16 +268,81 @@ mod tests {
         for flag in [
             "--start-menu",
             "--no-start-menu",
+            "-u NONE",
+            "--clean",
+            "-N",
             "-h, --help",
             "-v, --version",
             "--",
+            "config.toml",
         ] {
             assert!(text.contains(flag), "help lacks {flag}");
         }
         // Options rvim does not parse must not be advertised.
-        for flag in ["-u ", "-N", "--noplugin", "-R", "-es", "--modern"] {
+        for flag in [
+            "--noplugin",
+            "-R",
+            "-es",
+            "--modern",
+            "-u DEFAULTS",
+            "-u NORC",
+        ] {
             assert!(!text.contains(flag), "help mentions unsupported {flag}");
         }
         assert!(!text.contains('\x1b'));
+    }
+
+    fn invocation(list: &[&str]) -> Invocation {
+        parse_invocation(args(list))
+    }
+
+    #[test]
+    fn u_none_and_clean_skip_the_config() {
+        assert_eq!(invocation(&["-u", "NONE"]).config, ConfigUse::Skip);
+        assert_eq!(invocation(&["-uNONE"]).config, ConfigUse::Skip);
+        assert_eq!(invocation(&["--clean"]).config, ConfigUse::Skip);
+        assert_eq!(invocation(&["f.txt"]).config, ConfigUse::Read);
+        // `-u` takes its value: NONE is not a file name.
+        assert_eq!(
+            invocation(&["-u", "NONE", "f.txt"]).action,
+            edit(false, Some("f.txt"))
+        );
+        assert_eq!(invocation(&["-u", "NONE"]).action, edit(false, None));
+    }
+
+    #[test]
+    fn other_u_values_are_usage_errors() {
+        let Action::Usage(msg) = invocation(&["-u", "vimrc"]).action else {
+            panic!("expected a usage error");
+        };
+        assert!(msg.contains("-u vimrc is not supported"), "{msg}");
+        assert!(matches!(invocation(&["-u"]).action, Action::Usage(_)));
+        assert!(matches!(
+            invocation(&["-uDEFAULTS"]).action,
+            Action::Usage(_)
+        ));
+    }
+
+    #[test]
+    fn n_is_accepted_and_changes_nothing() {
+        assert_eq!(invocation(&["-N", "f"]), invocation(&["f"]));
+    }
+
+    #[test]
+    fn after_double_dash_u_is_a_file_name() {
+        assert_eq!(invocation(&["--", "-u"]).action, edit(false, Some("-u")));
+        assert_eq!(invocation(&["--", "-u"]).config, ConfigUse::Read);
+    }
+
+    #[test]
+    fn start_menu_is_none_when_no_flag_is_given() {
+        assert_eq!(invocation(&[]).start_menu, None);
+        assert_eq!(invocation(&["--start-menu"]).start_menu, Some(true));
+        assert_eq!(
+            invocation(&["--start-menu", "--no-start-menu"]).start_menu,
+            Some(false)
+        );
+        // The action still carries a plain bool for `parse` callers.
+        assert_eq!(invocation(&[]).action, edit(false, None));
     }
 }

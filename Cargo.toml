@@ -10,6 +10,9 @@ repository = "https://github.com/axel0806/rvim"
 crossterm = "0.29"
 ropey = { version = "1", default-features = false, features = ["simd"] }
 unicode-width = "0.2.3"
+# The config file (src/config.rs). Default features: `Table` and `Value`
+# need the `serde` feature, which adds only serde_core (no derive macros).
+toml = "1.1.8"
 
 # SIGHUP and SIGTERM on Unix (src/signals.rs). crossterm already depends on
 # signal-hook 0.3, so this adds no crate to the build.

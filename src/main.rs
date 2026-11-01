@@ -27,7 +27,8 @@ static KITTY_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 fn main() -> io::Result<()> {
     // Help and version print and exit before the terminal is touched.
-    let (start_menu, path) = match rvim::cli::parse(std::env::args_os().skip(1)) {
+    let inv = rvim::cli::parse_invocation(std::env::args_os().skip(1));
+    let path = match inv.action {
         rvim::cli::Action::Help => {
             print!("{}", rvim::cli::help_text());
             return Ok(());
@@ -36,18 +37,28 @@ fn main() -> io::Result<()> {
             print!("{}", rvim::cli::version_text());
             return Ok(());
         }
-        rvim::cli::Action::Edit { start_menu, path } => (start_menu, path),
+        rvim::cli::Action::Usage(message) => {
+            eprintln!("rvim: {message}");
+            std::process::exit(2);
+        }
+        rvim::cli::Action::Edit { path, .. } => path,
     };
     let mut ed = match path {
         Some(path) => Editor::open(&PathBuf::from(path)),
         None => Editor::new(),
     };
-    if start_menu {
-        ed.enable_start_menu();
-    }
+    // The config file is read here, once, before the terminal is set up. The
+    // options then go through the `:set` path; the flags win over the file.
+    let config = match inv.config {
+        rvim::cli::ConfigUse::Read => load_config(),
+        rvim::cli::ConfigUse::Skip => rvim::config::Config::default(),
+    };
+    let mut problems = config.warnings.clone();
+    problems.extend(ed.apply_config(&config, inv.start_menu));
     if !ed.show_start_menu() {
         ed.show_intro();
     }
+    ed.show_config_warnings(&problems);
 
     terminal::enable_raw_mode()?;
     execute!(io::stdout(), EnterAlternateScreen, EnableBracketedPaste)?;
@@ -81,6 +92,16 @@ fn main() -> io::Result<()> {
             save_recovery(&ed, "rvim crashed");
             std::process::exit(101);
         }
+    }
+}
+
+/// Reads the user's config file (`config.rs`). This is the only file read at
+/// startup, and it blocks for as long as a small local read takes: it runs
+/// before the terminal is put in raw mode, so the user sees nothing change.
+fn load_config() -> rvim::config::Config {
+    match rvim::config::config_path(|k| std::env::var_os(k), cfg!(windows)) {
+        Some(path) => rvim::config::load(&path, rvim::config::read_capped),
+        None => rvim::config::Config::default(),
     }
 }
 

@@ -434,6 +434,60 @@ impl Editor {
     }
 }
 
+impl Editor {
+    /// Applies a parsed config (`config.rs`) through the `:set` path
+    /// (`Target::Both`, as `:set opt=val` does): the `[options]` entries in
+    /// file order, then `[start] menu`, then `start_menu_flag` (`--start-menu`
+    /// or `--no-start-menu`) when the command line gave one. Returns the
+    /// messages of the values the editor refused, as `:set` would show them.
+    pub fn apply_config(
+        &mut self,
+        cfg: &crate::config::Config,
+        start_menu_flag: Option<bool>,
+    ) -> Vec<String> {
+        use crate::config::OptValue;
+        let mut items: Vec<String> = cfg
+            .options
+            .iter()
+            .map(|(name, v)| set_arg(name, v))
+            .collect();
+        if let Some(on) = cfg.start_menu {
+            items.push(set_arg("startmenu", &OptValue::Bool(on)));
+        }
+        if let Some(on) = start_menu_flag {
+            items.push(set_arg("startmenu", &OptValue::Bool(on)));
+        }
+        items
+            .iter()
+            .filter_map(|item| self.set_one(item, Target::Both).err())
+            .collect()
+    }
+
+    /// Shows the config's problems on the message line, as one line: the
+    /// first one, and how many more there are. Does nothing when there are
+    /// none. Call it after the intro message, so it takes the message line.
+    pub fn show_config_warnings(&mut self, warnings: &[String]) {
+        let Some((first, rest)) = warnings.split_first() else {
+            return;
+        };
+        let text = match rest.len() {
+            0 => first.clone(),
+            n => format!("{first} (+{n} more)"),
+        };
+        self.info(text);
+    }
+}
+
+/// A `:set` argument that sets `name` to `v`.
+fn set_arg(name: &str, v: &crate::config::OptValue) -> String {
+    use crate::config::OptValue;
+    match v {
+        OptValue::Bool(true) => name.to_string(),
+        OptValue::Bool(false) => format!("no{name}"),
+        OptValue::Num(n) => format!("{name}={n}"),
+    }
+}
+
 /// What `:set opt?` shows.
 pub fn describe(i: usize, v: &Val) -> String {
     let name = TABLE[i].name;

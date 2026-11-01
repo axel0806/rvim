@@ -1335,7 +1335,7 @@ impl Editor {
     /// `invopt`, `opt!`, `opt?`, `opt&`, `opt<`, `opt=val`, `opt:val`,
     /// `opt+=val`, `opt-=val`, `opt^=val`. The target says which value a
     /// change writes (`options.rs`).
-    fn set_one(&mut self, item: &str, target: Target) -> ExRes<()> {
+    pub(crate) fn set_one(&mut self, item: &str, target: Target) -> ExRes<()> {
         use crate::options::{INERT, Options, TABLE, Val};
         let name_end = item
             .find(|c: char| !c.is_ascii_alphabetic())
