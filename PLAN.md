@@ -53,7 +53,8 @@ this, `--help` opened a buffer named `--help`.
 **In progress** (as of 2026-11-01; maintained by the orchestrator, and an
 entry is removed when its branch lands on main):
 
-(none)
+- Document/Window split, step 1: `Document` and `Window` types with one of each (milestone 4; `editor.rs`, new `document.rs`, `window.rs`)
+- Makefile: `PREFIX`/`DESTDIR` install, `uninstall`, `dist` (packaging; Makefile and docs only)
 
 **Suggested order for what is left:** (1) Document/Window split, (2) splits +
 buffers + scrolling, (3) milestone 7, in the step order of "Agent experience:
