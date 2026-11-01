@@ -71,8 +71,7 @@ impl Editor {
     }
 
     pub(crate) fn set_line_vec(&mut self, l: usize, v: &[char]) {
-        self.buf_mut()
-            .set_line(l, &v.iter().collect::<String>());
+        self.buf_mut().set_line(l, &v.iter().collect::<String>());
     }
 
     fn msgmore(&mut self, n: i64) {
@@ -236,8 +235,7 @@ impl Editor {
             } else {
                 let end_vcol = vcol_range(self.buf().line(oa.end.line), oa.end.col, ts).1;
                 if oa.line_count <= 1 {
-                    let start_vcol =
-                        vcol_range(self.buf().line(oa.start.line), oa.start.col, ts).0;
+                    let start_vcol = vcol_range(self.buf().line(oa.start.line), oa.start.col, ts).0;
                     end_vcol - start_vcol + 1
                 } else {
                     end_vcol
@@ -552,8 +550,7 @@ impl Editor {
             );
             let first = self.win().cursor.line;
             if oa.line_count > 2 {
-                self.buf_mut()
-                    .delete_lines(first + 1, oa.line_count - 2);
+                self.buf_mut().delete_lines(first + 1, oa.line_count - 2);
             }
             let n = oa.end.col + 1 - usize::from(!oa.inclusive);
             let last = self.line_vec(first + 1);
@@ -826,8 +823,7 @@ impl Editor {
             self.win_mut().cursor = Pos::new(oa.start.line, block_col);
         } else if curs_top {
             self.win_mut().cursor.line = oa.start.line;
-            self.win_mut().cursor.col =
-                first_non_blank(self.buf(), self.win().cursor.line, true);
+            self.win_mut().cursor.col = first_non_blank(self.buf(), self.win().cursor.line, true);
         }
         if oa.line_count > 2 {
             let op = if left { "<" } else { ">" };
@@ -1077,9 +1073,7 @@ impl Editor {
             } else {
                 self.win_mut().cursor = oa.end;
                 self.check_cursor_col();
-                if self.buf().line_len(self.win().cursor.line) > 0
-                    && oa.start_vcol != oa.end_vcol
-                {
+                if self.buf().line_len(self.win().cursor.line) > 0 && oa.start_vcol != oa.end_vcol {
                     let (doc, win) = self.parts_mut();
                     inc(&doc.buf, &mut win.cursor);
                 }
@@ -1656,9 +1650,7 @@ impl Editor {
             mode: vmode,
             curswant: self.win().curswant,
         });
-        if empty
-            && self.buf().line_len(self.buf().last_line()) == 0
-            && self.buf().line_count() > 1
+        if empty && self.buf().line_len(self.buf().last_line()) == 0 && self.buf().line_count() > 1
         {
             let last = self.buf().last_line();
             self.buf_mut().delete_lines(last, 1);

@@ -1105,8 +1105,7 @@ impl Editor {
             }
             Motion::Para { fwd } => {
                 info.use_reg_one = true;
-                let (p, incl) =
-                    findpar(self.buf(), self.win().cursor, fwd, count1, '\0', false)?;
+                let (p, incl) = findpar(self.buf(), self.win().cursor, fwd, count1, '\0', false)?;
                 self.set_pcmark();
                 self.win_mut().cursor = p;
                 info.inclusive = incl;
@@ -1121,15 +1120,8 @@ impl Editor {
             Motion::Find { c, fwd, till } => {
                 self.last_find = Some((c, fwd, till));
                 info.inclusive = fwd;
-                self.win_mut().cursor.col = searchc(
-                    self.buf(),
-                    self.win().cursor,
-                    c,
-                    fwd,
-                    till,
-                    count1,
-                    true,
-                )?;
+                self.win_mut().cursor.col =
+                    searchc(self.buf(), self.win().cursor, c, fwd, till, count1, true)?;
             }
             Motion::Mark { mark, linewise } => {
                 let target = if matches!(mark, '\'' | '`') {
@@ -1165,15 +1157,8 @@ impl Editor {
                 let dir = if reverse { !fwd } else { fwd };
                 let stop = !(count1 == 1 && till);
                 info.inclusive = dir;
-                self.win_mut().cursor.col = searchc(
-                    self.buf(),
-                    self.win().cursor,
-                    c,
-                    dir,
-                    till,
-                    count1,
-                    stop,
-                )?;
+                self.win_mut().cursor.col =
+                    searchc(self.buf(), self.win().cursor, c, dir, till, count1, stop)?;
             }
             Motion::Search { fwd, .. } => {
                 let pat = self.cmd_search.take().unwrap_or_default();

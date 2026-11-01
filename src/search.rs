@@ -665,10 +665,7 @@ impl Editor {
     /// The identifier or string under or after the cursor (Vim's
     /// `find_ident_under_cursor` with `FIND_IDENT|FIND_STRING`).
     pub(crate) fn ident_under_cursor(&self) -> Option<(usize, String)> {
-        let line: Vec<char> = self.buf()
-            .line(self.win().cursor.line)
-            .chars()
-            .collect();
+        let line: Vec<char> = self.buf().line(self.win().cursor.line).chars().collect();
         let cls = |c: Option<&char>| c.map_or(0, |&c| keyword_class(c));
         let mut col = 0;
         let mut this_class = 0;

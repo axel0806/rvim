@@ -1575,7 +1575,8 @@ impl Editor {
                         // do_sub(): a mark on the first line stays, the
                         // others move to the joined line.
                         let last_new = st.lnum + new_lines.len() - 1;
-                        let moved: Vec<(char, Pos)> = self.buf_mut()
+                        let moved: Vec<(char, Pos)> = self
+                            .buf_mut()
                             .take_marks_in(st.lnum, end_l)
                             .into_iter()
                             .map(|(c, p)| {

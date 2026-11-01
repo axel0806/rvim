@@ -457,11 +457,8 @@ impl Editor {
         match self.mode {
             Mode::Normal => self.clamp_normal(),
             Mode::Visual(_) => {
-                self.win_mut().cursor.line = self
-                    .win_mut()
-                    .cursor
-                    .line
-                    .min(self.buf_mut().last_line());
+                self.win_mut().cursor.line =
+                    self.win_mut().cursor.line.min(self.buf_mut().last_line());
                 self.win_mut().cursor.col = self
                     .win_mut()
                     .cursor
@@ -567,11 +564,7 @@ impl Editor {
     }
 
     fn clamp_normal(&mut self) {
-        self.win_mut().cursor.line = self
-            .win_mut()
-            .cursor
-            .line
-            .min(self.buf_mut().last_line());
+        self.win_mut().cursor.line = self.win_mut().cursor.line.min(self.buf_mut().last_line());
         let len = self.line_len();
         if self.win().cursor.col >= len {
             self.win_mut().cursor.col = len.saturating_sub(1);
@@ -631,9 +624,7 @@ impl Editor {
     }
 
     fn u_saveline(&mut self, l: usize) {
-        if self.doc().uline.as_ref().is_some_and(|u| u.line == l)
-            || l >= self.buf().line_count()
-        {
+        if self.doc().uline.as_ref().is_some_and(|u| u.line == l) || l >= self.buf().line_count() {
             return;
         }
         self.doc_mut().uline = Some(ULine {
@@ -915,12 +906,10 @@ impl Editor {
                 if replace && col < self.line_len() {
                     let old = self.buf().char_at(line, col).unwrap_or(' ');
                     self.buf_mut().remove(line, col, 1);
-                    self.buf_mut()
-                        .insert(line, col, c.encode_utf8(&mut [0; 4]));
+                    self.buf_mut().insert(line, col, c.encode_utf8(&mut [0; 4]));
                     self.ins_stack.push(RepItem::Replaced(old));
                 } else {
-                    self.buf_mut()
-                        .insert(line, col, c.encode_utf8(&mut [0; 4]));
+                    self.buf_mut().insert(line, col, c.encode_utf8(&mut [0; 4]));
                     self.ins_stack.push(RepItem::Appended);
                 }
                 self.win_mut().cursor.col += 1;
@@ -1268,9 +1257,7 @@ impl Editor {
                 let name = path.display();
                 match stats {
                     None => self.info(format!("\"{name}\" [New]")),
-                    Some(s) => {
-                        self.info(format!("\"{name}\" {}", describe(s, self.buf().crlf)))
-                    }
+                    Some(s) => self.info(format!("\"{name}\" {}", describe(s, self.buf().crlf))),
                 }
             }
             Err(e) => self.error(format!("E484: Can't open file {}: {e}", path.display())),
@@ -1289,4 +1276,56 @@ pub(crate) fn describe(s: FileStats, crlf: bool) -> String {
     }
     out.push_str(&format!("{}L, {}B", s.lines, s.bytes));
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn version(ed: &Editor) -> u64 {
+        ed.doc().version()
+    }
+
+    #[test]
+    fn current_window_leads_to_its_document() {
+        let ed = Editor::from_text("abc\n");
+        assert_eq!(ed.cur_win, WinId(0));
+        let doc_id = ed.win().doc;
+        assert_eq!(doc_id, DocId(0));
+        assert!(std::ptr::eq(ed.win(), &ed.windows[ed.cur_win.0]));
+        assert!(std::ptr::eq(ed.doc(), &ed.documents[doc_id.0]));
+        assert!(std::ptr::eq(ed.buf(), &ed.documents[doc_id.0].buf));
+    }
+
+    #[test]
+    fn parts_mut_changes_buffer_and_cursor_in_one_borrow() {
+        let mut ed = Editor::from_text("abc\ndef\n");
+        {
+            let (doc, win) = ed.parts_mut();
+            doc.buf.insert(1, 0, "x");
+            win.cursor = Pos::new(1, 2);
+        }
+        assert_eq!(ed.buf().line_string(1), "xdef");
+        assert_eq!(ed.cursor(), Pos::new(1, 2));
+    }
+
+    #[test]
+    fn window_fills_the_screen_above_the_command_line() {
+        let mut ed = Editor::from_text("abc\n");
+        assert_eq!((ed.win().width, ed.win().height), (80, 23));
+        ed.set_screen_size(100, 10);
+        assert_eq!((ed.win().width, ed.win().height), (100, 9));
+        assert_eq!(ed.text_rows(), 9);
+        ed.set_screen_size(0, 0);
+        assert_eq!((ed.win().width, ed.win().height), (1, 1));
+    }
+
+    #[test]
+    fn window_resize_keeps_version() {
+        let mut ed = Editor::from_text("abc\ndef\n");
+        let v0 = version(&ed);
+        ed.set_screen_size(40, 5);
+        assert_eq!(ed.win().height, 4);
+        assert_eq!(version(&ed), v0);
+    }
 }
