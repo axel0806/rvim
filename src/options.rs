@@ -11,9 +11,12 @@
 //! - the local value of a window (`Window::local`), for window-local and
 //!   global-local window options.
 //!
-//! A local value of a buffer-local or window-local option is always set; it
-//! starts as a copy of the global value. A global-local option has no local
-//! value until one is set (`None`), and then the global value is used.
+//! Local values are kept raw, as Vim keeps them: a boolean is 0 or 1 and a
+//! number is its value. A local value of a buffer-local or window-local
+//! option is always set; it starts as a copy of the global value. A
+//! global-local option's local value is unset while it is negative (Vim's
+//! `-1`), and then the global value is used. Arithmetic in `:setlocal` starts
+//! from the raw local value, so `:setlocal so+=2` on an unset value gives 1.
 //! Every read goes through `Eff`, which gives the effective value for one
 //! document and window.
 
@@ -113,6 +116,9 @@ pub const INERT: &[&str] = &[
     "cin",
 ];
 
+/// The raw local value of a global-local option that is not set (Vim's -1).
+const UNSET: i64 = -1;
+
 impl Scope {
     /// The option can have a local value (of a buffer or window).
     pub fn has_local(self) -> bool {
@@ -120,7 +126,7 @@ impl Scope {
     }
 
     /// A global-local option: the local value may be unset, and then the
-    /// global value is used (Vim's `-1`).
+    /// global value is used.
     pub fn is_global_local(self) -> bool {
         matches!(self, Scope::GlobalOrBuffer | Scope::GlobalOrWindow)
     }
@@ -139,21 +145,35 @@ pub enum Target {
     Global,
 }
 
-/// Whether a command with `target` writes the global value and whether it
-/// writes the local value (which only options with a local value have).
-fn targets(scope: Scope, target: Target) -> (bool, bool) {
-    if !scope.has_local() {
-        return (true, false);
-    }
-    (target != Target::Local, target != Target::Global)
+/// Whether a write with `target` sets the global value.
+fn writes_global(target: Target) -> bool {
+    target != Target::Local
 }
 
-/// The local values of the document or window that an option of `scope`
-/// keeps its local value in.
-fn local_of<'a>(scope: Scope, doc: &'a mut Local, win: &'a mut Local) -> &'a mut Local {
-    match scope {
-        Scope::Buffer | Scope::GlobalOrBuffer => doc,
-        _ => win,
+/// Whether a write with `target` sets the local value of an option that has
+/// one. `:set` does not set an unset local value of a global-local option:
+/// Vim leaves it unset (`:set so=5` after `:setglobal so=3` keeps -1).
+fn writes_local(scope: Scope, target: Target, local_is_set: bool) -> bool {
+    match target {
+        Target::Global => false,
+        Target::Local => true,
+        Target::Both => !scope.is_global_local() || local_is_set,
+    }
+}
+
+/// The raw value of a global value.
+fn to_raw(v: &Val) -> i64 {
+    match v {
+        Val::Bool(b) => i64::from(*b),
+        Val::Num(n) => *n,
+    }
+}
+
+/// The value of an option with the type of `default`, from a raw value.
+fn from_raw(default: &Val, raw: i64) -> Val {
+    match default {
+        Val::Bool(_) => Val::Bool(raw != 0),
+        Val::Num(_) => Val::Num(raw),
     }
 }
 
@@ -185,11 +205,11 @@ impl Options {
     }
 }
 
-/// The local values of one document or one window. `None` is an unset
-/// global-local value; for the other options the value is always set.
+/// The raw local values of one document or one window, one per table entry.
+/// For a global-local option a negative value means unset.
 #[derive(Clone, Debug)]
 pub struct Local {
-    vals: Vec<Option<Val>>,
+    raw: Vec<i64>,
 }
 
 impl Local {
@@ -198,24 +218,39 @@ impl Local {
     /// global-local ones.
     pub fn new(global: &Options) -> Self {
         Local {
-            vals: TABLE
+            raw: TABLE
                 .iter()
                 .enumerate()
                 .map(|(i, d)| match d.scope {
-                    Scope::Buffer | Scope::Window => Some(global.get(i).clone()),
-                    _ => None,
+                    Scope::Buffer | Scope::Window => to_raw(global.get(i)),
+                    _ => UNSET,
                 })
                 .collect(),
         }
     }
 
-    /// The local value of option `i`, `None` when it is unset.
-    pub fn get(&self, i: usize) -> Option<&Val> {
-        self.vals[i].as_ref()
+    /// The raw local value of option `i` (`-1` when a global-local option is
+    /// unset).
+    pub fn raw(&self, i: usize) -> i64 {
+        self.raw[i]
     }
 
-    fn set(&mut self, i: usize, v: Option<Val>) {
-        self.vals[i] = v;
+    /// Whether the local value of option `i` is set.
+    fn is_set(&self, i: usize) -> bool {
+        self.raw[i] >= 0
+    }
+
+    fn set_raw(&mut self, i: usize, raw: i64) {
+        self.raw[i] = raw;
+    }
+}
+
+/// The local values of the document and window an option of `scope` keeps
+/// its local value in.
+fn local_of<'a>(scope: Scope, doc: &'a mut Local, win: &'a mut Local) -> &'a mut Local {
+    match scope {
+        Scope::Buffer | Scope::GlobalOrBuffer => doc,
+        _ => win,
     }
 }
 
@@ -234,25 +269,31 @@ impl<'a> Eff<'a> {
     }
 
     /// The effective value of option `i`.
-    pub fn value(&self, i: usize) -> &'a Val {
-        let local = match TABLE[i].scope {
+    pub fn value(&self, i: usize) -> Val {
+        let d = &TABLE[i];
+        let raw = match d.scope {
             Scope::Global => None,
-            Scope::Buffer | Scope::GlobalOrBuffer => self.doc.get(i),
-            Scope::Window | Scope::GlobalOrWindow => self.win.get(i),
+            Scope::Buffer => Some(self.doc.raw(i)),
+            Scope::Window => Some(self.win.raw(i)),
+            Scope::GlobalOrBuffer => Some(self.doc.raw(i)).filter(|r| *r >= 0),
+            Scope::GlobalOrWindow => Some(self.win.raw(i)).filter(|r| *r >= 0),
         };
-        local.unwrap_or_else(|| self.global.get(i))
+        match raw {
+            Some(r) => from_raw(&d.default, r),
+            None => self.global.get(i).clone(),
+        }
     }
 
     fn bool_of(&self, name: &str) -> bool {
-        match Options::find(name).map(|i| self.value(i)) {
-            Some(Val::Bool(v)) => *v,
-            _ => false,
-        }
+        matches!(
+            Options::find(name).map(|i| self.value(i)),
+            Some(Val::Bool(true))
+        )
     }
 
     fn num_of(&self, name: &str) -> i64 {
         match Options::find(name).map(|i| self.value(i)) {
-            Some(Val::Num(v)) => *v,
+            Some(Val::Num(v)) => v,
             _ => 0,
         }
     }
@@ -313,17 +354,37 @@ impl Editor {
         Eff::new(&self.opts, &doc.local, &win.local)
     }
 
-    /// Writes option `i` for a command with `target`: the global value, and
-    /// the current document's or window's local value, as `targets` says.
-    pub(crate) fn write_option(&mut self, i: usize, target: Target, v: Val) {
+    /// The raw value option `i` starts from for `+=`, `-=`, `^=` and `!`:
+    /// the global value for `:setglobal`, the raw local value for
+    /// `:setlocal` (-1 when a global-local option is unset), and the
+    /// effective value for `:set`.
+    pub(crate) fn option_base(&self, i: usize, target: Target) -> i64 {
         let scope = TABLE[i].scope;
-        let (to_global, to_local) = targets(scope, target);
-        if to_local {
-            let (doc, win) = self.parts_mut();
-            local_of(scope, &mut doc.local, &mut win.local).set(i, Some(v.clone()));
+        match target {
+            Target::Global => to_raw(self.opts.get(i)),
+            Target::Local if scope.has_local() => match scope {
+                Scope::Buffer | Scope::GlobalOrBuffer => self.doc().local.raw(i),
+                _ => self.win().local.raw(i),
+            },
+            _ => to_raw(&self.eff().value(i)),
         }
-        if to_global {
-            self.opts.set(i, v);
+    }
+
+    /// Writes the raw value `raw` of option `i` as `target` says: the global
+    /// value, and the current document's or window's local value.
+    pub(crate) fn write_option(&mut self, i: usize, target: Target, raw: i64) {
+        let scope = TABLE[i].scope;
+        if !scope.has_local() {
+            self.opts.set(i, from_raw(&TABLE[i].default, raw));
+            return;
+        }
+        let (doc, win) = self.parts_mut();
+        let local = local_of(scope, &mut doc.local, &mut win.local);
+        if writes_local(scope, target, local.is_set(i)) {
+            local.set_raw(i, raw);
+        }
+        if writes_global(target) {
+            self.opts.set(i, from_raw(&TABLE[i].default, raw));
         }
     }
 
@@ -335,43 +396,38 @@ impl Editor {
         if !scope.has_local() || target == Target::Global {
             return;
         }
-        let v = if target == Target::Local && scope.is_global_local() {
-            None
+        let global = to_raw(self.opts.get(i));
+        let raw = if target == Target::Local && scope.is_global_local() {
+            UNSET
         } else {
-            Some(self.opts.get(i).clone())
+            global
         };
         let (doc, win) = self.parts_mut();
-        local_of(scope, &mut doc.local, &mut win.local).set(i, v);
-    }
-
-    /// The value option `i` starts from for `+=`, `-=` and `^=`: the global
-    /// value for `:setglobal`, otherwise the effective one.
-    pub(crate) fn option_base(&self, i: usize, target: Target) -> Val {
-        match target {
-            Target::Global => self.opts.get(i).clone(),
-            _ => self.eff().value(i).clone(),
+        let local = local_of(scope, &mut doc.local, &mut win.local);
+        if writes_local(scope, target, local.is_set(i)) {
+            local.set_raw(i, raw);
         }
     }
 
     /// What `:set opt?`, `:setlocal opt?` and `:setglobal opt?` show: the
-    /// effective value for `:set`, the local value for `:setlocal` (an unset
-    /// global-local value shows as Vim does: `--opt` for a boolean, `opt=-1`
-    /// for a number), and the global value for `:setglobal`.
+    /// effective value for `:set`, the raw local value for `:setlocal` (for
+    /// a boolean that is negative, `--opt`, as Vim shows an unset one), and
+    /// the global value for `:setglobal`.
     pub(crate) fn option_shown(&self, i: usize, target: Target) -> String {
         let def = &TABLE[i];
         match target {
-            Target::Both => describe(i, self.eff().value(i)),
+            Target::Both => describe(i, &self.eff().value(i)),
             Target::Global => describe(i, self.opts.get(i)),
             Target::Local if !def.scope.has_local() => describe(i, self.opts.get(i)),
             Target::Local => {
-                let local = match def.scope {
-                    Scope::Buffer | Scope::GlobalOrBuffer => self.doc().local.get(i),
-                    _ => self.win().local.get(i),
+                let raw = match def.scope {
+                    Scope::Buffer | Scope::GlobalOrBuffer => self.doc().local.raw(i),
+                    _ => self.win().local.raw(i),
                 };
-                match (local, &def.default) {
-                    (Some(v), _) => describe(i, v),
-                    (None, Val::Bool(_)) => format!("--{}", def.name),
-                    (None, Val::Num(_)) => format!("  {}=-1", def.name),
+                match def.default {
+                    Val::Num(_) => describe(i, &Val::Num(raw)),
+                    Val::Bool(_) if raw < 0 => format!("--{}", def.name),
+                    Val::Bool(_) => describe(i, &Val::Bool(raw != 0)),
                 }
             }
         }
@@ -436,9 +492,8 @@ mod tests {
     }
 
     /// Two documents and two windows built directly, as the Vecs of step 2
-    /// hold them: window `w` shows document `w`. The write rules are the
-    /// ones `Editor::write_option` and `reset_option` use (`targets`,
-    /// `local_of`).
+    /// hold them: window `w` shows document `w`. The writes follow the same
+    /// rules as `Editor::write_option` (`writes_local`, `writes_global`).
     struct Two {
         global: Options,
         docs: Vec<Document>,
@@ -465,16 +520,27 @@ mod tests {
             Eff::new(&self.global, &self.docs[w].local, &self.wins[w].local)
         }
 
-        fn write(&mut self, w: usize, name: &str, target: Target, v: Val) {
+        fn raw(&self, w: usize, name: &str) -> i64 {
+            let i = idx(name);
+            match TABLE[i].scope {
+                Scope::Buffer | Scope::GlobalOrBuffer => self.docs[w].local.raw(i),
+                _ => self.wins[w].local.raw(i),
+            }
+        }
+
+        fn write(&mut self, w: usize, name: &str, target: Target, raw: i64) {
             let i = idx(name);
             let scope = TABLE[i].scope;
-            let (to_global, to_local) = targets(scope, target);
-            if to_local {
-                let local = local_of(scope, &mut self.docs[w].local, &mut self.wins[w].local);
-                local.set(i, Some(v.clone()));
+            if !scope.has_local() {
+                self.global.set(i, from_raw(&TABLE[i].default, raw));
+                return;
             }
-            if to_global {
-                self.global.set(i, v);
+            let local = local_of(scope, &mut self.docs[w].local, &mut self.wins[w].local);
+            if writes_local(scope, target, local.is_set(i)) {
+                local.set_raw(i, raw);
+            }
+            if writes_global(target) {
+                self.global.set(i, from_raw(&TABLE[i].default, raw));
             }
         }
     }
@@ -483,14 +549,14 @@ mod tests {
     fn buffer_local_set_writes_both_and_setlocal_only_local() {
         let mut t = Two::new();
         let sw = idx("sw");
-        t.write(0, "sw", Target::Local, Val::Num(2));
+        t.write(0, "sw", Target::Local, 2);
         assert_eq!(t.eff(0).shiftwidth(), 2);
         // Document 1 keeps the copy it was made with.
         assert_eq!(t.eff(1).shiftwidth(), 8);
-        t.write(0, "sw", Target::Global, Val::Num(4));
+        t.write(0, "sw", Target::Global, 4);
         assert_eq!(t.eff(0).shiftwidth(), 2, "the local value stays");
         assert_eq!(t.eff(1).shiftwidth(), 8, "document 1 is not affected");
-        t.write(1, "sw", Target::Both, Val::Num(3));
+        t.write(1, "sw", Target::Both, 3);
         assert_eq!(t.eff(1).shiftwidth(), 3);
         assert_eq!(t.eff(0).shiftwidth(), 2);
         assert_eq!(t.global.get(sw), &Val::Num(3));
@@ -500,18 +566,57 @@ mod tests {
     fn global_local_unset_uses_global_until_set() {
         let mut t = Two::new();
         let ar = idx("ar");
-        assert!(t.docs[0].local.get(ar).is_none(), "unset at creation");
-        t.write(0, "ar", Target::Global, Val::Bool(true));
-        assert_eq!(t.eff(0).value(ar), &Val::Bool(true));
-        assert_eq!(t.eff(1).value(ar), &Val::Bool(true));
-        t.write(0, "ar", Target::Local, Val::Bool(false));
-        assert_eq!(t.eff(0).value(ar), &Val::Bool(false));
+        assert_eq!(t.raw(0, "ar"), UNSET, "unset at creation");
+        t.write(0, "ar", Target::Global, 1);
+        assert_eq!(t.eff(0).value(ar), Val::Bool(true));
+        assert_eq!(t.eff(1).value(ar), Val::Bool(true));
+        t.write(0, "ar", Target::Local, 0);
+        assert_eq!(t.eff(0).value(ar), Val::Bool(false));
         assert_eq!(
             t.eff(1).value(ar),
-            &Val::Bool(true),
+            Val::Bool(true),
             "document 1 uses global"
         );
         assert_eq!(t.global.get(ar), &Val::Bool(true));
+    }
+
+    /// Vim's rules for `:set` on an unset global-local option (probed with
+    /// `vim -N -u NONE -es`): only the global value changes.
+    #[test]
+    fn set_leaves_an_unset_global_local_local_alone() {
+        let mut t = Two::new();
+        t.write(0, "so", Target::Global, 3);
+        t.write(0, "so", Target::Both, 5);
+        assert_eq!(t.raw(0, "so"), UNSET, "set so=5 keeps the local unset");
+        assert_eq!(t.eff(0).scrolloff(), 5);
+        // Once set, `:set` changes the local value too.
+        t.write(0, "so", Target::Local, 2);
+        t.write(0, "so", Target::Both, 4);
+        assert_eq!(t.raw(0, "so"), 4);
+    }
+
+    /// `:setlocal` arithmetic starts from the raw local value: -1 when
+    /// unset (probed: `:setglobal so=3 | :setlocal so+=2` gives local 1,
+    /// `so-=1` gives -2 with effective 3, and `ar!` gives -2).
+    #[test]
+    fn arithmetic_on_an_unset_local_starts_from_minus_one() {
+        let mut ed = Editor::from_text("x\n");
+        let so = idx("so");
+        ed.opts.set(so, Val::Num(3));
+        assert_eq!(ed.option_base(so, Target::Local), UNSET);
+        ed.write_option(so, Target::Local, UNSET + 2);
+        assert_eq!(ed.eff().scrolloff(), 1);
+        ed.write_option(so, Target::Local, UNSET);
+        ed.write_option(so, Target::Local, UNSET - 1);
+        assert_eq!(ed.option_shown(so, Target::Local), "  scrolloff=-2");
+        assert_eq!(ed.eff().scrolloff(), 3, "a negative local uses the global");
+        let ar = idx("ar");
+        ed.opts.set(ar, Val::Bool(true));
+        ed.write_option(ar, Target::Local, UNSET ^ 1);
+        assert_eq!(ed.option_shown(ar, Target::Local), "--autoread");
+        assert_eq!(ed.eff().value(ar), Val::Bool(true));
+        ed.write_option(ar, Target::Local, UNSET ^ 1 ^ 1);
+        assert_eq!(ed.option_shown(ar, Target::Local), "--autoread");
     }
 
     #[test]
@@ -519,58 +624,68 @@ mod tests {
         let mut t = Two::new();
         let so = idx("so");
         let nu = idx("nu");
-        t.write(0, "so", Target::Local, Val::Num(3));
+        t.write(0, "so", Target::Local, 3);
         assert_eq!(t.eff(0).scrolloff(), 3);
         assert_eq!(t.eff(1).scrolloff(), 0);
-        t.write(1, "so", Target::Global, Val::Num(7));
-        assert_eq!(t.eff(1).value(so), &Val::Num(7));
-        assert_eq!(t.eff(0).value(so), &Val::Num(3));
+        t.write(1, "so", Target::Global, 7);
+        assert_eq!(t.eff(1).value(so), Val::Num(7));
+        assert_eq!(t.eff(0).value(so), Val::Num(3));
         // Window-local number: window 0 changes, window 1 does not.
-        t.write(0, "nu", Target::Local, Val::Bool(true));
-        assert_eq!(t.eff(0).value(nu), &Val::Bool(true));
-        assert_eq!(t.eff(1).value(nu), &Val::Bool(false));
+        t.write(0, "nu", Target::Local, 1);
+        assert_eq!(t.eff(0).value(nu), Val::Bool(true));
+        assert_eq!(t.eff(1).value(nu), Val::Bool(false));
     }
 
     #[test]
-    fn targets_follow_the_scope_and_target() {
+    fn write_rules_follow_the_scope_and_target() {
         use Scope::*;
-        assert_eq!(targets(Global, Target::Local), (true, false));
-        assert_eq!(targets(Global, Target::Both), (true, false));
-        assert_eq!(targets(Buffer, Target::Both), (true, true));
-        assert_eq!(targets(Buffer, Target::Local), (false, true));
-        assert_eq!(targets(GlobalOrWindow, Target::Global), (true, false));
-        assert_eq!(targets(Window, Target::Both), (true, true));
+        assert!(writes_global(Target::Both));
+        assert!(writes_global(Target::Global));
+        assert!(!writes_global(Target::Local));
+        assert!(writes_local(Buffer, Target::Both, false));
+        assert!(writes_local(Window, Target::Both, false));
+        assert!(!writes_local(GlobalOrBuffer, Target::Both, false));
+        assert!(writes_local(GlobalOrBuffer, Target::Both, true));
+        assert!(writes_local(GlobalOrWindow, Target::Local, false));
+        assert!(!writes_local(GlobalOrWindow, Target::Global, true));
     }
 
     #[test]
     fn reset_local_copies_or_unsets() {
-        let mut t = Two::new();
+        let mut ed = Editor::from_text("x\n");
         let sw = idx("sw");
         let so = idx("so");
-        t.write(0, "sw", Target::Global, Val::Num(6));
-        t.write(0, "sw", Target::Local, Val::Num(2));
-        // `:setlocal opt<` copies the global value (what `reset_option` does).
-        let g = t.global.get(sw).clone();
-        t.docs[0].local.set(sw, Some(g));
-        assert_eq!(t.docs[0].local.get(sw), Some(&Val::Num(6)));
-        // A global-local option is unset by `:setlocal opt<`.
-        t.write(0, "so", Target::Local, Val::Num(3));
-        t.wins[0].local.set(so, None);
-        assert!(t.wins[0].local.get(so).is_none());
-        assert_eq!(t.eff(0).scrolloff(), 0);
+        ed.write_option(sw, Target::Global, 6);
+        ed.write_option(sw, Target::Local, 2);
+        ed.reset_option(sw, Target::Local);
+        assert_eq!(ed.doc().local.raw(sw), 6);
+        ed.write_option(sw, Target::Local, 2);
+        ed.reset_option(sw, Target::Both);
+        assert_eq!(ed.doc().local.raw(sw), 6);
+        // `:setlocal` unsets a global-local option.
+        ed.write_option(so, Target::Local, 3);
+        ed.reset_option(so, Target::Local);
+        assert_eq!(ed.win().local.raw(so), UNSET);
+        // `:set so<` on an unset global-local option does not set it.
+        ed.reset_option(so, Target::Both);
+        assert_eq!(ed.win().local.raw(so), UNSET);
+        // `:setglobal opt<` changes nothing.
+        ed.write_option(sw, Target::Local, 2);
+        ed.reset_option(sw, Target::Global);
+        assert_eq!(ed.doc().local.raw(sw), 2);
     }
 
     #[test]
     fn new_documents_copy_globals_at_creation() {
         let mut t = Two::new();
         let sw = idx("sw");
-        t.write(0, "sw", Target::Global, Val::Num(4));
+        t.write(0, "sw", Target::Global, 4);
         // Document 1 was made before the global changed: it keeps 8.
-        assert_eq!(t.docs[1].local.get(sw), Some(&Val::Num(8)));
+        assert_eq!(t.docs[1].local.raw(sw), 8);
         // A document made now copies the new global value.
         let doc = Document::new(Buffer::new(), &t.global);
-        assert_eq!(doc.local.get(sw), Some(&Val::Num(4)));
-        assert!(doc.local.get(idx("ar")).is_none());
+        assert_eq!(doc.local.raw(sw), 4);
+        assert_eq!(doc.local.raw(idx("ar")), UNSET);
     }
 
     #[test]
@@ -582,8 +697,8 @@ mod tests {
         assert_eq!(ed.option_shown(so, Target::Both), "  scrolloff=0");
         assert_eq!(ed.option_shown(ar, Target::Local), "--autoread");
         assert_eq!(ed.option_shown(so, Target::Local), "  scrolloff=-1");
-        ed.write_option(so, Target::Local, Val::Num(5));
-        ed.write_option(so, Target::Global, Val::Num(9));
+        ed.write_option(so, Target::Local, 5);
+        ed.write_option(so, Target::Global, 9);
         assert_eq!(ed.option_shown(so, Target::Local), "  scrolloff=5");
         assert_eq!(ed.option_shown(so, Target::Global), "  scrolloff=9");
         assert_eq!(ed.option_shown(so, Target::Both), "  scrolloff=5");

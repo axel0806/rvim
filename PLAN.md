@@ -411,9 +411,11 @@ Storage: the global values are in `Editor`'s `Options`. A document has its
 buffer-local values (`Document::local`, a `Local`), and a window has its
 window-local values (`Window::local`). A buffer-local or window-local value is
 always set: a new document or window copies the global values when it is
-made (so a later `:setglobal` does not change an existing buffer's copy). A
-global-local value is unset (`None`) until a command sets it, and the global
-value is used while it is unset. Every read goes through `Editor::eff()`, the
+made (so a later `:setglobal` does not change an existing buffer's copy). The
+local values are kept raw, as Vim keeps them: a boolean is 0 or 1. A
+global-local value is unset while it is negative (Vim's `-1`); a negative
+local value makes the global value the effective one, and a negative number
+shows as is (`scrolloff=-2`). Every read goes through `Editor::eff()`, the
 effective value for the current document and window (the local value if set,
 else the global one). With one document and one window the behaviour of the
 existing tests is unchanged.
@@ -421,9 +423,11 @@ existing tests is unchanged.
 What the commands write (probed with `vim -N -u NONE -es` on 2026-11-01):
 
 - `:set opt=val`, `opt`, `noopt`, `invopt`, `opt!`, `opt&`: the global value,
-  and the local value too for a buffer-local, window-local or global-local
-  option. `:set opt&` makes both the default. `:set opt<` copies the global
-  value to the local value (for a global-local option too).
+  and the local value too for a buffer-local or window-local option. For a
+  global-local option the local value changes only when it is already set:
+  `:setglobal so=3` then `:set so=5` leaves the local value at -1 (probed),
+  and `:set so&` and `:set so<` do the same. Once set, `:set opt&` makes both
+  the default and `:set opt<` copies the global value to the local value.
 - `:setlocal`: the local value only. For a global-only option, which has one
   value, it sets that value. `:setlocal opt<` copies the global value to the
   local one, or unsets the local value of a global-local option. `:setlocal
@@ -431,12 +435,18 @@ What the commands write (probed with `vim -N -u NONE -es` on 2026-11-01):
 - `:setglobal`: the global value only. The local value does not change, so
   the current buffer keeps its `shiftwidth` after `:setglobal sw=4`.
   `:setglobal opt<` changes nothing.
-- `+=`, `-=` and `^=` start from the effective value, or from the global value
-  for `:setglobal`. A negative value is E487 for every option except
+- `+=`, `-=`, `^=` and `!` start from a base that depends on the command:
+  `:set` from the effective value (`:setglobal so=3` then `:set so+=2` gives
+  global 5, local still -1); `:setglobal` from the global value; `:setlocal`
+  from the raw local value, which is -1 while a global-local option is unset
+  (`:setglobal so=3` then `:setlocal so+=2` gives local 1, effective 1; and
+  `:setlocal so-=1` gives local -2, effective 3). A boolean's `!` and `inv`
+  are `^ 1` on that base, so `:setlocal ar!` on an unset value gives -2,
+  which is still unset. A negative value is E487 for every option except
   `softtabstop` and `scrolloff`, which Vim accepts.
-- Queries: `:set opt?` shows the effective value; `:setlocal opt?` the local
-  value, shown as `--opt` for a boolean that is unset and `opt=-1` for a
-  number that is unset (Vim's `-1`); `:setglobal opt?` the global value.
+- Queries: `:set opt?` shows the effective value; `:setlocal opt?` the raw
+  local value (`--opt` for a boolean that is negative, as Vim shows an unset
+  one; `opt=-2` for a number at -2); `:setglobal opt?` the global value.
 - Errors are Vim's: E518 (the item as typed), E474 (`noopt` of a number,
   `opt=` for a boolean), E521 (a number after `=` is missing or not a number),
   E487 (negative).

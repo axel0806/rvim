@@ -259,3 +259,61 @@ fn setlocal_and_setglobal_errors_as_in_vim() {
     assert_eq!(msg("x\n", ":setl so=-5<CR>:setl so?<CR>"), "  scrolloff=-5");
     assert!(msg("x\n", ":setl sts=-2<CR>").is_empty());
 }
+
+/// `:setlocal` arithmetic starts from the raw local value, which is -1 while
+/// a global-local option is unset; a negative local value means the global
+/// value is used. The scrolling cases show the effective value: 10 `<C-e>`
+/// put the cursor on line 11 + 'scrolloff'.
+#[test]
+fn setlocal_arithmetic_on_an_unset_global_local_option() {
+    check(&cross(
+        LONG,
+        &[
+            ":setg so=3<CR>:setl so+=2<CR>10<C-e>",
+            ":setg so=3<CR>:setl so-=1<CR>10<C-e>",
+            ":setg so=3<CR>:setl so^=2<CR>10<C-e>",
+            ":setg so=3<CR>:set so+=2<CR>10<C-e>",
+            ":setg so=3<CR>:setl so+=2<CR>:setg so=7<CR>10<C-e>",
+            ":setg so=3<CR>:set so=5<CR>10<C-e>",
+            ":setg so=3<CR>:setl so=-5<CR>10<C-e>",
+            ":setl so+=2<CR>10<C-e>",
+            ":setg so=3<CR>:setl so-=1<CR>:setl so-=1<CR>10<C-e>",
+        ],
+    ));
+}
+
+/// The raw values the `:setlocal` queries show, as Vim 9.1 prints them.
+#[test]
+fn setlocal_queries_show_raw_local_values() {
+    assert_eq!(
+        msg("x\n", ":setg so=3<CR>:setl so+=2<CR>:setl so?<CR>"),
+        "  scrolloff=1"
+    );
+    assert_eq!(
+        msg("x\n", ":setg so=3<CR>:setl so-=1<CR>:setl so?<CR>"),
+        "  scrolloff=-2"
+    );
+    assert_eq!(
+        msg("x\n", ":setg so=3<CR>:set so=5<CR>:setl so?<CR>"),
+        "  scrolloff=-1"
+    );
+    assert_eq!(
+        msg("x\n", ":setg so=3<CR>:setl so-=1<CR>:set so?<CR>"),
+        "  scrolloff=3"
+    );
+    // An inverted unset boolean is -2: still unset, so `--` and the global.
+    assert_eq!(msg("x\n", ":setl ar!<CR>:setl ar?<CR>"), "--autoread");
+    assert_eq!(
+        msg("x\n", ":setg ar<CR>:setl ar!<CR>:setl ar?<CR>"),
+        "--autoread"
+    );
+    assert_eq!(
+        msg("x\n", ":setg ar<CR>:setl ar!<CR>:set ar?<CR>"),
+        "  autoread"
+    );
+    assert_eq!(
+        msg("x\n", ":setl ar!<CR>:setl ar!<CR>:setl ar?<CR>"),
+        "--autoread"
+    );
+    assert_eq!(msg("x\n", ":setl ar<CR>:setl ar?<CR>"), "  autoread");
+}

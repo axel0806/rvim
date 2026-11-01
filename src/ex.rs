@@ -1213,26 +1213,26 @@ impl Editor {
             return Ok(());
         }
         if is_bool {
-            let cur = matches!(self.option_base(i, target), Val::Bool(true));
+            // Vim inverts the raw value with `^ 1`, so an unset local value
+            // (-1) becomes -2, which is still a set (negative) value.
+            let cur = self.option_base(i, target);
             let new = match (prefix, rest) {
-                ("no", "") => false,
-                ("inv", "") | ("", "!") => !cur,
-                ("", "") => true,
+                ("no", "") => 0,
+                ("inv", "") | ("", "!") => cur ^ 1,
+                ("", "") => 1,
                 ("", "&" | "&vim") => match TABLE[i].default {
-                    Val::Bool(d) => d,
-                    _ => false,
+                    Val::Bool(d) => i64::from(d),
+                    _ => 0,
                 },
                 _ => return Err(bad()),
             };
-            self.write_option(i, target, Val::Bool(new));
+            self.write_option(i, target, new);
             return Ok(());
         }
         if !prefix.is_empty() {
             return Err(bad());
         }
-        let Val::Num(cur) = self.option_base(i, target) else {
-            return Err(bad());
-        };
+        let cur = self.option_base(i, target);
         let (op, val) = if let Some(v) = rest.strip_prefix("+=") {
             ('+', v)
         } else if let Some(v) = rest.strip_prefix("-=") {
@@ -1265,7 +1265,7 @@ impl Editor {
         let def_name = TABLE[i].name;
         if def_name == "tabstop" && n < 1 {
             // Vim falls back to the default instead of keeping the value.
-            self.write_option(i, target, Val::Num(8));
+            self.write_option(i, target, 8);
             return Err(format!("E487: Argument must be positive: {item}"));
         }
         // 'softtabstop' and 'scrolloff' may be negative (Vim accepts them);
@@ -1273,7 +1273,7 @@ impl Editor {
         if n < 0 && !matches!(def_name, "softtabstop" | "scrolloff") {
             return Err(format!("E487: Argument must be positive: {item}"));
         }
-        self.write_option(i, target, Val::Num(n));
+        self.write_option(i, target, n);
         Ok(())
     }
 
