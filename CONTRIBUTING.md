@@ -8,20 +8,21 @@ known differences. [CLAUDE.md](CLAUDE.md) has the rules for code.
 ## Build and run
 
 ```bash
-cargo build
-cargo run -- file.txt
+make debug                     # cargo build
+make run ARGS=file.txt         # cargo run -- file.txt
+make help                      # list the targets
 ```
 
-Needs a Rust toolchain that supports edition 2024 (the minimum version is not
-recorded yet). There is no Makefile yet; a planned one would wrap these
-commands (PLAN.md, "Repository and packaging"). On Windows with Git Bash, put
-`~/.cargo/bin` on `PATH` first.
+The `Makefile` wraps cargo; each target is a thin cargo command. Needs a Rust
+toolchain that supports edition 2024 (the minimum version is not recorded
+yet). On Windows with Git Bash, put `~/.cargo/bin` on `PATH` first. Plain
+`cargo` works too.
 
 ## Tests
 
 ```bash
-cargo test                                   # unit and differential tests
-RVIM_REQUIRE_VIM=1 cargo test                # when verifying: fail if Vim is missing
+make test                                    # cargo test: unit and differential tests
+make test-vim                                # RVIM_REQUIRE_VIM=1 cargo test: fail if Vim is missing
 RVIM_REFERENCE_VIM=/path/to/vim cargo test   # choose the reference binary
 cargo test --test compat_m1 -- motions       # one test
 ```
@@ -33,7 +34,9 @@ only prints a warning and the comparisons are skipped, so a green run proves
 nothing about them. Use `RVIM_REQUIRE_VIM=1` when you report a result.
 
 ```bash
-cargo clippy --all-targets && cargo fmt --check
+make lint      # cargo clippy --all-targets -- -D warnings, then cargo fmt --check
+make fmt       # cargo fmt, to fix formatting
+make check     # lint, then test-vim: run this before you open a PR
 ```
 
 ## Vim is the specification
@@ -126,8 +129,7 @@ This is not legal advice, and counsel review is still open. Read the
   status table, the "Left" lists, "Known differences" and the "Last updated"
   line (CLAUDE.md states this rule). Keep the README's "Where rvim differs
   from Vim" in step with "Known differences".
-- Before opening a PR, run `RVIM_REQUIRE_VIM=1 cargo test` and
-  `cargo clippy --all-targets && cargo fmt --check`.
+- Before opening a PR, run `make check` (`make lint` and `make test-vim`).
 
 ## Reporting security problems
 

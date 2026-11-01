@@ -44,6 +44,19 @@ cargo build --release     # target/release/rvim, or target\release\rvim.exe
 cargo install --path .    # or install into ~/.cargo/bin
 ```
 
+With `make` (GNU make or BSD make on Linux and macOS; on Windows, install a
+make such as mingw32-make, or use `make` from Git Bash if it is installed):
+
+```
+make build                # cargo build --release
+make install              # cargo install --path . --locked, into ~/.cargo/bin
+make help                 # list all targets
+```
+
+`make install` does not take `PREFIX` or `DESTDIR`; it installs with cargo, as
+the `cargo install` line above does. The `Makefile` also has `debug`, `test`,
+`test-vim`, `lint`, `fmt`, `check`, `run` and `clean` targets. See CONTRIBUTING.md.
+
 `cargo install --git https://github.com/axel0806/rvim` also works. There is no
 crates.io release yet.
 
@@ -112,7 +125,8 @@ rvim registers nothing with the system. There is no `make uninstall` yet.
 
 - GitHub Releases: available (above).
 - AUR package: planned, not available yet (PLAN.md, "Future goals").
-- Makefile with `install` and `uninstall` targets: planned, not present.
+- Makefile: present, with `build` and `install` (cargo wrappers, see above). No
+  `uninstall` target and no `PREFIX`/`DESTDIR` yet.
 - crates.io, Homebrew, Windows installer or winget package: not available yet.
 
 ## Licence

@@ -7,7 +7,7 @@ a real Vim by the differential harness in `tests/common/mod.rs`.
 
 ## Status: read this first
 
-Last updated 2026-11-01. **rvim is an alpha, roughly 25-30% of this plan.**
+Last updated 2026-11-01 (Makefile added). **rvim is an alpha, roughly 25-30% of this plan.**
 As of 2026-11-01 milestones 1-3 are done; 4 and 5 are partly done; 6 has the start menu only; 7-9 are plans.
 Released as `v0.1.0-alpha.1`, `v0.1.0-alpha.2` and `v0.1.0-alpha.3`. The next release is `v0.1.0-alpha.4`, not yet tagged. All tests pass against Vim 9.1 and clippy/fmt are
 clean at the last commit.
@@ -73,13 +73,13 @@ nothing listed here is built, and the milestone table above is unchanged.
 - Lua extension layer: see "Lua extensions" (milestone 9).
 - Neovim plugin compatibility, in stages: see "Neovim plugin compatibility"
   (milestone 9).
-- Makefile: still to do; see "Repository and packaging".
+- Makefile: done 2026-11-01 (`build`, `debug`, `test`, `test-vim`, `lint`, `fmt`, `check`, `run`, `install`, `clean`, `help`); see "Repository and packaging". `uninstall` and `release` are not in it.
 - Repository documents (`SECURITY.md`, `CONTRIBUTING.md`, `AGENTS.md`,
   `MAINTAIN.md`, `INSTALL.md`): written 2026-11-01, done; see "Repository and
   packaging".
 - Future goals (AUR packages, logo): see "Future goals".
 
-Still to do from this list: the Makefile, the AUR packages, the logo, and the
+Still to do from this list: the AUR packages, the logo, and the
 plugin, Lua and Neovim items.
 
 Agent experience (how the agent parts fit together, with the implementation
@@ -1804,32 +1804,33 @@ copies of Vim's test suite (`src/testdir`), and must stay that way.
 ## Repository and packaging
 
 Status on 2026-11-01: the five repository documents are written (`SECURITY.md`,
-`CONTRIBUTING.md`, `AGENTS.md`, `MAINTAIN.md`, `INSTALL.md`). The Makefile is
-still to do, and its table below is the plan; there is no `Makefile` yet.
-`.github/workflows/release.yml` is the only CI file. Where a document's text
-differs from the rows below, the document is the source of truth.
+`CONTRIBUTING.md`, `AGENTS.md`, `MAINTAIN.md`, `INSTALL.md`). The `Makefile` is
+present. `.github/workflows/release.yml` is the only CI file. Where a document's
+text differs from the rows below, the document is the source of truth.
 
-**Makefile (still to do).** Thin wrappers over cargo, so that the commands in CLAUDE.md and
-README.md have short names:
+**Makefile.** Thin wrappers over cargo, so that the commands in CLAUDE.md and
+CONTRIBUTING.md have short names. `make help` lists the targets. Implemented:
 
 | Target | Runs |
 |---|---|
-| `build` | `cargo build` |
-| `release` | `cargo build --release` |
+| `build` | `cargo build --release` |
+| `debug` | `cargo build` |
 | `test` | `cargo test` |
 | `test-vim` | `RVIM_REQUIRE_VIM=1 cargo test`, which fails when Vim is missing |
-| `lint` | `cargo clippy --all-targets` and `cargo fmt --check` |
+| `lint` | `cargo clippy --all-targets -- -D warnings` and `cargo fmt --check` |
 | `fmt` | `cargo fmt` |
-| `run` | `cargo run -- $(FILE)` |
+| `check` | `lint`, then `test-vim` (the pre-PR check) |
+| `run` | `cargo run -- $(ARGS)`, for example `make run ARGS=file.txt` |
+| `install` | `cargo install --path . --locked` (into `~/.cargo/bin`; no `PREFIX` or `DESTDIR`) |
 | `clean` | `cargo clean` |
-| `install` | copies `rvim` to `$(DESTDIR)$(PREFIX)/bin` (`PREFIX` defaults to `/usr/local`), and `LICENSE*` and `README.md` to `$(DESTDIR)$(PREFIX)/share/doc/rvim/` |
-| `uninstall` | removes what `install` copied |
-| `dist` | builds the release binary and writes an archive with the same files, named as `release.yml` names them (checked when written) |
+| `help` | the default target; lists the `##` comments |
 
-Every target is `.PHONY`, and a failing command fails the target. Windows
-users run `cargo` directly, or run `make` from Git Bash if GNU make is
-installed there (UNVERIFIED). `make` does not replace CI, and `release.yml`
-stays the release path.
+Every target is `.PHONY`, and a failing command fails the target. The file
+uses only POSIX make syntax, and was run with mingw32-make on Windows (Git
+Bash has no `make` by default). Not planned for the Makefile: a release target.
+Not yet: `uninstall`, `dist`, and `PREFIX`/`DESTDIR` for `install`, which the
+original plan included. `make` does not replace CI, and `release.yml` stays the
+release path.
 
 **Release notes.** `release.yml` passes `.github/release-notes.md` to
 `gh release create --notes-file`. For each release, edit that file, commit it
