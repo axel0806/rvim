@@ -41,6 +41,8 @@ restored by undo in `undo.rs`), and the scrolling commands with `scrolloff`
 **In progress** (as of 2026-11-01; maintained by the orchestrator, and an
 entry is removed when its branch lands on main):
 
+- Owner-only recovery files (mode 0600 on Unix, `src/recovery.rs`): being
+  built by a Haiku agent (branch name pending).
 - `:s` `\=` expressions (two agents, split from one): the expression module
   and `\=` in `:s` remain. Last open item of milestone 3.
 
