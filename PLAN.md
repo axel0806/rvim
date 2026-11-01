@@ -7,7 +7,7 @@ a real Vim by the differential harness in `tests/common/mod.rs`.
 
 ## Status: read this first
 
-Last updated 2026-11-01 (Document/Window/Editor split step 1 of milestone 4; CI first ran on GitHub; Linux builds Vim 9.1.1914 from source, and all three OS jobs require Vim; cell-level diff redraw in `redraw.rs`; kitty keyboard protocol, with `RVIM_NO_KITTY=1` to turn it off; SIGHUP/SIGTERM recovery on Unix, milestone 4; Makefile packaging targets `install` with `PREFIX`/`DESTDIR`, `uninstall` and `dist`). **rvim is an alpha, roughly 25-30% of this plan.**
+Last updated 2026-11-01 (Document/Window/Editor split step 1 of milestone 4; CI first ran on GitHub; Linux builds Vim 9.1.1914 from source, and all three OS jobs require Vim; cell-level diff redraw in `redraw.rs`, with its escape sequences tested in `main.rs`; kitty keyboard protocol, with `RVIM_NO_KITTY=1` to turn it off and no support query when `TERM` is unset, empty or `dumb`; SIGHUP/SIGTERM recovery on Unix, milestone 4; Makefile packaging targets `install` with `PREFIX`/`DESTDIR`, `uninstall` and `dist`). **rvim is an alpha, roughly 25-30% of this plan.**
 As of 2026-11-01 milestones 1-3 are done; 4 and 5 are partly done; 6 has the start menu only; 7-9 are plans.
 Released as `v0.1.0-alpha.1`, `v0.1.0-alpha.2` and `v0.1.0-alpha.3`. The next release is `v0.1.0-alpha.4`, not yet tagged. All tests pass against Vim 9.1 and clippy/fmt are
 clean at the last commit.
@@ -364,8 +364,11 @@ enum Event { Key(Key), Paste(String), Resize(w, h), FocusGained, FocusLost,
   `DISAMBIGUATE_ESCAPE_CODES` (only that flag; no release or repeat events),
   so `<C-i>` vs `<Tab>`, `<C-m>` vs `<CR>` and `<Esc>` vs Alt-key are told
   apart on the wire. Done in `main.rs`: `supports_keyboard_enhancement` is
-  checked first, the flag is popped on every exit path (`restore_terminal`,
-  which the panic hook also calls), and `RVIM_NO_KITTY=1` turns it off. The
+  checked first, but not when `TERM` is unset, empty or `dumb` (the query
+  blocks up to 2 s on a terminal that answers neither query; `kitty_wanted`
+  decides this, with `RVIM_NO_KITTY` folded in), the flag is popped on every
+  exit path (`restore_terminal`, which the panic hook also calls), and
+  `RVIM_NO_KITTY=1` turns it off. The
   key mapping gives the same keys as the legacy bytes (`<C-i>` is `<Tab>`,
   as in Vim). Unit tests in `main.rs` cover the table; the protocol itself
   is a manual checklist item (see "Known differences").
@@ -2002,8 +2005,14 @@ plan, kept for the record; the files are the source of truth.
 - `:r !cmd` (insert the output of a command) is not implemented; `:r file`
   is. `:r` takes the file's lines as `:e` decodes them (CRLF removed).
 - The frame carries highlight groups per cell (`view::Hl`); only Visual and
-  the `~`/`@` filler use them so far. The terminal redraws only rows that
-  changed. Still missing: hlsearch, incsearch, matching parens, syntax.
+  the `~`/`@` filler use them so far. The terminal is redrawn cell by cell:
+  `redraw::diff` returns the changed runs as `DrawOp`s, and `main.rs`
+  (`write_ops`) turns them into escape sequences. The `redraw.rs` tests
+  check the ops; the `main.rs` tests check the bytes written to a `Vec<u8>`
+  (a style reset before unstyled text, the default style at the end of a
+  draw, clear-to-end after the move and the default style, and 1-based
+  `MoveTo`). Still missing: hlsearch, incsearch, matching parens, syntax.
+  Not tested: how a real terminal renders these sequences (manual check).
 - A panic, SIGHUP or SIGTERM writes unsaved text to a recovery file
   (`recovery.rs`, `signals.rs`); there are no swap files, so Vim's swap-file
   behaviour on those signals is not matched. Not covered by the recovery
@@ -2038,7 +2047,8 @@ plan, kept for the record; the files are the source of truth.
   (see "Repository and packaging").
 - Alt, F-keys, Insert and Shift-Tab work (milestone 4). The kitty keyboard
   protocol is on where the terminal supports it (`RVIM_NO_KITTY=1` turns it
-  off). Not tested by `cargo test`, which cannot run a real terminal: the
+  off; with `TERM` unset, empty or `dumb` it is not queried at all, so the
+  start does not block). Not tested by `cargo test`, which cannot run a real terminal: the
   manual checklist is to run `cargo run` in kitty, WezTerm and Ghostty (on
   macOS or Linux; crossterm reports no support on Windows, so the protocol is
   off there) and check that `<C-i>` and `<Tab>` match the same way in Vim's

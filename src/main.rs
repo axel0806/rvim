@@ -84,13 +84,22 @@ fn main() -> io::Result<()> {
     }
 }
 
-/// Whether the kitty keyboard protocol may be used. `RVIM_NO_KITTY` set to a
-/// non-empty value other than `0` turns it off.
-fn kitty_wanted(opt_out: Option<std::ffi::OsString>) -> bool {
+/// The `RVIM_NO_KITTY` rule: unset, empty or `0` leaves the protocol allowed;
+/// any other value turns it off.
+fn no_kitty_env_allows(opt_out: Option<std::ffi::OsString>) -> bool {
     match opt_out {
         None => true,
         Some(v) => v.is_empty() || v == "0",
     }
+}
+
+/// Whether the kitty keyboard query may be made. The query blocks for up to
+/// 2 s on a terminal that answers neither it nor the device query, so it is
+/// skipped when `TERM` is unset, empty or `dumb`, and when `RVIM_NO_KITTY`
+/// turns the protocol off (see [`no_kitty_env_allows`]).
+fn kitty_wanted(term: Option<&str>, no_kitty: Option<&str>) -> bool {
+    let term_ok = matches!(term, Some(t) if !t.is_empty() && t != "dumb");
+    term_ok && no_kitty_env_allows(no_kitty.map(std::ffi::OsString::from))
 }
 
 /// Asks the terminal for the kitty keyboard protocol and pushes
@@ -101,7 +110,9 @@ fn kitty_wanted(opt_out: Option<std::ffi::OsString>) -> bool {
 /// Call after raw mode is on and before the input thread starts, because the
 /// support query reads the terminal's replies.
 fn enable_kitty_keys() {
-    if !kitty_wanted(std::env::var_os("RVIM_NO_KITTY")) {
+    let term = std::env::var_os("TERM").map(|v| v.to_string_lossy().into_owned());
+    let no_kitty = std::env::var_os("RVIM_NO_KITTY").map(|v| v.to_string_lossy().into_owned());
+    if !kitty_wanted(term.as_deref(), no_kitty.as_deref()) {
         return;
     }
     if !matches!(terminal::supports_keyboard_enhancement(), Ok(true)) {
@@ -261,21 +272,15 @@ fn set_style(out: &mut impl Write, style: Style) -> io::Result<()> {
     Ok(())
 }
 
-fn draw(out: &mut impl Write, ed: &mut Editor, screen: &mut Screen) -> io::Result<()> {
-    let (w, h) = terminal::size()?;
-    if screen.size != (w, h) {
-        screen.size = (w, h);
-        screen.invalidate();
-    }
-    // The editor keeps the cursor in view for this size (scrolling uses it).
-    ed.set_screen_size(w as usize, h as usize);
-    let frame = view::frame(ed);
-    let next = Grid::from_frame(&frame, ed.mode() == Mode::Insert);
-    queue!(out, Hide)?;
+/// Writes `ops` as terminal commands, in order. Each op moves the cursor to
+/// its cell first. The style is set only when it changes from the previous
+/// op, and the terminal is left in the default style at the end, so no colour
+/// or attribute bleeds into text drawn later.
+fn write_ops(out: &mut impl Write, ops: &[DrawOp]) -> io::Result<()> {
     // The style the terminal is left in by the last write; `None` until the
     // first write of this draw.
     let mut shown: Option<Style> = None;
-    for op in redraw::diff(screen.prev.as_ref(), &next) {
+    for op in ops {
         match op {
             DrawOp::Text {
                 row,
@@ -283,15 +288,15 @@ fn draw(out: &mut impl Write, ed: &mut Editor, screen: &mut Screen) -> io::Resul
                 text,
                 style,
             } => {
-                queue!(out, MoveTo(col as u16, row as u16))?;
-                if shown != Some(style) {
-                    set_style(out, style)?;
-                    shown = Some(style);
+                queue!(out, MoveTo(*col as u16, *row as u16))?;
+                if shown != Some(*style) {
+                    set_style(out, *style)?;
+                    shown = Some(*style);
                 }
                 queue!(out, Print(text))?;
             }
             DrawOp::ClearToEnd { row, col } => {
-                queue!(out, MoveTo(col as u16, row as u16))?;
+                queue!(out, MoveTo(*col as u16, *row as u16))?;
                 if shown != Some(Style::default()) {
                     set_style(out, Style::default())?;
                     shown = Some(Style::default());
@@ -303,6 +308,22 @@ fn draw(out: &mut impl Write, ed: &mut Editor, screen: &mut Screen) -> io::Resul
     if matches!(shown, Some(s) if s != Style::default()) {
         set_style(out, Style::default())?;
     }
+    Ok(())
+}
+
+fn draw(out: &mut impl Write, ed: &mut Editor, screen: &mut Screen) -> io::Result<()> {
+    let (w, h) = terminal::size()?;
+    if screen.size != (w, h) {
+        screen.size = (w, h);
+        screen.invalidate();
+    }
+    // The editor keeps the cursor in view for this size (scrolling uses it).
+    ed.set_screen_size(w as usize, h as usize);
+    let frame = view::frame(ed);
+    let next = Grid::from_frame(&frame, ed.mode() == Mode::Insert);
+    queue!(out, Hide)?;
+    let ops = redraw::diff(screen.prev.as_ref(), &next);
+    write_ops(out, &ops)?;
     screen.prev = Some(next);
     let shape = match ed.mode() {
         Mode::Insert => SetCursorStyle::SteadyBar,
@@ -477,11 +498,121 @@ mod tests {
     #[test]
     fn kitty_opt_out_env_var() {
         use std::ffi::OsString;
-        assert!(kitty_wanted(None));
-        assert!(!kitty_wanted(Some(OsString::from("1"))));
-        assert!(!kitty_wanted(Some(OsString::from("yes"))));
-        assert!(kitty_wanted(Some(OsString::from("0"))));
-        assert!(kitty_wanted(Some(OsString::new())));
+        assert!(no_kitty_env_allows(None));
+        assert!(!no_kitty_env_allows(Some(OsString::from("1"))));
+        assert!(!no_kitty_env_allows(Some(OsString::from("yes"))));
+        assert!(no_kitty_env_allows(Some(OsString::from("0"))));
+        assert!(no_kitty_env_allows(Some(OsString::new())));
+    }
+
+    #[test]
+    fn kitty_wanted_checks_term_and_opt_out() {
+        // TERM unset, empty or dumb: the query is skipped (it would block).
+        assert!(!kitty_wanted(None, None));
+        assert!(!kitty_wanted(Some(""), None));
+        assert!(!kitty_wanted(Some("dumb"), None));
+        assert!(!kitty_wanted(None, Some("1")));
+        // A real terminal: the query runs unless RVIM_NO_KITTY turns it off.
+        assert!(kitty_wanted(Some("xterm-256color"), None));
+        assert!(kitty_wanted(Some("xterm-kitty"), None));
+        assert!(kitty_wanted(Some("xterm-256color"), Some("0")));
+        assert!(kitty_wanted(Some("xterm-256color"), Some("")));
+        assert!(!kitty_wanted(Some("xterm-256color"), Some("1")));
+        assert!(!kitty_wanted(Some("xterm-kitty"), Some("yes")));
+        // Both rules hold together: a dumb terminal stays off whatever the flag.
+        assert!(!kitty_wanted(Some("dumb"), Some("0")));
+    }
+
+    /// The bytes `write_ops` writes for `ops`.
+    fn ops_bytes(ops: &[DrawOp]) -> String {
+        let mut out = Vec::new();
+        write_ops(&mut out, ops).unwrap();
+        String::from_utf8(out).unwrap()
+    }
+
+    fn visual_op(row: usize, col: usize, text: &str) -> DrawOp {
+        DrawOp::Text {
+            row,
+            col,
+            text: text.into(),
+            style: Style {
+                hl: Hl::Visual,
+                ..Style::default()
+            },
+        }
+    }
+
+    fn plain_op(row: usize, col: usize, text: &str) -> DrawOp {
+        DrawOp::Text {
+            row,
+            col,
+            text: text.into(),
+            style: Style::default(),
+        }
+    }
+
+    /// What `set_style(Style::default())` writes: the attribute reset and the
+    /// colour reset, as crossterm encodes them. Every change to the default
+    /// style starts with it. Taken from `set_style` itself, so the test does
+    /// not depend on how a given crossterm version spells the reset.
+    fn reset_bytes() -> String {
+        let mut out = Vec::new();
+        set_style(&mut out, Style::default()).unwrap();
+        String::from_utf8(out).unwrap()
+    }
+
+    #[test]
+    fn style_is_reset_before_unstyled_text() {
+        let reset = reset_bytes();
+        // Reverse video, then the default style. The reset comes before the
+        // plain text, so the reverse does not bleed into it.
+        let bytes = ops_bytes(&[visual_op(0, 0, "X"), plain_op(0, 1, "y")]);
+        assert_eq!(bytes, format!("\x1b[1;1H{reset}\x1b[7mX\x1b[1;2H{reset}y"));
+        // The reverse attribute is set only once, and the plain text follows
+        // the reset with no attribute left on.
+        let after_x = &bytes[bytes.find('X').unwrap()..];
+        let reset_at = after_x.find(reset.as_str()).unwrap();
+        assert!(!after_x[..reset_at].contains("\x1b[7m"));
+    }
+
+    #[test]
+    fn final_state_is_default_style() {
+        let reset = reset_bytes();
+        // A styled op last: the output ends with the reset back to default.
+        let bytes = ops_bytes(&[plain_op(0, 0, "a"), visual_op(1, 0, "b")]);
+        assert_eq!(
+            bytes,
+            format!("\x1b[1;1H{reset}a\x1b[2;1H{reset}\x1b[7mb{reset}")
+        );
+        // Nothing styled: the default style is set once, and not reset after.
+        assert_eq!(
+            ops_bytes(&[plain_op(0, 0, "a")]),
+            format!("\x1b[1;1H{reset}a")
+        );
+        // No ops, no output at all.
+        assert!(ops_bytes(&[]).is_empty());
+    }
+
+    #[test]
+    fn clear_to_end_moves_then_sets_default_style_then_clears() {
+        let reset = reset_bytes();
+        // After a styled run, the clear must not inherit its style: it moves
+        // to the column, resets the style, then erases to the end of line.
+        let bytes = ops_bytes(&[visual_op(0, 0, "X"), DrawOp::ClearToEnd { row: 0, col: 3 }]);
+        assert_eq!(
+            bytes,
+            format!("\x1b[1;1H{reset}\x1b[7mX\x1b[1;4H{reset}\x1b[K")
+        );
+    }
+
+    #[test]
+    fn move_to_is_one_based_row_then_column() {
+        let reset = reset_bytes();
+        // Zero-based row 1, column 4 is ESC [ 2 ; 5 H.
+        assert_eq!(
+            ops_bytes(&[plain_op(1, 4, "z")]),
+            format!("\x1b[2;5H{reset}z")
+        );
     }
 
     #[test]
