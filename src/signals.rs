@@ -35,7 +35,6 @@ pub fn name(sig: i32) -> String {
 pub fn spawn(tx: Sender<Event>) -> io::Result<()> {
     use signal_hook::consts::{SIGHUP, SIGTERM};
     use signal_hook::iterator::Signals;
-    debug_assert!(HANGUP == SIGHUP && TERM == SIGTERM);
     let mut signals = Signals::new([SIGHUP, SIGTERM])?;
     std::thread::spawn(move || {
         for sig in signals.forever() {
@@ -76,6 +75,8 @@ mod tests {
     fn sighup_and_sigterm_reach_the_channel() {
         use std::sync::mpsc;
         use std::time::Duration;
+        assert_eq!(HANGUP, signal_hook::consts::SIGHUP);
+        assert_eq!(TERM, signal_hook::consts::SIGTERM);
         let (tx, rx) = mpsc::channel();
         spawn(tx).unwrap();
         // The handler is registered before `raise`, so the process survives.
