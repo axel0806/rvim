@@ -40,6 +40,7 @@ restored by undo in `undo.rs`), and the scrolling commands with `scrolloff`
 entry is removed when its branch lands on main):
 
 - Indent options (`tabstop`, `softtabstop`, `smarttab`, `shiftround`): being built by a Haiku agent (branch name pending).
+- Licensing (Apache-2.0 for new code, Vim license for Vim-derived files): being built by a Haiku agent (branch name pending); the owner approved this on 2026-11-01.
 - `:s` `\=` expressions and scrolling in the `c` prompt (`<C-e>`, `<C-y>`): being built by a Haiku agent (branch name pending); last open items of milestone 3.
 
 **Suggested order for what is left:** (1) Document/Window split, (2) splits +
