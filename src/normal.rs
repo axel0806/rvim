@@ -1404,6 +1404,11 @@ impl Editor {
 
     /// A key in Normal or Visual mode.
     pub(crate) fn normal_key(&mut self, key: Key) {
+        // The agent leader keys (`\a`, `\al`, `\ac`) with the opt-in only; a
+        // key that is not one of them is handled as before.
+        if self.pending.is_empty() && self.agent_leader_key(key) {
+            return;
+        }
         self.pending.push(key);
         self.run_pending(key);
     }
@@ -1424,6 +1429,12 @@ impl Editor {
                 }
             }
             Parse::Done(cmd) => {
+                // The agent log cannot be changed (agent_turn.rs): Vim's E21.
+                if self.doc().nomodifiable && Self::is_change(&cmd.body) {
+                    self.pending.clear();
+                    self.win_mut().keep_curswant = true;
+                    return self.error("E21: Cannot make changes, 'modifiable' is off");
+                }
                 self.pending.clear();
                 self.cmd_search = cmd.search.clone();
                 if self.is_visual() {

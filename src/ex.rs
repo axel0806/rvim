@@ -207,8 +207,11 @@ impl Editor {
             .take_while(|c| c.is_ascii_alphabetic())
             .collect();
         let name_end = lead + end + name.len();
-        let takes_bar =
-            abbrev(&name, "global", 1) || abbrev(&name, "vglobal", 1) || abbrev(&name, "normal", 4);
+        // `:Agent` takes the rest of the line as the prompt, `|` included.
+        let takes_bar = abbrev(&name, "global", 1)
+            || abbrev(&name, "vglobal", 1)
+            || abbrev(&name, "normal", 4)
+            || name == "Agent";
         if takes_bar {
             return (cmd.to_string(), None);
         }
@@ -318,6 +321,9 @@ impl Editor {
         };
         let arg_trim = p.arg.trim_end();
         let n = p.name;
+        if let Some(msg) = Self::log_refusal(n).filter(|_| self.doc().nomodifiable) {
+            return Err(msg.into());
+        }
         // Commands that do not accept line 0 use line 1 instead.
         let mut range = range;
         if !(abbrev(n, "put", 2) || abbrev(n, "read", 1)) {
@@ -359,6 +365,18 @@ impl Editor {
             self.agent_disconnect();
         } else if n == "AgentCancel" {
             self.agent_cancel();
+        } else if n == "Agent" {
+            // rvim only: one prompt turn to the connected agent (agent_turn.rs).
+            // The rest of the line is the prompt, as typed.
+            self.agent_command(p.arg);
+        } else if n == "AgentLog" {
+            // rvim only: `:AgentLog` shows the agent log in the window,
+            // `:AgentLog!` goes back to the document it replaced.
+            if p.bang {
+                self.agent_log_back();
+            } else {
+                self.agent_log_show();
+            }
         } else if n == "ConfigWarnings" {
             // rvim only (capital letter, as CLAUDE.md asks): the problems
             // the config file had at startup.

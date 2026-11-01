@@ -59,6 +59,10 @@ pub(crate) struct Document {
     /// The disk state the conflict prompt's `k` answer was given for. The
     /// prompt does not come back for this state (conflict.rs).
     pub(crate) seen: Option<DiskState>,
+    /// The text cannot be changed by the user: the agent log (agent_turn.rs).
+    /// Changes typed in it are refused, as Vim refuses them with 'modifiable'
+    /// off. Output the editor writes to it is not a user change.
+    pub(crate) nomodifiable: bool,
 }
 
 impl Document {
@@ -83,6 +87,7 @@ impl Document {
             warned: None,
             baseline: None,
             seen: None,
+            nomodifiable: false,
         }
     }
 

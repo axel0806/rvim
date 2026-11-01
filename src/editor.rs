@@ -344,6 +344,13 @@ impl Editor {
         &mut self.documents[id.0]
     }
 
+    /// A new document for `buf`, with the global option values (the agent
+    /// log, agent_turn.rs). Documents are not removed yet.
+    pub(crate) fn new_document(&mut self, buf: crate::buffer::Buffer) -> DocId {
+        self.documents.push(Document::new(buf, &self.opts));
+        DocId(self.documents.len() - 1)
+    }
+
     /// Gives every window the text area of the screen. There is one window,
     /// which fills the screen. Splits (milestone 5) will divide it.
     pub(crate) fn fit_windows(&mut self) {

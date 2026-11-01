@@ -1341,6 +1341,14 @@ impl Conn {
                     message: format!("invalid session/prompt response: {e}"),
                 })),
             },
+            // Auth required on a prompt is the same state as on session/new
+            // (research M2): the agent needs a login before it can answer.
+            Err(e) if e.code == AUTH_REQUIRED => {
+                self.state = ConnState::NeedsAuth;
+                out.push(OutAction::Notice(Notice::AuthRequired {
+                    methods: self.auth_methods.clone(),
+                }));
+            }
             Err(e) => out.push(OutAction::Notice(Notice::RequestFailed {
                 turn: Some(turn),
                 message: e.message,

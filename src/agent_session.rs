@@ -20,7 +20,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use crate::Editor;
-use crate::acp::{Conn, InEvent, Notice, OutAction};
+use crate::acp::{Conn, ConnState, InEvent, Notice, OutAction};
 use crate::agent_approval::{Approvals, FILE_NAME};
 use crate::agent_conn::{AgentEvent, ConnCmd};
 use crate::agent_detect::{AGENTS, AgentSpec};
@@ -70,6 +70,8 @@ pub struct AgentState {
     /// Requests for the worker, taken by `take_agent_conn_commands`.
     pub outbox: Vec<ConnCmd>,
     pub next_gen: u64,
+    /// Prompt turns, the agent log and the leader keys (`agent_turn.rs`).
+    pub(crate) turn: crate::agent_turn::TurnState,
 }
 
 fn spec_of(id: &str) -> Option<&'static AgentSpec> {
@@ -105,9 +107,12 @@ impl Editor {
     /// The moment the agent layer next needs a timer (handshake timeout or
     /// retry), for `next_deadline`.
     pub(crate) fn agent_deadline(&self) -> Option<Instant> {
-        let link = self.agent.link.as_ref()?;
+        let leader = self.agent_leader_deadline();
+        let Some(link) = self.agent.link.as_ref() else {
+            return leader;
+        };
         let retry = link.retry_at.filter(|_| link.life == Life::Disconnected);
-        [retry, link.conn.next_deadline()]
+        [retry, link.conn.next_deadline(), leader]
             .into_iter()
             .flatten()
             .min()
@@ -128,7 +133,14 @@ impl Editor {
         if let Some(link) = &self.agent.link {
             let state = match link.life {
                 Life::Connecting => " connecting".to_owned(),
-                Life::Idle => String::new(),
+                // A turn shows as working; a queued permission request as
+                // PERMISSION n (answering it is step 6).
+                Life::Idle => match (link.conn.permissions_waiting(), link.conn.state()) {
+                    (n, _) if n > 0 => format!(" PERMISSION {n}"),
+                    (_, ConnState::Prompting { .. }) => " working".to_owned(),
+                    (_, ConnState::Cancelling { .. }) => " cancelling".to_owned(),
+                    _ => String::new(),
+                },
                 Life::Disconnected => format!(" retry {}/{}", link.retries, RETRY_DELAYS.len()),
                 Life::Error => " error".to_owned(),
             };
@@ -233,6 +245,7 @@ impl Editor {
             }
             Key::Char('n') | Key::Esc | Key::Ctrl('c') => {
                 self.agent.consent = None;
+                self.agent.turn.pending = None;
                 self.info("not connected");
             }
             _ => {}
@@ -278,6 +291,7 @@ impl Editor {
     /// rvim started. The approval stays.
     pub fn agent_disconnect(&mut self) {
         self.agent.consent = None;
+        self.agent.turn.pending = None;
         match self.agent.link.take() {
             Some(link) => {
                 self.agent.outbox.push(ConnCmd::Stop {
@@ -306,6 +320,7 @@ impl Editor {
     /// The clock moved: handshake timeouts and retries. Called by the event
     /// loop on `Event::Timer`; tests pass the fake time.
     pub fn agent_timer(&mut self, now: Instant) {
+        self.agent_leader_timer(now);
         let Some(link) = self.agent.link.as_mut() else {
             return;
         };
@@ -346,6 +361,7 @@ impl Editor {
                 };
                 link.life = Life::Error;
                 let text = format!("{}-acp: could not start: {reason}", link.id);
+                self.agent.turn.pending = None;
                 self.error(text);
             }
             AgentEvent::Bytes(bytes) => {
@@ -381,19 +397,22 @@ impl Editor {
     /// Turns the connection's actions into worker requests and messages.
     /// Actions that belong to later steps (updates, the log, permission
     /// prompts, file calls) are not shown yet.
-    fn agent_apply(&mut self, generation: u64, actions: Vec<OutAction>, now: Instant) {
+    pub(crate) fn agent_apply(&mut self, generation: u64, actions: Vec<OutAction>, now: Instant) {
         for action in actions {
             match action {
                 OutAction::Send(bytes) => {
                     self.agent.outbox.push(ConnCmd::Send { generation, bytes })
                 }
-                OutAction::Notice(notice) => self.agent_notice(generation, notice, now),
+                OutAction::Notice(notice) => {
+                    self.agent_notice(generation, notice.clone(), now);
+                    self.turn_notice(generation, &notice);
+                }
+                OutAction::Update(update) => self.turn_update(update),
+                OutAction::AskPermission { request, queued } => {
+                    self.turn_permission(&request, queued)
+                }
                 OutAction::Close => self.agent.outbox.push(ConnCmd::Stop { generation }),
-                OutAction::Log(_)
-                | OutAction::Update(_)
-                | OutAction::AskPermission { .. }
-                | OutAction::ServeRead { .. }
-                | OutAction::ServeWrite { .. } => {}
+                OutAction::Log(_) | OutAction::ServeRead { .. } | OutAction::ServeWrite { .. } => {}
             }
         }
     }

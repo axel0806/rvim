@@ -8,6 +8,7 @@ pub mod agent_conn;
 pub mod agent_detect;
 pub mod agent_scan;
 pub mod agent_session;
+mod agent_turn;
 pub mod buffer;
 pub mod cli;
 mod cmdline;
