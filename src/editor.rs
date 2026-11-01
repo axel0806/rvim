@@ -159,9 +159,6 @@ pub struct Editor {
     /// The 'scroll' option for CTRL-D and CTRL-U; 0 means half the window.
     pub(crate) scroll_opt: usize,
     depth: usize,
-    /// The `'[` and `']` marks.
-    pub(crate) op_start: Pos,
-    pub(crate) op_end: Pos,
     pub(crate) cmdline: String,
     pub(crate) cmdpos: usize,
     /// Register being recorded into (`q{reg}`), and the keys typed so far.
@@ -241,8 +238,6 @@ impl Editor {
             screen_rows: 24,
             scroll_opt: 0,
             depth: 0,
-            op_start: Pos::default(),
-            op_end: Pos::default(),
             cmdline: String::new(),
             cmdpos: 0,
             recording: None,

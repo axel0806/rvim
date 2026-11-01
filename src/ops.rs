@@ -426,8 +426,8 @@ impl Editor {
                 self.info(format!("{what}{n} lines yanked{into}"));
             }
         }
-        self.op_start = oa.start;
-        self.op_end = oa.end;
+        self.doc_mut().op_start = oa.start;
+        self.doc_mut().op_end = oa.end;
         true
     }
 
@@ -564,8 +564,8 @@ impl Editor {
             self.do_join(2, false, false);
         }
         self.msgmore(self.doc().buf.line_count() as i64 - old_count);
-        self.op_start = oa.start;
-        self.op_end = oa.start;
+        self.doc_mut().op_start = oa.start;
+        self.doc_mut().op_end = oa.start;
         true
     }
 
@@ -836,8 +836,8 @@ impl Editor {
             let times = if amount == 1 { "time" } else { "times" };
             self.info(format!("{} lines {op}ed {amount} {times}", oa.line_count));
         }
-        self.op_start = oa.start;
-        self.op_end = Pos::new(
+        self.doc_mut().op_start = oa.start;
+        self.doc_mut().op_end = Pos::new(
             oa.end.line,
             self.doc().buf.line_len(oa.end.line).saturating_sub(1),
         );
@@ -987,8 +987,8 @@ impl Editor {
                 }
             }
         }
-        self.op_start = oa.start;
-        self.op_end = oa.end;
+        self.doc_mut().op_start = oa.start;
+        self.doc_mut().op_end = oa.end;
         if oa.line_count > 2 {
             self.info(format!("{} lines changed", oa.line_count));
         }
@@ -1044,8 +1044,8 @@ impl Editor {
         }
         self.win_mut().cursor = oa.start;
         self.check_cursor_col();
-        self.op_start = oa.start;
-        self.op_end = oa.end;
+        self.doc_mut().op_start = oa.start;
+        self.doc_mut().op_end = oa.end;
     }
 
     // ---- block insert / append ------------------------------------------
@@ -1214,7 +1214,7 @@ impl Editor {
         for (t, sp) in spaces.iter_mut().enumerate() {
             let mut curr = self.line_vec(first + t);
             if t == 0 {
-                self.op_start = Pos::new(first, curr.len());
+                self.doc_mut().op_start = Pos::new(first, curr.len());
             }
             if insert_space && t > 0 {
                 let skip = curr.iter().take_while(|&&c| c == ' ' || c == '\t').count();
@@ -1254,7 +1254,7 @@ impl Editor {
             new.extend(p);
         }
         self.set_line_vec(first, &new);
-        self.op_end = Pos::new(first, sumsize);
+        self.doc_mut().op_end = Pos::new(first, sumsize);
         // Marks on the joined lines move to the joined line, with the column
         // mapping of Vim's do_join(): `amount` shifts columns after the
         // inserted spaces, and columns inside the removed white space go to
@@ -1306,8 +1306,8 @@ impl Editor {
         flags: PutFlags,
         visual_block_end: Option<usize>,
     ) {
-        self.op_start = self.win().cursor;
-        self.op_end = self.win().cursor;
+        self.doc_mut().op_start = self.win_mut().cursor;
+        self.doc_mut().op_end = self.win_mut().cursor;
         self.regs.select(reg, false);
         let Some(r) = self.regs.current().cloned().filter(|r| !r.lines.is_empty()) else {
             let name = reg.unwrap_or('"');
@@ -1342,8 +1342,8 @@ impl Editor {
                 self.win_mut().cursor = lv.end;
                 fwd = true;
             }
-            self.op_start = self.win().cursor;
-            self.op_end = self.win().cursor;
+            self.doc_mut().op_start = self.win_mut().cursor;
+            self.doc_mut().op_end = self.win_mut().cursor;
         }
         if flags.line {
             ytype = RegType::Line;
@@ -1442,13 +1442,13 @@ impl Editor {
                     self.win_mut().cursor.col += startspaces;
                 }
             }
-            self.op_start = Pos::new(lnum, self.win().cursor.col);
-            self.op_end = Pos::new(
+            self.doc_mut().op_start = Pos::new(lnum, self.win_mut().cursor.col);
+            self.doc_mut().op_end = Pos::new(
                 self.win().cursor.line - 1,
                 (textcol + totlen).saturating_sub(1),
             );
             if flags.cursend {
-                self.win_mut().cursor = self.op_end;
+                self.win_mut().cursor = self.doc().op_end;
                 self.win_mut().cursor.col += 1;
                 let len = self.doc().buf.line_len(self.win().cursor.line);
                 self.win_mut().cursor.col = self.win_mut().cursor.col.min(len);
@@ -1463,10 +1463,10 @@ impl Editor {
                     col += 1;
                     if yanklen > 0 {
                         self.win_mut().cursor.col += 1;
-                        self.op_end.col += 1;
+                        self.doc_mut().op_end.col += 1;
                     }
                 }
-                self.op_start = self.win().cursor;
+                self.doc_mut().op_start = self.win_mut().cursor;
             } else if !fwd {
                 after -= 1;
             }
@@ -1509,7 +1509,7 @@ impl Editor {
                         }
                     }
                 }
-                self.op_end = self.win().cursor;
+                self.doc_mut().op_end = self.win_mut().cursor;
                 if totlen > 0 && flags.cursend {
                     self.win_mut().cursor.col += 1;
                 }
@@ -1552,14 +1552,14 @@ impl Editor {
                     }
                 }
                 if ytype == RegType::Line {
-                    self.op_start.col = 0;
+                    self.doc_mut().op_start.col = 0;
                     if fwd {
-                        self.op_start.line += 1;
+                        self.doc_mut().op_start.line += 1;
                     }
                 }
                 let end_l = new_lnum.max(0) as usize;
                 let lastlen = y[y_size - 1].len();
-                self.op_end = Pos::new(end_l, lastlen.saturating_sub(1));
+                self.doc_mut().op_end = Pos::new(end_l, lastlen.saturating_sub(1));
                 if flags.cursend {
                     if ytype == RegType::Line {
                         let l = lnum_i.max(0) as usize;
@@ -1573,9 +1573,9 @@ impl Editor {
                         );
                     } else {
                         self.win_mut().cursor = Pos::new(end_l, lastlen);
-                        self.op_end = self.win().cursor;
+                        self.doc_mut().op_end = self.win_mut().cursor;
                         if lastlen > 1 {
-                            self.op_end.col = lastlen - 1;
+                            self.doc_mut().op_end.col = lastlen - 1;
                         }
                     }
                 } else if ytype == RegType::Line {
@@ -1643,8 +1643,8 @@ impl Editor {
             }
         }
         let mut dir_before = true;
-        if (vmode != VisualMode::Line && self.win().cursor.col < self.op_start.col)
-            || (vmode == VisualMode::Line && self.win().cursor.line < self.op_start.line)
+        if (vmode != VisualMode::Line && self.win().cursor.col < self.doc().op_start.col)
+            || (vmode == VisualMode::Line && self.win().cursor.line < self.doc().op_start.line)
         {
             dir_before = false;
         }
@@ -1658,8 +1658,8 @@ impl Editor {
             self.regs.set(regname, r2);
         }
         self.doc_mut().last_visual = Some(LastVisual {
-            start: self.op_start,
-            end: self.op_end,
+            start: self.doc().op_start,
+            end: self.doc().op_end,
             mode: vmode,
             curswant: self.win().curswant,
         });

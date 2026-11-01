@@ -1714,9 +1714,9 @@ impl Editor {
         self.doc_mut()
             .buf
             .set_line(line, &chars.iter().collect::<String>());
-        self.op_start = self.win().cursor;
+        self.doc_mut().op_start = self.win_mut().cursor;
         self.win_mut().cursor.col = col + count1 - 1;
-        self.op_end = self.win().cursor;
+        self.doc_mut().op_end = self.win_mut().cursor;
     }
 
     /// `~` in Normal mode ('notildeop', Vim's `n_swapchar`).
@@ -1736,8 +1736,8 @@ impl Editor {
                 break;
             }
         }
-        self.op_start = start;
-        self.op_end = self.win().cursor;
+        self.doc_mut().op_start = start;
+        self.doc_mut().op_end = self.win_mut().cursor;
     }
 
     // ---- Visual mode ----------------------------------------------------

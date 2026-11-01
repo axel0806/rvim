@@ -7,6 +7,7 @@
 
 use crate::buffer::Buffer;
 use crate::editor::LastVisual;
+use crate::motion::Pos;
 use crate::undo::UndoTree;
 
 /// The line `U` restores (Vim's `b_u_line_*`).
@@ -31,6 +32,10 @@ pub(crate) struct Document {
     /// The version at the time the current buffer was loaded. `version()`
     /// adds the buffer's own change count to it.
     version_base: u64,
+    /// The `'[` and `']` marks: the start and end of the last change (Vim's
+    /// `b_op_start` and `b_op_end`).
+    pub(crate) op_start: Pos,
+    pub(crate) op_end: Pos,
 }
 
 impl Document {
@@ -42,6 +47,8 @@ impl Document {
             uline: None,
             last_visual: None,
             version_base: 0,
+            op_start: Pos::default(),
+            op_end: Pos::default(),
         }
     }
 
@@ -59,8 +66,13 @@ impl Document {
     /// counting up, so a result for the old text is never taken as current.
     pub(crate) fn reload(&mut self, buf: Buffer) {
         let version_base = self.version() + 1;
+        // The `'[` and `']` marks survive a reload, as they did when they
+        // were kept in the editor.
+        let (op_start, op_end) = (self.op_start, self.op_end);
         *self = Self {
             version_base,
+            op_start,
+            op_end,
             ..Self::new(buf)
         };
     }
