@@ -7,6 +7,7 @@ mod cmdline;
 pub mod editor;
 pub mod event;
 pub(crate) mod ex;
+pub mod expr;
 mod jumplist;
 pub mod key;
 mod macros;

@@ -185,31 +185,39 @@ impl Editor {
     fn split_bar(&self, cmd: &str) -> (String, Option<String>) {
         let t = cmd.trim_start_matches([' ', '\t', ':']);
         // Skip the range to find the command name.
-        let name: String = {
-            let mut s = t;
-            // A crude skip over addresses: find first alphabetic char not in
-            // a pattern. Good enough to recognize :g and :normal.
-            let mut depth = false;
-            let mut end = 0;
-            for (i, c) in s.char_indices() {
-                if c == '/' || c == '?' {
-                    depth = !depth;
-                }
-                if !depth && c.is_ascii_alphabetic() {
-                    end = i;
-                    break;
-                }
+        let lead = cmd.len() - t.len();
+        // A crude skip over addresses: find first alphabetic char not in
+        // a pattern. Good enough to recognize :g and :normal.
+        let mut depth = false;
+        let mut end = 0;
+        for (i, c) in t.char_indices() {
+            if c == '/' || c == '?' {
+                depth = !depth;
             }
-            s = &s[end..];
-            s.chars().take_while(|c| c.is_ascii_alphabetic()).collect()
-        };
+            if !depth && c.is_ascii_alphabetic() {
+                end = i;
+                break;
+            }
+        }
+        let name: String = t[end..]
+            .chars()
+            .take_while(|c| c.is_ascii_alphabetic())
+            .collect();
+        let name_end = lead + end + name.len();
         let takes_bar =
             abbrev(&name, "global", 1) || abbrev(&name, "vglobal", 1) || abbrev(&name, "normal", 4);
         if takes_bar {
             return (cmd.to_string(), None);
         }
+        // `:s/pat/\=expr/`: a `|` in the expression is not a separator. The
+        // replacement ends at its delimiter, as in Vim's do_sub().
+        let from = if abbrev(&name, "substitute", 1) {
+            sub_expr_end(cmd, name_end).unwrap_or(0)
+        } else {
+            0
+        };
         let chars: Vec<char> = cmd.chars().collect();
-        let mut i = 0;
+        let mut i = cmd[..from].chars().count();
         while i < chars.len() {
             if chars[i] == '\\' && chars.get(i + 1) == Some(&'|') {
                 i += 2;
@@ -1278,9 +1286,15 @@ impl Editor {
                 return self.do_substitute(r, &pattern, &rep, SubFlags::default());
             };
             pattern = self.pick_pattern(&pat)?;
-            let (mut rp, after2) = split_rep(after, delim);
-            // `~` stands for the previous replacement.
-            rp = expand_tilde(&rp, &self.last_sub_raw);
+            // `\=expr` is taken up to the delimiter as typed: no escapes, and
+            // no `~` (Vim's do_sub() does not expand it either).
+            let (rp, after2) = if after.starts_with("\\=") {
+                split_expr_rep(after, delim)
+            } else {
+                let (rp, after2) = split_rep(after, delim);
+                // `~` stands for the previous replacement.
+                (expand_tilde(&rp, &self.last_sub_raw), after2)
+            };
             rep = rp;
             rest = after2.unwrap_or("");
             flags = SubFlags::default();
@@ -1369,6 +1383,7 @@ impl Editor {
             line: None,
             m: None,
             rest: None,
+            error: None,
             flags,
         });
         if self.sub_drive(&mut st)? {
@@ -1467,11 +1482,36 @@ impl Editor {
                         }
                     }
                 };
+                // `\=expr` is evaluated for this match. An error ends the `:s`:
+                // from a function the match stays as it is, otherwise it is
+                // replaced by nothing (as in Vim's vim_regsub()).
+                let mut expr_text: Option<String> = None;
+                if action == Action::Substitute && st.rep_chars.starts_with(&['\\', '=']) {
+                    match self.eval_sub_expr(&st.rep_chars[2..], &m, st.lnum) {
+                        Ok((text, errs)) => {
+                            expr_text = Some(text);
+                            st.error = errs.into_iter().last();
+                        }
+                        Err(e) => {
+                            expr_text = Some(String::new());
+                            st.error = Some(e.msg);
+                        }
+                    }
+                }
                 // 3. Substitute the string. Like Vim, the cursor then sits at
                 // the start of the line (also where undo returns to).
                 if action == Action::Substitute {
                     self.cursor = Pos::new(st.lnum, 0);
-                    let out = self.expand_replacement(&st.rep_chars, &m);
+                    let out = match expr_text {
+                        Some(text) => text
+                            .chars()
+                            .map(|c| match c {
+                                '\n' | '\r' => RepPiece::Break,
+                                c => RepPiece::Text(c),
+                            })
+                            .collect(),
+                        None => self.expand_replacement(&st.rep_chars, &m),
+                    };
                     let ln = st.line.as_mut().expect("line state");
                     let mut ns = ln.new_start.take().unwrap_or_default();
                     let sc = m.start.1.min(ln.sub_line.len());
@@ -1668,7 +1708,47 @@ impl Editor {
         } else if !st.found && !self.global_busy && !st.flags.no_error {
             return Err(format!("E486: Pattern not found: {}", st.pattern));
         }
+        if let Some(msg) = st.error.take() {
+            self.error(msg);
+        }
         Ok(false)
+    }
+
+    /// Evaluates the `\=` replacement (`expr`, the text after `\=`) for match
+    /// `m` on line `lnum`. As in Vim, the cursor is on the match while the
+    /// expression runs, so `line('.')` and `col('.')` see it. The second value
+    /// holds the messages of errors inside built-in functions.
+    fn eval_sub_expr(
+        &self,
+        expr: &[char],
+        m: &crate::regex::Match,
+        lnum: usize,
+    ) -> Result<(String, Vec<String>), crate::expr::ExprError> {
+        let line = self.line_vec(m.start.0);
+        let col: usize = line[..m.start.1.min(line.len())]
+            .iter()
+            .map(|c| c.len_utf8())
+            .sum::<usize>()
+            + 1;
+        let mut groups: [String; 10] = Default::default();
+        for (g, slot) in groups.iter_mut().enumerate() {
+            let span = if g == 0 {
+                Some((m.start, m.end))
+            } else {
+                m.groups[g]
+            };
+            if let Some((a, b)) = span {
+                *slot = self.text_between(a, b).iter().collect();
+            }
+        }
+        let env = crate::expr::Env {
+            groups,
+            line: lnum as i64 + 1,
+            col: col as i64,
+            last_line: self.buf.line_count() as i64,
+            ignorecase: self.opts.ignorecase(),
+        };
+        crate::expr::eval_text(&expr.iter().collect::<String>(), &env)
     }
 
     /// An answer to the `c` flag prompt: `y n a q l`, `<Esc>` and `<C-c>`
@@ -1808,6 +1888,8 @@ pub(crate) struct SubRun {
     m: Option<Match>,
     /// The rest of the `|` command line after this `:s`, run when it ends.
     pub(crate) rest: Option<String>,
+    /// An error from a `\=` replacement, reported when the `:s` ends.
+    error: Option<String>,
 }
 
 /// The state of the line a `:s` is working on (Vim's `sub_firstline` and
@@ -1969,6 +2051,68 @@ fn char_to_key(c: char) -> Key {
 /// (the regex engine reads `\/` as a literal slash anyway).
 fn split_at_delim_keep(s: &str, delim: char) -> (String, Option<&str>) {
     split_at_delim(s, delim)
+}
+
+/// The byte offset just past the delimiter that ends the `\=` replacement of
+/// a `:s` command whose name ends at `name_end`. `None` without `\=`. If the
+/// expression has no closing delimiter, the whole command is the expression.
+fn sub_expr_end(cmd: &str, name_end: usize) -> Option<usize> {
+    let delim = cmd[name_end..].chars().next()?;
+    if delim.is_alphanumeric() || matches!(delim, '\\' | '"' | '|' | ' ') {
+        return None;
+    }
+    let body = name_end + delim.len_utf8();
+    let pat_end = skip_to_delim(&cmd[body..], delim)?;
+    let rep = body + pat_end + delim.len_utf8();
+    if !cmd[rep..].starts_with("\\=") {
+        return None;
+    }
+    match skip_to_delim(&cmd[rep..], delim) {
+        Some(e) => Some(rep + e + delim.len_utf8()),
+        None => Some(cmd.len()),
+    }
+}
+
+/// The byte offset of the first `delim` in `s` that is not escaped.
+fn skip_to_delim(s: &str, delim: char) -> Option<usize> {
+    let chars: Vec<char> = s.chars().collect();
+    let mut i = 0;
+    let mut off = 0;
+    while i < chars.len() {
+        if chars[i] == delim {
+            return Some(off);
+        }
+        let step = if chars[i] == '\\' && i + 1 < chars.len() {
+            2
+        } else {
+            1
+        };
+        off += chars[i..i + step]
+            .iter()
+            .map(|c| c.len_utf8())
+            .sum::<usize>();
+        i += step;
+    }
+    None
+}
+
+/// Splits a `\=` replacement at the delimiter. Nothing is unescaped: an
+/// escaped delimiter stays as typed, so the expression sees it.
+fn split_expr_rep(s: &str, delim: char) -> (String, Option<&str>) {
+    let chars: Vec<char> = s.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == delim {
+            let off: usize = chars[..i].iter().map(|c| c.len_utf8()).sum();
+            return (s[..off].to_string(), Some(&s[off + delim.len_utf8()..]));
+        }
+        i += if chars[i] == '\\' && i + 1 < chars.len() {
+            2
+        } else {
+            1
+        };
+    }
+    (s.to_string(), None)
 }
 
 /// Splits the replacement part at the delimiter. Backslashes are kept for
