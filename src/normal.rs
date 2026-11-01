@@ -299,10 +299,9 @@ pub(crate) fn parse_motion(k: &[Key]) -> Res<(Motion, usize)> {
             return match k.get(1) {
                 None => Ok(None),
                 // `''` and ``` `` ``` are the previous context mark.
-                Some(Key::Char(c))
-                    if c.is_ascii_lowercase()
-                        || matches!(c, '\'' | '`' | '[' | ']' | '<' | '>' | '"') =>
-                {
+                // Any other character is an unknown mark (E78), except the
+                // paragraph and sentence marks rvim does not have.
+                Some(Key::Char(c)) if !c.is_control() && !matches!(c, '{' | '}' | '(' | ')') => {
                     Ok(Some((
                         Motion::Mark {
                             mark: *c,
@@ -621,7 +620,7 @@ fn parse_body(k: &[Key], visual: bool) -> Res<(Body, Option<usize>, usize)> {
             return match k.get(1) {
                 None => Ok(None),
                 Some(Key::Char(c))
-                    if c.is_ascii_lowercase()
+                    if c.is_ascii_alphabetic()
                         || matches!(c, '\'' | '`' | '[' | ']' | '<' | '>') =>
                 {
                     simple(Simple::SetMark(*c), 2)
@@ -1133,15 +1132,28 @@ impl Editor {
                 let target = if matches!(mark, '\'' | '`') {
                     self.sync_jumps();
                     self.win().jumps.pcmark()
-                } else if mark.is_ascii_lowercase() {
+                } else if mark.is_ascii_alphabetic() {
+                    // Lowercase, or an uppercase file mark in this buffer.
                     self.buf().mark(mark)
-                } else {
+                } else if matches!(mark, '.' | '^' | '0'..='9') {
+                    // Marks rvim does not keep: not set.
+                    None
+                } else if matches!(mark, '[' | ']' | '<' | '>' | '"') {
                     self.special_mark(mark)
+                } else {
+                    self.error("E78: Unknown mark");
+                    return None;
                 };
                 let Some(p) = target else {
                     self.error("E20: Mark not set");
                     return None;
                 };
+                // Vim's check_mark(): a file mark whose line was deleted
+                // lies past the end of the buffer.
+                if mark.is_ascii_uppercase() && p.line >= self.buf().line_count() {
+                    self.error("E19: Mark has invalid line number");
+                    return None;
+                }
                 // Like Vim's nv_cursormark(): jumping to a mark sets the
                 // context mark, which is copied above first.
                 self.set_pcmark();
@@ -1619,9 +1631,9 @@ impl Editor {
                     // the cursor does not move.
                     self.set_pcmark();
                     self.win_mut().jumps.keep_pcmark();
-                } else if c.is_ascii_lowercase() {
+                } else if c.is_ascii_alphabetic() {
                     let cursor = self.win().cursor;
-                    self.buf_mut().set_mark(c, cursor);
+                    self.set_named_mark(c, cursor);
                 } else {
                     self.set_special_mark(c);
                 }

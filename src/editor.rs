@@ -735,6 +735,23 @@ impl Editor {
         );
     }
 
+    /// Sets mark `c` at `pos`. An uppercase (file) mark is first removed
+    /// from every document, since Vim keeps one mark per letter.
+    pub(crate) fn set_named_mark(&mut self, c: char, pos: Pos) {
+        self.clear_file_mark(c);
+        self.buf_mut().set_mark(c, pos);
+    }
+
+    /// Unsets file mark `c` in every document (`:delmarks A`, and before a
+    /// file mark is set). Lowercase marks are left alone.
+    pub(crate) fn clear_file_mark(&mut self, c: char) {
+        if c.is_ascii_uppercase() {
+            for d in self.documents.iter_mut() {
+                d.buf.set_mark_unset(c);
+            }
+        }
+    }
+
     pub(crate) fn u_save_cursor(&mut self) {
         self.u_save(self.win().cursor.line, 1, true);
     }
@@ -1472,7 +1489,13 @@ impl Editor {
         d.undo.tag_open(source);
         let remap = map.clone();
         d.buf.replace_text(new, move |p| remap.pos(p, p.col));
-        for slot in d.buf.marks.iter_mut().flatten() {
+        for slot in d
+            .buf
+            .marks
+            .iter_mut()
+            .chain(d.buf.file_marks.iter_mut())
+            .flatten()
+        {
             *slot = map.pos(*slot, slot.col);
         }
         // `'[` and `']` follow the lines like the other marks; an unset one

@@ -549,7 +549,7 @@ impl Editor {
                         line = Some(if m == Some('<') { a } else { b } as i64);
                         rest = &rest[2..];
                     }
-                    Some(c @ 'a'..='z') => {
+                    Some(c @ ('a'..='z' | 'A'..='Z')) => {
                         let p = self.buf().mark(c).ok_or("E20: Mark not set")?;
                         line = Some(p.line as i64 + 1);
                         rest = &rest[2..];
@@ -1127,12 +1127,12 @@ impl Editor {
         if chars.next().is_some() {
             return Err(format!("E488: Trailing characters: {arg}"));
         }
-        if !c.is_ascii_lowercase() {
+        if !c.is_ascii_alphabetic() {
             return Err("E191: Argument must be a letter or forward/backward quote".into());
         }
         let line = r.line2 - 1;
         let col = first_non_blank(self.buf(), line, true);
-        self.buf_mut().set_mark(c, Pos::new(line, col));
+        self.set_named_mark(c, Pos::new(line, col));
         // Vim's beginline() on the temporary cursor sets the desired column,
         // so `:k` resets it even though the cursor does not move.
         self.win_mut().keep_curswant = false;

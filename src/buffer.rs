@@ -21,6 +21,11 @@ fn mark_index(c: char) -> Option<usize> {
     c.is_ascii_lowercase().then(|| c as usize - 'a' as usize)
 }
 
+/// Index in `Marks` of an uppercase (file) mark name.
+fn file_mark_index(c: char) -> Option<usize> {
+    c.is_ascii_uppercase().then(|| c as usize - 'A' as usize)
+}
+
 /// A change of line numbers, recorded for the positions the editor keeps
 /// outside the buffer: the jumplist and the context mark, which belong to
 /// the window (see `jumplist.rs`). The buffer logs every such edit in order
@@ -56,6 +61,13 @@ pub struct Buffer {
     pub tracked: Vec<usize>,
     /// Lowercase marks, followed through edits by the methods below.
     pub(crate) marks: Marks,
+    /// Uppercase (file) marks `A` to `Z` whose position is in this buffer
+    /// (Vim's `namedfm`, which keeps one mark per letter across buffers: the
+    /// editor clears a letter in the other buffers when it sets it). They
+    /// follow edits as Vim's mark_adjust() does for file marks: a mark on
+    /// deleted lines moves to the line after them, and is not deleted. Undo
+    /// does not restore them, as in Vim.
+    pub(crate) file_marks: Marks,
     /// Line edits not yet taken by the editor (see `PosEdit`).
     pos_edits: Vec<PosEdit>,
 }
@@ -164,30 +176,40 @@ impl Buffer {
             changedtick: 0,
             tracked: Vec::new(),
             marks: [None; 26],
+            file_marks: [None; 26],
             pos_edits: Vec::new(),
         }
     }
 
-    /// The position of lowercase mark `c`, if it is set.
+    /// The position of mark `c` (lowercase, or uppercase file mark in this
+    /// buffer), if it is set.
     pub fn mark(&self, c: char) -> Option<Pos> {
-        self.marks[mark_index(c)?]
+        match mark_index(c) {
+            Some(i) => self.marks[i],
+            None => self.file_marks[file_mark_index(c)?],
+        }
     }
 
-    /// Sets lowercase mark `c`. Setting a mark is not a change.
+    /// Sets mark `c`. Setting a mark is not a change.
     pub fn set_mark(&mut self, c: char, pos: Pos) {
         if let Some(i) = mark_index(c) {
             self.marks[i] = Some(pos);
+        } else if let Some(i) = file_mark_index(c) {
+            self.file_marks[i] = Some(pos);
         }
     }
 
-    /// Unsets lowercase mark `c` (`:delmarks`).
+    /// Unsets mark `c` (`:delmarks`).
     pub(crate) fn set_mark_unset(&mut self, c: char) {
         if let Some(i) = mark_index(c) {
             self.marks[i] = None;
+        } else if let Some(i) = file_mark_index(c) {
+            self.file_marks[i] = None;
         }
     }
 
-    /// Unsets all lowercase marks (`:delmarks!`).
+    /// Unsets all lowercase marks (`:delmarks!`). File marks stay, as in
+    /// Vim's clrallmarks().
     pub(crate) fn clear_marks(&mut self) {
         self.marks = [None; 26];
     }
@@ -210,18 +232,30 @@ impl Buffer {
                 *slot = None;
             }
         }
+        // Vim's mark_adjust() for file marks (one_adjust_nodel): a mark on
+        // deleted lines goes to the line that follows them.
+        for slot in self.file_marks.iter_mut() {
+            let Some(p) = slot.as_mut() else { continue };
+            if p.line >= first + old {
+                p.line = (p.line as isize + delta) as usize;
+            } else if p.line >= first && new == 0 {
+                p.line = first;
+            }
+        }
     }
 
     /// Removes the marks on lines `first..=last` and returns them, to be set
     /// again where those lines end up.
     pub(crate) fn take_marks_in(&mut self, first: usize, last: usize) -> Vec<(char, Pos)> {
         let mut out = Vec::new();
-        for (i, slot) in self.marks.iter_mut().enumerate() {
-            if let Some(p) = *slot
-                && (first..=last).contains(&p.line)
-            {
-                out.push((char::from(b'a' + i as u8), p));
-                *slot = None;
+        for (slots, base) in [(&mut self.marks, b'a'), (&mut self.file_marks, b'A')] {
+            for (i, slot) in slots.iter_mut().enumerate() {
+                if let Some(p) = *slot
+                    && (first..=last).contains(&p.line)
+                {
+                    out.push((char::from(base + i as u8), p));
+                    *slot = None;
+                }
             }
         }
         out
@@ -236,7 +270,12 @@ impl Buffer {
         to: usize,
         col: impl Fn(usize) -> usize + Clone + 'static,
     ) {
-        for p in self.marks.iter_mut().flatten() {
+        for p in self
+            .marks
+            .iter_mut()
+            .chain(self.file_marks.iter_mut())
+            .flatten()
+        {
             if p.line == from {
                 p.line = to;
                 p.col = col(p.col);

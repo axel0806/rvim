@@ -17,12 +17,10 @@ pub(crate) const MAXCOL: usize = usize::MAX;
 /// The column `:marks` prints for `MAXCOL` (Vim prints the C `long`).
 const MAXCOL_PRINTED: usize = 2_147_483_647;
 
-/// Marks `:delmarks` accepts but rvim does not keep (file marks and digits
-/// from viminfo, `^` and `.`): deleting them does nothing.
+/// Marks `:delmarks` accepts but rvim does not keep (digits from viminfo,
+/// `^` and `.`): deleting them does nothing.
 fn is_other_mark(c: char) -> bool {
-    c.is_ascii_uppercase()
-        || c.is_ascii_digit()
-        || matches!(c, '"' | '^' | '.' | '[' | ']' | '<' | '>')
+    c.is_ascii_digit() || matches!(c, '"' | '^' | '.' | '[' | ']' | '<' | '>')
 }
 
 impl Editor {
@@ -92,7 +90,8 @@ impl Editor {
             let pcmark = self.win().jumps.pcmark();
             rows.extend(self.mark_row('\'', pcmark));
         }
-        for c in 'a'..='z' {
+        // Lowercase, then file marks, as Vim's ex_marks() lists them.
+        for c in ('a'..='z').chain('A'..='Z') {
             if wanted(c) {
                 rows.extend(self.mark_row(c, self.buf().mark(c)));
             }
@@ -134,6 +133,7 @@ impl Editor {
     fn delete_mark(&mut self, c: char) {
         match c {
             'a'..='z' => self.buf_mut().set_mark_unset(c),
+            'A'..='Z' => self.clear_file_mark(c),
             '[' => self.doc_mut().op_start = None,
             ']' => self.doc_mut().op_end = None,
             // rvim keeps `<` and `>` as one area; deleting either drops both.
@@ -193,7 +193,7 @@ impl Editor {
                 }
                 i += 3;
             } else {
-                let valid = c.is_ascii_lowercase() || is_other_mark(c);
+                let valid = c.is_ascii_alphabetic() || is_other_mark(c);
                 if !valid {
                     let rest: String = chars[i..].iter().collect();
                     return Err(format!("E475: Invalid argument: {rest}"));
@@ -275,5 +275,27 @@ mod tests {
         assert_eq!(msg(&ed), "E475: Invalid argument: *");
         ed.feed(":delm! a<CR>");
         assert_eq!(msg(&ed), "E474: Invalid argument");
+    }
+
+    #[test]
+    fn file_marks_listing_and_errors() {
+        let mut ed = Editor::from_text("abc def\nghi jkl\nmno\n");
+        ed.feed("jmAgg:marks A<CR>");
+        assert_eq!(msg(&ed), "mark line  col file/text | A      2    0 ghi jkl");
+        // Unset file marks: E20; an unknown mark name: E78.
+        ed.feed("gg'Q");
+        assert_eq!(msg(&ed), "E20: Mark not set");
+        ed.feed("gg`*");
+        assert_eq!(msg(&ed), "E78: Unknown mark");
+        // Deleting the marked last line leaves the mark past the end: E19.
+        ed.feed("GmAdd");
+        ed.feed("gg'A");
+        assert_eq!(msg(&ed), "E19: Mark has invalid line number");
+        // `:delmarks A` unsets it, and `:delmarks!` leaves file marks alone.
+        let mut ed = Editor::from_text("abc\ndef\n");
+        ed.feed("jmA:delmarks!<CR>");
+        assert_eq!(ed.buf().mark('A'), Some(Pos::new(1, 0)));
+        ed.feed(":delmarks A<CR>");
+        assert_eq!(ed.buf().mark('A'), None);
     }
 }
