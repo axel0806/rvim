@@ -396,3 +396,35 @@ fn redo_of_a_linewise_put_sets_end_mark() {
     let keys = ["ddjpu<C-r>`]"];
     check(&cross(TEXTS, &keys));
 }
+
+/// Known difference: `vl<Esc>` then `3v` and `d` (a count on the reselect
+/// after leaving Visual) differs from Vim on these texts.
+#[test]
+#[ignore = "known difference: `vl<Esc>3vd` after leaving Visual (PLAN.md, Known differences)"]
+fn known_difference_count_reselect_after_visual() {
+    let texts: &[&str] = &[
+        "if (a[i] == b) {\n\treturn \"x(y)\";\n}\nend",
+        "One. Two three!  Four?\nFive six.\n\nSeven eight.",
+        "abc\tdef ghi\n12345678\nxy\n\tz",
+        "foo.bar  baz\n\nqux, quux(1)\n\t indented\tline\n  \nlast_word",
+        "a\tb漢字c d\nxy\n\t\tz\nlong line here with many words in it\n",
+        "  lead\n(x)",
+        "aaaa aa\nabab abab\nxyz\n\tz foo",
+        "\tabc\n12345678901234567890",
+        "ab\tcd\n12345678901234567890\n\tq",
+        "\tabc\tdef\n1234\n\t",
+        "foo bar\n\tbaz qux\nfoo\n  quux foo",
+        "abc def\nghi jkl\nmno",
+        "abcdef\nab\nabcdef\nabcdef",
+    ];
+    check(&cross(texts, &["vl<Esc>3vd"]));
+}
+
+/// Known difference: `o` and `b` after leaving Visual on a TAB (the `x` lands
+/// on another column than Vim's).
+#[test]
+#[ignore = "known difference: `vo`/`vb` on a TAB (PLAN.md, Known differences)"]
+fn known_difference_visual_o_and_b_on_a_tab() {
+    let texts: &[&str] = &["\tabc\n12345678901234567890", "\tabc\tdef\n1234\n\t"];
+    check(&cross(texts, &["vo<Esc>jix<Esc>", "vb<Esc>jix<Esc>"]));
+}

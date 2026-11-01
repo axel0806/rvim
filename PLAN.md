@@ -2155,6 +2155,16 @@ plan, kept for the record; the files are the source of truth.
   checked against Vim.
 - `[[ ]]` are not in rvim yet. When they land they must call `set_pcmark()`
   when they move, as `G` and `%` do. `H M L` already do (scrolling landed).
+- Visual, not fixed (found by the marks differential run; the `vo`/`vb` pair
+  is identical at the base commit `bd9eef1`, as the verifier reported): (a)
+  `vo<Esc>jix<Esc>` and `vb<Esc>jix<Esc>` on `"\tabc\n12345678901234567890"`
+  and `"\tabc\tdef\n1234\n\t"` put the `x` on another column than Vim (Vim:
+  line 2, column 1; rvim: column 8 on the first text); (b) `vl<Esc>3vd`, a
+  count on the reselect after leaving Visual, differs from Vim on 13 texts,
+  most without TABs (the list is the ignored test
+  `known_difference_count_reselect_after_visual` in `compat_marks2.rs`). The
+  sequences `vlld3vd` and `lv$<Esc>jix` on TAB texts do match Vim. Tests:
+  `known_difference_visual_o_and_b_on_a_tab`, `known_difference_count_reselect_after_visual`.
 - Marks: uppercase marks `mA`-`mZ` (file marks) do not exist yet; they need
   several buffers. `'.` and `'^` (the last change and the last insert) do not
   exist either, so `:marks` does not list them (Vim lists them, and `0`-`9`

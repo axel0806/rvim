@@ -208,7 +208,38 @@ impl Editor {
 
 #[cfg(test)]
 mod tests {
+    use crate::buffer::Buffer;
+    use crate::document::DocId;
     use crate::editor::Editor;
+    use crate::marks::MAXCOL;
+    use crate::motion::Pos;
+    use crate::undo::UndoSource;
+
+    #[test]
+    fn special_marks_follow_an_external_reload() {
+        let mut ed = Editor::from_text("one\ntwo\nthree\nfour");
+        // `yy` sets '[ and '] on line 1; a Visual area on lines 3-4 sets '< and '>.
+        ed.feed("yyjjVj<Esc>");
+        assert_eq!(ed.special_mark('['), Some(Pos::new(0, 0)));
+        assert_eq!(ed.special_mark('<'), Some(Pos::new(2, 0)));
+        // Linewise area: '> is at the end of its line (MAXCOL).
+        assert_eq!(ed.special_mark('>'), Some(Pos::new(3, MAXCOL)));
+        // A line is inserted above: every mark moves down one line.
+        let new = Buffer::from_text("zero\none\ntwo\nthree\nfour");
+        ed.apply_external_change(DocId::default(), new, UndoSource::External);
+        assert_eq!(ed.special_mark('['), Some(Pos::new(1, 0)));
+        // ']' was the end of the yanked line (past its last character),
+        // clamped to the last character of "one".
+        assert_eq!(ed.special_mark(']'), Some(Pos::new(1, 2)));
+        assert_eq!(ed.special_mark('<'), Some(Pos::new(3, 0)));
+        assert_eq!(ed.special_mark('>'), Some(Pos::new(4, MAXCOL)));
+        // Unset marks stay unset.
+        let mut fresh = Editor::from_text("one\ntwo");
+        let new = Buffer::from_text("zero\none\ntwo");
+        fresh.apply_external_change(DocId::default(), new, UndoSource::External);
+        assert_eq!(fresh.special_mark('['), None);
+        assert_eq!(fresh.special_mark('<'), None);
+    }
 
     fn msg(ed: &Editor) -> String {
         ed.message().map(|m| m.text.clone()).unwrap_or_default()

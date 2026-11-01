@@ -1378,8 +1378,10 @@ impl Editor {
         for slot in d.buf.marks.iter_mut().flatten() {
             *slot = map.pos(*slot, slot.col);
         }
-        d.op_start = map.pos(d.op_start, d.op_start.col);
-        d.op_end = map.pos(d.op_end, d.op_end.col);
+        // `'[` and `']` follow the lines like the other marks; an unset one
+        // stays unset.
+        d.op_start = d.op_start.map(|p| map.pos(p, p.col));
+        d.op_end = d.op_end.map(|p| map.pos(p, p.col));
         if let Some(v) = d.last_visual.as_mut() {
             v.start = map.pos(v.start, v.start.col);
             v.end = map.pos(v.end, v.end.col);
@@ -1398,6 +1400,8 @@ impl Editor {
             }
             win.vstart = map.pos(win.vstart, win.vstart.col);
         }
+        // The start of an Insert in progress (Vim's Insstart) follows the lines.
+        self.ins_start = map.pos(self.ins_start, self.ins_start.col);
         Some(Change {
             added: map.added,
             removed: map.removed,
