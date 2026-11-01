@@ -209,24 +209,41 @@ impl Editor {
         if takes_bar {
             return (cmd.to_string(), None);
         }
-        // `:s/pat/\=expr/`: a `|` in the expression is not a separator. The
-        // replacement ends at its delimiter, as in Vim's do_sub().
+        // `:s`: a `|` in the pattern or the replacement (also `\=expr`) is not
+        // a separator. Only what follows the replacement's delimiter and the
+        // flags is scanned, as Vim's ex_substitute() does with check_nextcmd().
         let from = if abbrev(&name, "substitute", 1) {
-            sub_expr_end(cmd, name_end).unwrap_or(0)
+            sub_args_end(cmd, name_end).unwrap_or(0)
         } else {
             0
         };
+        // In the range (before the name), a `|` inside a `/pat/` or `?pat?`
+        // address is not a separator either.
+        // The name found by the crude scan above may lie past a `|` that
+        // ends a range without a command (`:2|s/x/y/`), so the scan starts
+        // at the beginning. Only the pattern and replacement of `:s` (from
+        // `name_end` to `from`) are skipped as a whole.
+        let range_chars = cmd[..name_end].chars().count();
+        let args_end_chars = cmd[..from].chars().count();
         let chars: Vec<char> = cmd.chars().collect();
-        let mut i = cmd[..from].chars().count();
+        let mut i = 0;
+        let mut in_addr = false;
         while i < chars.len() {
-            if chars[i] == '\\' && chars.get(i + 1) == Some(&'|') {
-                i += 2;
-                continue;
-            }
-            if chars[i] == '|' {
-                let a: String = chars[..i].iter().collect();
-                let b: String = chars[i + 1..].iter().collect();
-                return (a, Some(b));
+            match chars[i] {
+                // An escaped character (`\|`, `\\`) is never a separator.
+                '\\' => {
+                    i += 2;
+                    continue;
+                }
+                '/' | '?' if i < range_chars => in_addr = !in_addr,
+                '|' if !(i >= range_chars && i < args_end_chars)
+                    && (i >= range_chars || !in_addr) =>
+                {
+                    let a: String = chars[..i].iter().collect();
+                    let b: String = chars[i + 1..].iter().collect();
+                    return (a, Some(b));
+                }
+                _ => {}
             }
             i += 1;
         }
@@ -2053,20 +2070,21 @@ fn split_at_delim_keep(s: &str, delim: char) -> (String, Option<&str>) {
     split_at_delim(s, delim)
 }
 
-/// The byte offset just past the delimiter that ends the `\=` replacement of
-/// a `:s` command whose name ends at `name_end`. `None` without `\=`. If the
-/// expression has no closing delimiter, the whole command is the expression.
-fn sub_expr_end(cmd: &str, name_end: usize) -> Option<usize> {
+/// The byte offset just past the replacement of a `:s` command whose name
+/// ends at `name_end`: the pattern and the replacement (`\=expr` included)
+/// each end at the first unescaped delimiter, so a `|` inside them is text.
+/// `None` when there is no delimiter. An unterminated pattern or replacement
+/// runs to the end of the command.
+fn sub_args_end(cmd: &str, name_end: usize) -> Option<usize> {
     let delim = cmd[name_end..].chars().next()?;
     if delim.is_alphanumeric() || matches!(delim, '\\' | '"' | '|' | ' ') {
         return None;
     }
     let body = name_end + delim.len_utf8();
-    let pat_end = skip_to_delim(&cmd[body..], delim)?;
+    let Some(pat_end) = skip_to_delim(&cmd[body..], delim) else {
+        return Some(cmd.len());
+    };
     let rep = body + pat_end + delim.len_utf8();
-    if !cmd[rep..].starts_with("\\=") {
-        return None;
-    }
     match skip_to_delim(&cmd[rep..], delim) {
         Some(e) => Some(rep + e + delim.len_utf8()),
         None => Some(cmd.len()),
