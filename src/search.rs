@@ -351,7 +351,7 @@ impl Editor {
         pat: Option<&str>,
         count: usize,
     ) -> Option<(Pos, bool, bool)> {
-        let mut pos = self.cursor;
+        let mut pos = self.win.cursor;
         let reverse = false;
         let dirc_val = match dirc {
             Some(d) => {
@@ -566,13 +566,13 @@ impl Editor {
             return false;
         };
         let visual = self.is_visual();
-        let orig_cursor = self.cursor;
-        let orig_vstart = self.vstart;
+        let orig_cursor = self.win.cursor;
+        let orig_vstart = self.win.vstart;
         // Visual forward with the cursor before the anchor: the first
         // backward search would not move the cursor, so it is skipped.
-        let skip_first_backward = forward && visual && self.cursor < self.vstart;
+        let skip_first_backward = forward && visual && self.win.cursor < self.win.vstart;
 
-        let mut pos = self.cursor;
+        let mut pos = self.win.cursor;
         if visual {
             if forward {
                 incl(&self.doc.buf, &mut pos);
@@ -586,7 +586,7 @@ impl Editor {
         let zero_width = match searchit(
             &self.doc.buf,
             &re,
-            Start::At(self.cursor),
+            Start::At(self.win.cursor),
             true,
             1,
             &SearchFlags {
@@ -624,8 +624,8 @@ impl Editor {
                     from = Start::At(pos);
                 }
                 None if i == 1 => {
-                    self.cursor = orig_cursor;
-                    self.vstart = orig_vstart;
+                    self.win.cursor = orig_cursor;
+                    self.win.vstart = orig_vstart;
                     return false;
                 }
                 None => {
@@ -643,19 +643,19 @@ impl Editor {
 
         let start_pos = pos;
         if !visual {
-            self.vstart = start_pos;
+            self.win.vstart = start_pos;
         }
-        self.cursor = end_pos;
-        if self.vstart < end_pos && forward {
+        self.win.cursor = end_pos;
+        if self.win.vstart < end_pos && forward {
             if skip_first_backward {
                 // Put the cursor on the start of the match.
-                self.cursor = pos;
+                self.win.cursor = pos;
             } else {
                 // Put the cursor on the last char of the match.
-                decl(&self.doc.buf, &mut self.cursor);
+                decl(&self.doc.buf, &mut self.win.cursor);
             }
-        } else if visual && self.cursor < self.vstart && forward {
-            self.cursor = pos;
+        } else if visual && self.win.cursor < self.win.vstart && forward {
+            self.win.cursor = pos;
         }
         self.mode = Mode::Visual(VisualMode::Char);
         true
@@ -664,12 +664,12 @@ impl Editor {
     /// The identifier or string under or after the cursor (Vim's
     /// `find_ident_under_cursor` with `FIND_IDENT|FIND_STRING`).
     pub(crate) fn ident_under_cursor(&self) -> Option<(usize, String)> {
-        let line: Vec<char> = self.doc.buf.line(self.cursor.line).chars().collect();
+        let line: Vec<char> = self.doc.buf.line(self.win.cursor.line).chars().collect();
         let cls = |c: Option<&char>| c.map_or(0, |&c| keyword_class(c));
         let mut col = 0;
         let mut this_class = 0;
         for i in 0..2 {
-            col = self.cursor.col.min(line.len());
+            col = self.win.cursor.col.min(line.len());
             while col < line.len() {
                 let c = cls(line.get(col));
                 if c != 0 && (i == 1 || c != 1) {

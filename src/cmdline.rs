@@ -135,7 +135,7 @@ impl Editor {
 
     pub(crate) fn cmdline_key(&mut self, key: Key) {
         // Only commands that move the cursor reset the desired column.
-        self.keep_curswant = true;
+        self.win.keep_curswant = true;
         let len = chars_len(&self.cmdline);
         self.cmdpos = self.cmdpos.min(len);
         if std::mem::take(&mut self.cmd_literal) {
@@ -284,7 +284,7 @@ impl Editor {
         self.pending = keys;
         // The prompt's own keys set the desired column to keep; the search
         // resets it like any other command.
-        self.keep_curswant = false;
+        self.win.keep_curswant = false;
         self.run_pending(Key::Enter);
     }
 
@@ -297,8 +297,8 @@ impl Editor {
             }
             Key::Ctrl('w') if state == PasteState::Reg => self.ident_under_cursor().map(|(_, w)| w),
             Key::Ctrl('a') if state == PasteState::Reg => {
-                let line: Vec<char> = self.doc.buf.line(self.cursor.line).chars().collect();
-                let col = self.cursor.col.min(line.len().saturating_sub(1));
+                let line: Vec<char> = self.doc.buf.line(self.win.cursor.line).chars().collect();
+                let col = self.win.cursor.col.min(line.len().saturating_sub(1));
                 let blank = |c: char| c == ' ' || c == '\t';
                 if line.is_empty() || blank(line[col]) {
                     None
@@ -315,7 +315,7 @@ impl Editor {
                 }
             }
             Key::Ctrl('l') if state == PasteState::Reg => {
-                Some(self.doc.buf.line(self.cursor.line).to_string())
+                Some(self.doc.buf.line(self.win.cursor.line).to_string())
             }
             Key::Char(c) => self.cmd_register_text(c),
             _ => None,

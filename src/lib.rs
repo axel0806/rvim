@@ -29,6 +29,7 @@ pub mod text;
 pub mod textobject;
 mod undo;
 pub mod view;
+pub(crate) mod window;
 
 pub use editor::{Editor, Mode, VisualMode};
 pub use event::Event;

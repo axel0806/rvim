@@ -851,8 +851,8 @@ impl Editor {
     /// on the end-of-line position.
     pub(crate) fn coladvance(&mut self, want: usize) {
         let allow_end = matches!(self.mode, Mode::Insert | Mode::Replace | Mode::Visual(_));
-        self.cursor.col = text::col_for_vcol(
-            self.doc.buf.line(self.cursor.line),
+        self.win.cursor.col = text::col_for_vcol(
+            self.doc.buf.line(self.win.cursor.line),
             want,
             allow_end,
             self.opts.tabstop(),
@@ -860,17 +860,17 @@ impl Editor {
     }
 
     fn fnb(&mut self) {
-        self.cursor.col = first_non_blank(&self.doc.buf, self.cursor.line, true);
+        self.win.cursor.col = first_non_blank(&self.doc.buf, self.win.cursor.line, true);
     }
 
     pub(crate) fn cursor_down_n(&mut self, n: usize) -> bool {
         if n == 0 {
             return true;
         }
-        if self.cursor.line >= self.doc.buf.last_line() {
+        if self.win.cursor.line >= self.doc.buf.last_line() {
             return false;
         }
-        self.cursor.line = (self.cursor.line + n).min(self.doc.buf.last_line());
+        self.win.cursor.line = (self.win.cursor.line + n).min(self.doc.buf.last_line());
         true
     }
 
@@ -878,10 +878,10 @@ impl Editor {
         if n == 0 {
             return true;
         }
-        if self.cursor.line == 0 {
+        if self.win.cursor.line == 0 {
             return false;
         }
-        self.cursor.line = self.cursor.line.saturating_sub(n);
+        self.win.cursor.line = self.win.cursor.line.saturating_sub(n);
         true
     }
 
@@ -901,28 +901,31 @@ impl Editor {
             return;
         }
         self.sync_jumps();
-        self.jumps.set_pcmark(self.cursor);
+        self.jumps.set_pcmark(self.win.cursor);
     }
 
     /// `<C-o>` and `<Tab>` (Vim's movemark() through nv_pcmark()). In Visual
     /// mode they do nothing, as in Vim.
     fn move_in_jumplist(&mut self, count: isize) {
         if self.is_visual() {
-            self.keep_curswant = true;
+            self.win.keep_curswant = true;
             return;
         }
         self.sync_jumps();
-        let Some(p) = self.jumps.move_by(count, self.cursor, !self.global_busy) else {
-            self.keep_curswant = true;
+        let Some(p) = self
+            .jumps
+            .move_by(count, self.win.cursor, !self.global_busy)
+        else {
+            self.win.keep_curswant = true;
             self.beep();
             return;
         };
         if p.line >= self.doc.buf.line_count() {
-            self.keep_curswant = true;
+            self.win.keep_curswant = true;
             self.error("E19: Mark has invalid line number");
             return;
         }
-        self.cursor = Pos::new(p.line, p.col);
+        self.win.cursor = Pos::new(p.line, p.col);
     }
 
     /// Runs a motion, moving the cursor. `None` means "clear the operator
@@ -940,15 +943,15 @@ impl Editor {
             Motion::Left { bs } => {
                 let mut n = count1;
                 while n > 0 {
-                    if self.cursor.col == 0 {
-                        if bs && self.cursor.line > 0 {
-                            self.cursor.line -= 1;
+                    if self.win.cursor.col == 0 {
+                        if bs && self.win.cursor.line > 0 {
+                            self.win.cursor.line -= 1;
                             self.coladvance(usize::MAX);
                             if matches!(op, Some(Op::Delete | Op::Change))
-                                && self.doc.buf.line_len(self.cursor.line) > 0
+                                && self.doc.buf.line_len(self.win.cursor.line) > 0
                             {
-                                if gchar(&self.doc.buf, self.cursor).is_some() {
-                                    self.cursor.col += 1;
+                                if gchar(&self.doc.buf, self.win.cursor).is_some() {
+                                    self.win.cursor.col += 1;
                                 }
                                 info.no_adj = true;
                             }
@@ -956,31 +959,31 @@ impl Editor {
                             continue;
                         } else if op.is_none() && n == count1 {
                             // oneleft() failed: the desired column stays.
-                            self.keep_curswant = true;
+                            self.win.keep_curswant = true;
                             return None;
                         }
                         break;
                     }
-                    self.cursor.col -= 1;
+                    self.win.cursor.col -= 1;
                     n -= 1;
                 }
             }
             Motion::Right { space } => {
                 let mut n = count1;
                 while n > 0 {
-                    let len = self.doc.buf.line_len(self.cursor.line);
+                    let len = self.doc.buf.line_len(self.win.cursor.line);
                     let fail = if visual {
-                        self.cursor.col >= len
+                        self.win.cursor.col >= len
                     } else {
-                        self.cursor.col + 1 >= len
+                        self.win.cursor.col + 1 >= len
                     };
                     if fail {
-                        if space && self.cursor.line < self.doc.buf.last_line() {
+                        if space && self.win.cursor.line < self.doc.buf.last_line() {
                             if op.is_some() && !info.inclusive && len > 0 {
                                 info.inclusive = true;
                             } else {
-                                self.cursor.line += 1;
-                                self.cursor.col = 0;
+                                self.win.cursor.line += 1;
+                                self.win.cursor.col = 0;
                                 info.inclusive = false;
                             }
                             n -= 1;
@@ -988,7 +991,7 @@ impl Editor {
                         }
                         if op.is_none() {
                             if n == count1 {
-                                self.keep_curswant = true;
+                                self.win.keep_curswant = true;
                                 return None;
                             }
                         } else if len > 0 {
@@ -996,13 +999,13 @@ impl Editor {
                         }
                         break;
                     }
-                    self.cursor.col += 1;
+                    self.win.cursor.col += 1;
                     n -= 1;
                 }
             }
             Motion::Up | Motion::Down => {
                 info.linewise = true;
-                self.keep_curswant = true;
+                self.win.keep_curswant = true;
                 let ok = if m == Motion::Down {
                     self.cursor_down_n(count1)
                 } else {
@@ -1011,7 +1014,7 @@ impl Editor {
                 if !ok {
                     return None;
                 }
-                self.coladvance(self.curswant);
+                self.coladvance(self.win.curswant);
             }
             Motion::UpFnb | Motion::DownFnb => {
                 info.linewise = true;
@@ -1026,36 +1029,38 @@ impl Editor {
                 self.fnb();
             }
             Motion::Underscore => return self.line_motion(count1, op),
-            Motion::Zero => self.cursor.col = 0,
+            Motion::Zero => self.win.cursor.col = 0,
             Motion::Caret => self.fnb(),
             Motion::Dollar => {
                 info.inclusive = true;
-                self.curswant = usize::MAX;
-                self.keep_curswant = true;
+                self.win.curswant = usize::MAX;
+                self.win.keep_curswant = true;
                 if !self.cursor_down_n(count1 - 1) {
                     return None;
                 }
                 self.coladvance(usize::MAX);
             }
             Motion::Bar => {
-                self.curswant = count0.map_or(0, |c| c - 1);
-                self.keep_curswant = true;
-                self.coladvance(self.curswant);
+                self.win.curswant = count0.map_or(0, |c| c - 1);
+                self.win.keep_curswant = true;
+                self.coladvance(self.win.curswant);
             }
             Motion::LastNonBlank => {
                 info.inclusive = true;
-                self.curswant = usize::MAX;
+                self.win.curswant = usize::MAX;
                 if !self.cursor_down_n(count1 - 1) {
                     return None;
                 }
                 self.coladvance(usize::MAX);
-                let line = self.doc.buf.line(self.cursor.line);
+                let line = self.doc.buf.line(self.win.cursor.line);
                 let len = line.len_chars();
-                if self.cursor.col > 0 && self.cursor.col >= len {
-                    self.cursor.col -= 1;
+                if self.win.cursor.col > 0 && self.win.cursor.col >= len {
+                    self.win.cursor.col -= 1;
                 }
-                while self.cursor.col > 0 && matches!(line.char(self.cursor.col), ' ' | '\t') {
-                    self.cursor.col -= 1;
+                while self.win.cursor.col > 0
+                    && matches!(line.char(self.win.cursor.col), ' ' | '\t')
+                {
+                    self.win.cursor.col -= 1;
                 }
             }
             Motion::Word(c) => return self.word_motion(c, count1, op),
@@ -1063,7 +1068,7 @@ impl Editor {
                 info.linewise = true;
                 // H, M and L are jumps (Vim's nv_scroll()).
                 self.set_pcmark();
-                self.cursor.line = self.screen_line(which, count1);
+                self.win.cursor.line = self.screen_line(which, count1);
                 self.fnb();
             }
             Motion::Goto { first } => {
@@ -1075,7 +1080,7 @@ impl Editor {
                     None if first => 0,
                     None => self.doc.buf.last_line(),
                 };
-                self.cursor.line = line.min(self.doc.buf.last_line());
+                self.win.cursor.line = line.min(self.doc.buf.last_line());
                 self.fnb();
             }
             Motion::Percent => {
@@ -1088,34 +1093,35 @@ impl Editor {
                     self.set_pcmark();
                     let n = self.doc.buf.line_count();
                     let line = (n * c).div_ceil(100).clamp(1, n);
-                    self.cursor.line = line - 1;
+                    self.win.cursor.line = line - 1;
                     self.fnb();
                 } else {
                     info.use_reg_one = true;
-                    let r = findmatchlimit(&self.doc.buf, self.cursor, None, None, false)?;
+                    let r = findmatchlimit(&self.doc.buf, self.win.cursor, None, None, false)?;
                     self.set_pcmark();
-                    self.cursor = r.pos;
+                    self.win.cursor = r.pos;
                     info.linewise = r.linewise;
                 }
             }
             Motion::Para { fwd } => {
                 info.use_reg_one = true;
-                let (p, incl) = findpar(&self.doc.buf, self.cursor, fwd, count1, '\0', false)?;
+                let (p, incl) = findpar(&self.doc.buf, self.win.cursor, fwd, count1, '\0', false)?;
                 self.set_pcmark();
-                self.cursor = p;
+                self.win.cursor = p;
                 info.inclusive = incl;
             }
             Motion::Sent { fwd } => {
                 info.use_reg_one = true;
-                let p = findsent(&self.doc.buf, self.cursor, fwd, count1)?;
+                let p = findsent(&self.doc.buf, self.win.cursor, fwd, count1)?;
                 self.set_pcmark();
-                self.cursor = p;
+                self.win.cursor = p;
                 self.adjust_cursor(&mut info);
             }
             Motion::Find { c, fwd, till } => {
                 self.last_find = Some((c, fwd, till));
                 info.inclusive = fwd;
-                self.cursor.col = searchc(&self.doc.buf, self.cursor, c, fwd, till, count1, true)?;
+                self.win.cursor.col =
+                    searchc(&self.doc.buf, self.win.cursor, c, fwd, till, count1, true)?;
             }
             Motion::Mark { mark, linewise } => {
                 let target = if matches!(mark, '\'' | '`') {
@@ -1135,14 +1141,14 @@ impl Editor {
                 // command, an operator may take the end of the line.
                 if linewise {
                     info.linewise = true;
-                    self.cursor.line = p.line.min(self.doc.buf.last_line());
+                    self.win.cursor.line = p.line.min(self.doc.buf.last_line());
                     self.fnb();
                 } else {
                     // Like Vim's nv_cursormark(): a backtick motion also
                     // uses register 1 when it deletes.
                     info.use_reg_one = true;
                     let line = p.line.min(self.doc.buf.last_line());
-                    self.cursor = Pos::new(line, p.col.min(self.doc.buf.line_len(line)));
+                    self.win.cursor = Pos::new(line, p.col.min(self.doc.buf.line_len(line)));
                 }
             }
             Motion::RepeatFind { reverse } => {
@@ -1150,7 +1156,8 @@ impl Editor {
                 let dir = if reverse { !fwd } else { fwd };
                 let stop = !(count1 == 1 && till);
                 info.inclusive = dir;
-                self.cursor.col = searchc(&self.doc.buf, self.cursor, c, dir, till, count1, stop)?;
+                self.win.cursor.col =
+                    searchc(&self.doc.buf, self.win.cursor, c, dir, till, count1, stop)?;
             }
             Motion::Search { fwd, .. } => {
                 let pat = self.cmd_search.take().unwrap_or_default();
@@ -1185,12 +1192,12 @@ impl Editor {
                 if whole && word.chars().last().is_some_and(is_word) {
                     pat.push_str(r"\>");
                 }
-                self.cursor.col = col;
-                let saved = self.cursor;
+                self.win.cursor.col = col;
+                let saved = self.win.cursor;
                 crate::cmdline::push_history(&mut self.search_hist, &pat);
                 let r = self.search_motion(Some(if fwd { '/' } else { '?' }), Some(pat), count1);
                 if r.is_none() {
-                    self.cursor = saved;
+                    self.win.cursor = saved;
                 }
                 return r;
             }
@@ -1207,12 +1214,12 @@ impl Editor {
     ) -> Option<MInfo> {
         let (pos, linewise, inclusive) = self.do_search(dirc, pat.as_deref(), count1)?;
         self.set_pcmark();
-        self.cursor = pos;
+        self.win.cursor = pos;
         // "/$" can end after the last char.
         if !self.is_visual() {
-            let len = self.doc.buf.line_len(self.cursor.line);
-            if self.cursor.col >= len {
-                self.cursor.col = len.saturating_sub(1);
+            let len = self.doc.buf.line_len(self.win.cursor.line);
+            if self.win.cursor.col >= len {
+                self.win.cursor.col = len.saturating_sub(1);
             }
         }
         Some(MInfo {
@@ -1226,8 +1233,11 @@ impl Editor {
     /// Vim's `adjust_cursor()`: leave the end-of-line position (not in
     /// Visual mode), making the motion inclusive.
     fn adjust_cursor(&mut self, info: &mut MInfo) {
-        if self.cursor.col > 0 && gchar(&self.doc.buf, self.cursor).is_none() && !self.is_visual() {
-            self.cursor.col -= 1;
+        if self.win.cursor.col > 0
+            && gchar(&self.doc.buf, self.win.cursor).is_none()
+            && !self.is_visual()
+        {
+            self.win.cursor.col -= 1;
             info.inclusive = true;
         }
     }
@@ -1252,18 +1262,18 @@ impl Editor {
         let big = c.is_ascii_uppercase();
         match c.to_ascii_lowercase() {
             'b' => {
-                let mut cur = Cur::new(&self.doc.buf, self.cursor, big);
+                let mut cur = Cur::new(&self.doc.buf, self.win.cursor, big);
                 let ok = cur.bck_word(count1, false);
-                self.cursor = cur.p;
+                self.win.cursor = cur.p;
                 if !ok {
                     return None;
                 }
             }
             'g' => {
                 info.inclusive = true;
-                let mut cur = Cur::new(&self.doc.buf, self.cursor, big);
+                let mut cur = Cur::new(&self.doc.buf, self.win.cursor, big);
                 let ok = cur.bckend_word(count1, false);
-                self.cursor = cur.p;
+                self.win.cursor = cur.p;
                 if !ok {
                     return None;
                 }
@@ -1274,7 +1284,7 @@ impl Editor {
                 let mut flag = false;
                 if !word_end
                     && op == Some(Op::Change)
-                    && let Some(ch) = gchar(&self.doc.buf, self.cursor)
+                    && let Some(ch) = gchar(&self.doc.buf, self.win.cursor)
                     && ch != ' '
                     && ch != '\t'
                 {
@@ -1283,15 +1293,15 @@ impl Editor {
                     word_end = true;
                     flag = true;
                 }
-                let start = self.cursor;
-                let mut cur = Cur::new(&self.doc.buf, self.cursor, big);
+                let start = self.win.cursor;
+                let mut cur = Cur::new(&self.doc.buf, self.win.cursor, big);
                 let ok = if word_end {
                     cur.end_word(count1, flag, false)
                 } else {
                     cur.fwd_word(count1, op.is_some())
                 };
-                self.cursor = cur.p;
-                if start < self.cursor {
+                self.win.cursor = cur.p;
+                if start < self.win.cursor {
                     self.adjust_cursor(&mut info);
                 }
                 if !ok && op.is_none() {
@@ -1306,11 +1316,11 @@ impl Editor {
     /// moves to the end.
     pub(crate) fn text_object(&mut self, o: Obj, count1: usize) -> Option<(Pos, MInfo)> {
         let visual = self.visual_mode().map(|m| VisualCtx {
-            start: self.vstart,
+            start: self.win.vstart,
             linewise: m == VisualMode::Line,
         });
         let buf = &self.doc.buf;
-        let cur = self.cursor;
+        let cur = self.win.cursor;
         let include = !o.inner;
         let out: ObjOut = match o.kind {
             'w' | 'W' => textobject::current_word(buf, cur, visual, count1, include, o.kind == 'W'),
@@ -1329,7 +1339,7 @@ impl Editor {
             }
             _ => None,
         }?;
-        self.cursor = out.cursor;
+        self.win.cursor = out.cursor;
         if let Some(m) = self.visual_mode() {
             let new_mode = match o.kind {
                 'p' => {
@@ -1355,7 +1365,7 @@ impl Editor {
                 }
                 _ => VisualMode::Char,
             };
-            self.vstart = out.start;
+            self.win.vstart = out.start;
             self.mode = Mode::Visual(new_mode);
         }
         Some((
@@ -1381,12 +1391,12 @@ impl Editor {
     pub(crate) fn run_pending(&mut self, key: Key) {
         match parse(&self.pending, self.is_visual()) {
             Parse::Incomplete => {
-                self.keep_curswant = true;
+                self.win.keep_curswant = true;
                 self.search_prompt_start(key);
             }
             Parse::Invalid => {
                 self.pending.clear();
-                self.keep_curswant = true;
+                self.win.keep_curswant = true;
                 if !matches!(key, Key::Esc | Key::Backspace | Key::Ctrl('c')) {
                     self.beep();
                 }
@@ -1462,7 +1472,7 @@ impl Editor {
         force: Option<char>,
         target: Target,
     ) {
-        let start = self.cursor;
+        let start = self.win.cursor;
         let count1 = count.unwrap_or(1).max(1);
         if let Target::Gn { fwd } = target {
             if !self.current_search(count1, fwd) {
@@ -1515,13 +1525,13 @@ impl Editor {
             }
             Simple::Join { spaces } => {
                 let mut n = count.unwrap_or(0).max(2);
-                if self.cursor.line + n - 1 > self.doc.buf.last_line() {
+                if self.win.cursor.line + n - 1 > self.doc.buf.last_line() {
                     if n <= 2 {
                         self.beep();
                         self.redo_building = None;
                         return;
                     }
-                    n = self.doc.buf.line_count() - self.cursor.line;
+                    n = self.doc.buf.line_count() - self.win.cursor.line;
                 }
                 if let Some(r) = &mut self.redo_building {
                     r.count = Some(n);
@@ -1545,7 +1555,7 @@ impl Editor {
             Simple::UndoLine => self.undo_line(),
             Simple::Dot => self.dot(count),
             Simple::Visual(m) => {
-                self.vstart = self.cursor;
+                self.win.vstart = self.win.cursor;
                 self.message = None;
                 if let (Some(c), Some(r)) = (count, self.resel) {
                     self.reselect_size(r, c);
@@ -1566,15 +1576,15 @@ impl Editor {
             }
             Simple::Reselect => self.reselect(),
             Simple::CmdLine => {
-                self.keep_curswant = true;
+                self.win.keep_curswant = true;
                 let was_visual = self.is_visual();
                 if was_visual {
-                    let mut start = self.vstart.min(self.cursor);
+                    let mut start = self.win.vstart.min(self.win.cursor);
                     if self.visual_mode() == Some(VisualMode::Line) {
                         start.col = 0;
                     }
                     self.end_visual();
-                    self.cursor = start;
+                    self.win.cursor = start;
                 }
                 let initial = if was_visual {
                     "'<,'>".to_string()
@@ -1591,14 +1601,14 @@ impl Editor {
             }
             Simple::SetMark(c) => {
                 // Like Vim's nv_mark(): setting a mark keeps the desired column.
-                self.keep_curswant = true;
+                self.win.keep_curswant = true;
                 if matches!(c, '\'' | '`') {
                     // Vim's setmark_pos(): the context mark is kept even when
                     // the cursor does not move.
                     self.set_pcmark();
                     self.jumps.keep_pcmark();
                 } else {
-                    self.doc.buf.set_mark(c, self.cursor);
+                    self.doc.buf.set_mark(c, self.win.cursor);
                 }
             }
             Simple::JumpOlder => self.move_in_jumplist(-(count1 as isize)),
@@ -1609,13 +1619,13 @@ impl Editor {
             Simple::WriteQuit => self.execute_ex("x"),
             Simple::Quit => self.execute_ex("q!"),
             Simple::FileInfo => {
-                self.keep_curswant = true;
+                self.win.keep_curswant = true;
                 self.file_info();
             }
-            Simple::Redraw => self.keep_curswant = true,
+            Simple::Redraw => self.win.keep_curswant = true,
             Simple::Scroll(cmd) => self.scroll_cmd(cmd, count),
             Simple::Esc => {
-                self.keep_curswant = true;
+                self.win.keep_curswant = true;
                 if self.is_visual() {
                     self.end_visual();
                 } else if count.is_none() && reg.is_none() {
@@ -1637,20 +1647,22 @@ impl Editor {
         match c {
             'i' => {}
             'a' => {
-                if gchar(&self.doc.buf, self.cursor).is_some() {
-                    self.cursor.col += 1;
+                if gchar(&self.doc.buf, self.win.cursor).is_some() {
+                    self.win.cursor.col += 1;
                 }
             }
-            'I' => self.cursor.col = first_non_blank(&self.doc.buf, self.cursor.line, false),
-            'g' => self.cursor.col = 0,
-            'A' => self.cursor.col = self.doc.buf.line_len(self.cursor.line),
+            'I' => {
+                self.win.cursor.col = first_non_blank(&self.doc.buf, self.win.cursor.line, false)
+            }
+            'g' => self.win.cursor.col = 0,
+            'A' => self.win.cursor.col = self.doc.buf.line_len(self.win.cursor.line),
             'o' | 'O' => {
                 let below = c == 'o';
-                let at = self.cursor.line + usize::from(below);
+                let at = self.win.cursor.line + usize::from(below);
                 self.u_save(at, 0, false);
                 self.doc.uline = None;
                 self.doc.buf.insert_line(at, "");
-                self.cursor = Pos::new(at, 0);
+                self.win.cursor = Pos::new(at, 0);
                 self.auto_indent(at, if below { at - 1 } else { at + 1 });
                 self.start_insert(count1, InsertKind::OpenLine, false);
                 return;
@@ -1662,19 +1674,19 @@ impl Editor {
 
     /// `r{char}` (Vim's `nv_replace`).
     fn replace_char(&mut self, c: char, count1: usize) {
-        let len = self.doc.buf.line_len(self.cursor.line);
-        if len - self.cursor.col.min(len) < count1 {
+        let len = self.doc.buf.line_len(self.win.cursor.line);
+        if len - self.win.cursor.col.min(len) < count1 {
             self.beep();
             self.redo_building = None;
             return;
         }
         self.u_save_cursor();
-        let Pos { line, col } = self.cursor;
+        let Pos { line, col } = self.win.cursor;
         if c == '\n' {
             self.doc.buf.remove(line, col, count1);
             self.doc.uline = None;
             self.doc.buf.insert(line, col, "\n");
-            self.cursor = Pos::new(line + 1, 0);
+            self.win.cursor = Pos::new(line + 1, 0);
             return;
         }
         let mut chars: Vec<char> = self.doc.buf.line(line).chars().collect();
@@ -1684,29 +1696,29 @@ impl Editor {
         self.doc
             .buf
             .set_line(line, &chars.iter().collect::<String>());
-        self.op_start = self.cursor;
-        self.cursor.col = col + count1 - 1;
-        self.op_end = self.cursor;
+        self.op_start = self.win.cursor;
+        self.win.cursor.col = col + count1 - 1;
+        self.op_end = self.win.cursor;
     }
 
     /// `~` in Normal mode ('notildeop', Vim's `n_swapchar`).
     fn swap_case_cmd(&mut self, count1: usize) {
-        if self.doc.buf.line_len(self.cursor.line) == 0 {
+        if self.doc.buf.line_len(self.win.cursor.line) == 0 {
             self.beep();
             self.redo_building = None;
             return;
         }
         self.u_save_cursor();
-        let start = self.cursor;
+        let start = self.win.cursor;
         for _ in 0..count1 {
-            self.swapchar(Op::Tilde, self.cursor);
-            motion::inc(&self.doc.buf, &mut self.cursor);
-            if gchar(&self.doc.buf, self.cursor).is_none() {
+            self.swapchar(Op::Tilde, self.win.cursor);
+            motion::inc(&self.doc.buf, &mut self.win.cursor);
+            if gchar(&self.doc.buf, self.win.cursor).is_none() {
                 break;
             }
         }
         self.op_start = start;
-        self.op_end = self.cursor;
+        self.op_end = self.win.cursor;
     }
 
     // ---- Visual mode ----------------------------------------------------
@@ -1739,7 +1751,7 @@ impl Editor {
                 self.visual_put(cmd.reg, before, cmd.count.unwrap_or(1).max(1));
             }
             Body::Simple(Simple::Visual(m)) => {
-                self.keep_curswant = true;
+                self.win.keep_curswant = true;
                 if self.visual_mode() == Some(m) {
                     self.end_visual();
                 } else {
@@ -1755,10 +1767,10 @@ impl Editor {
     pub(crate) fn end_visual(&mut self) {
         if let Some(m) = self.visual_mode() {
             self.doc.last_visual = Some(crate::editor::LastVisual {
-                start: self.vstart,
-                end: self.cursor,
+                start: self.win.vstart,
+                end: self.win.cursor,
                 mode: m,
-                curswant: self.curswant,
+                curswant: self.win.curswant,
             });
             self.mode = Mode::Normal;
         }
@@ -1769,35 +1781,35 @@ impl Editor {
     fn reselect_size(&mut self, r: VisualRedo, count: usize) {
         self.mode = Mode::Visual(r.mode);
         if r.mode != VisualMode::Char || r.line_count > 1 {
-            self.cursor.line =
-                (self.cursor.line + r.line_count * count - 1).min(self.doc.buf.last_line());
+            self.win.cursor.line =
+                (self.win.cursor.line + r.line_count * count - 1).min(self.doc.buf.last_line());
         }
         if r.mode == VisualMode::Char {
             if r.line_count <= 1 {
                 let here = self.cursor_vcol();
-                self.curswant = here
+                self.win.curswant = here
                     .saturating_add(r.vcol.saturating_mul(count))
                     .saturating_sub(1);
             } else {
-                self.curswant = r.vcol;
+                self.win.curswant = r.vcol;
             }
-            self.coladvance(self.curswant);
+            self.coladvance(self.win.curswant);
         }
-        self.keep_curswant = true;
+        self.win.keep_curswant = true;
         if r.vcol == usize::MAX {
-            self.curswant = usize::MAX;
+            self.win.curswant = usize::MAX;
             self.coladvance(usize::MAX);
         } else if r.mode == VisualMode::Block {
-            let line = self.cursor.line;
-            self.cursor.line = self.vstart.line;
+            let line = self.win.cursor.line;
+            self.win.cursor.line = self.win.vstart.line;
             let here = self.cursor_vcol();
-            self.curswant = here
+            self.win.curswant = here
                 .saturating_add(r.vcol.saturating_mul(count))
                 .saturating_sub(1);
-            self.cursor.line = line;
-            self.coladvance(self.curswant);
+            self.win.cursor.line = line;
+            self.coladvance(self.win.curswant);
         } else if r.mode == VisualMode::Line {
-            self.keep_curswant = false;
+            self.win.keep_curswant = false;
         }
     }
 
@@ -1809,10 +1821,10 @@ impl Editor {
         };
         if let Some(m) = self.visual_mode() {
             self.doc.last_visual = Some(crate::editor::LastVisual {
-                start: self.vstart,
-                end: self.cursor,
+                start: self.win.vstart,
+                end: self.win.cursor,
                 mode: m,
-                curswant: self.curswant,
+                curswant: self.win.curswant,
             });
         }
         self.mode = Mode::Visual(lv.mode);
@@ -1821,10 +1833,10 @@ impl Editor {
             p.col = p.col.min(b.line_len(p.line));
             p
         };
-        self.vstart = clamp(&self.doc.buf, lv.start);
-        self.cursor = clamp(&self.doc.buf, lv.end);
-        self.curswant = lv.curswant;
-        self.keep_curswant = true;
+        self.win.vstart = clamp(&self.doc.buf, lv.start);
+        self.win.cursor = clamp(&self.doc.buf, lv.end);
+        self.win.curswant = lv.curswant;
+        self.win.keep_curswant = true;
         if lv.curswant == usize::MAX {
             self.coladvance(usize::MAX);
         }
@@ -1833,25 +1845,25 @@ impl Editor {
     /// Visual `o` and `O` (Vim's `v_swap_corners`).
     fn visual_other(&mut self, horiz: bool) {
         if horiz && self.visual_mode() == Some(VisualMode::Block) {
-            let old = self.cursor;
-            let (left, right) = self.vcols_of(old, self.vstart);
-            self.cursor.line = self.vstart.line;
+            let old = self.win.cursor;
+            let (left, right) = self.vcols_of(old, self.win.vstart);
+            self.win.cursor.line = self.win.vstart.line;
             self.coladvance(left);
-            self.vstart = self.cursor;
-            self.cursor.line = old.line;
-            self.curswant = right;
+            self.win.vstart = self.win.cursor;
+            self.win.cursor.line = old.line;
+            self.win.curswant = right;
             self.coladvance(right);
-            if self.cursor.col == old.col {
-                self.cursor.line = self.vstart.line;
+            if self.win.cursor.col == old.col {
+                self.win.cursor.line = self.win.vstart.line;
                 self.coladvance(right);
-                self.vstart = self.cursor;
-                self.cursor.line = old.line;
+                self.win.vstart = self.win.cursor;
+                self.win.cursor.line = old.line;
                 self.coladvance(left);
-                self.curswant = left;
+                self.win.curswant = left;
             }
-            self.keep_curswant = true;
+            self.win.keep_curswant = true;
         } else {
-            std::mem::swap(&mut self.cursor, &mut self.vstart);
+            std::mem::swap(&mut self.win.cursor, &mut self.win.vstart);
         }
     }
 
@@ -1869,7 +1881,7 @@ impl Editor {
             self.beep();
             return;
         };
-        self.keep_curswant = true;
+        self.win.keep_curswant = true;
         if let Some(vr) = r.visual {
             self.dot_visual(&r, vr);
             return;
@@ -1902,22 +1914,23 @@ impl Editor {
     /// Repeats a Visual mode operator on an area of the same size at the
     /// cursor (Vim's `redo_VIsual_busy`).
     fn dot_visual(&mut self, r: &Redo, vr: VisualRedo) {
-        let start = self.cursor;
+        let start = self.win.cursor;
         let vcol_here = self.cursor_vcol();
-        self.cursor.line = (self.cursor.line + vr.line_count - 1).min(self.doc.buf.last_line());
+        self.win.cursor.line =
+            (self.win.cursor.line + vr.line_count - 1).min(self.doc.buf.last_line());
         self.mode = Mode::Visual(vr.mode);
-        self.vstart = start;
+        self.win.vstart = start;
         if vr.vcol == usize::MAX || vr.mode == VisualMode::Char {
             if vr.mode == VisualMode::Char {
-                self.curswant = if vr.line_count <= 1 {
+                self.win.curswant = if vr.line_count <= 1 {
                     vcol_here + vr.vcol - 1
                 } else {
                     vr.vcol
                 };
             } else {
-                self.curswant = usize::MAX;
+                self.win.curswant = usize::MAX;
             }
-            self.coladvance(self.curswant);
+            self.coladvance(self.win.curswant);
         }
         self.replaying_visual = Some(vr);
         let mut keys = Vec::new();

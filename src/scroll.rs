@@ -205,7 +205,7 @@ impl Editor {
     fn clamp_cursor_to_window(&mut self) {
         let first = self.first_visible();
         let last = self.last_visible().max(first);
-        self.cursor.line = self.cursor.line.clamp(first, last);
+        self.win.cursor.line = self.win.cursor.line.clamp(first, last);
     }
 
     /// Vim's `update_topline()`: keeps the cursor in the window with
@@ -215,7 +215,7 @@ impl Editor {
         let n = self.doc.buf.line_count();
         let r = self.text_rows();
         let so = self.so_rows();
-        let cur = self.cursor.line.min(n - 1);
+        let cur = self.win.cursor.line.min(n - 1);
         self.top = self.top.min(n - 1);
         if self.top > 0 && (cur < self.top || self.rows_upto(self.top, cur, so) < so) {
             let halfheight = (r / 2).saturating_sub(1).max(2);
@@ -310,8 +310,8 @@ impl Editor {
                 }
                 self.top = top;
                 self.clamp_cursor_to_window();
-                self.keep_curswant = true;
-                self.coladvance(self.curswant);
+                self.win.keep_curswant = true;
+                self.coladvance(self.win.curswant);
             }
             ScrollCmd::LineUp => {
                 let top = self.top.saturating_sub(count1);
@@ -320,8 +320,8 @@ impl Editor {
                 }
                 self.top = top;
                 self.clamp_cursor_to_window();
-                self.keep_curswant = true;
-                self.coladvance(self.curswant);
+                self.win.keep_curswant = true;
+                self.coladvance(self.win.curswant);
             }
             ScrollCmd::PageDown => {
                 let mut moved = false;
@@ -342,7 +342,7 @@ impl Editor {
                     self.beep();
                     return;
                 }
-                self.cursor.line = self.first_visible();
+                self.win.cursor.line = self.first_visible();
                 self.cursor_fnb();
             }
             ScrollCmd::PageUp => {
@@ -358,7 +358,7 @@ impl Editor {
                     self.beep();
                     return;
                 }
-                self.cursor.line = self.last_visible();
+                self.win.cursor.line = self.last_visible();
                 self.cursor_fnb();
             }
             ScrollCmd::HalfDown | ScrollCmd::HalfUp => {
@@ -370,7 +370,7 @@ impl Editor {
                     0 => (r / 2).max(1),
                     v => v,
                 };
-                let cur = self.cursor.line;
+                let cur = self.win.cursor.line;
                 // Like Vim's halfpage() loop: `amt` is in screen rows, whole
                 // lines are scrolled while the rows left stay non-negative,
                 // and the cursor moves by the number of lines scrolled.
@@ -396,7 +396,7 @@ impl Editor {
                     self.top += lines;
                     // At the end of the file the cursor still moves by the count.
                     let step = if lines > 0 { lines } else { amt };
-                    self.cursor.line = (cur + step).min(n - 1);
+                    self.win.cursor.line = (cur + step).min(n - 1);
                 } else {
                     if cur == 0 {
                         self.beep();
@@ -413,7 +413,7 @@ impl Editor {
                     }
                     self.top -= lines;
                     let step = if lines > 0 { lines } else { amt };
-                    self.cursor.line = cur.saturating_sub(step);
+                    self.win.cursor.line = cur.saturating_sub(step);
                 }
                 self.clamp_cursor_to_window();
                 self.cursor_fnb();
@@ -422,9 +422,9 @@ impl Editor {
             | ScrollCmd::Middle { first_non_blank }
             | ScrollCmd::Bottom { first_non_blank } => {
                 if let Some(c) = count {
-                    self.cursor.line = c.saturating_sub(1).min(n - 1);
+                    self.win.cursor.line = c.saturating_sub(1).min(n - 1);
                 }
-                let cur = self.cursor.line;
+                let cur = self.win.cursor.line;
                 self.top = match cmd {
                     ScrollCmd::Top { .. } => self.top_for_cursor_top(cur),
                     ScrollCmd::Middle { .. } => self.top_for_cursor_middle(cur),
@@ -433,7 +433,7 @@ impl Editor {
                 if first_non_blank {
                     self.cursor_fnb();
                 } else {
-                    self.keep_curswant = true;
+                    self.win.keep_curswant = true;
                 }
             }
         }
@@ -477,6 +477,7 @@ impl Editor {
 
     /// Moves to the first non-blank of the cursor line (Vim's `beginline`).
     fn cursor_fnb(&mut self) {
-        self.cursor.col = crate::motion::first_non_blank(&self.doc.buf, self.cursor.line, true);
+        self.win.cursor.col =
+            crate::motion::first_non_blank(&self.doc.buf, self.win.cursor.line, true);
     }
 }

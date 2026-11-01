@@ -16,6 +16,7 @@ use crate::options::Options;
 use crate::register::Registers;
 use crate::text;
 use crate::undo::Step;
+use crate::window::Window;
 use std::path::Path;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -108,15 +109,11 @@ enum RepItem {
 pub struct Editor {
     /// The document shown in the one window (PLAN.md, "Document, Window, Editor").
     pub(crate) doc: Document,
-    pub(crate) cursor: Pos,
-    /// Desired virtual column for vertical motions; `usize::MAX` after `$`.
-    pub(crate) curswant: usize,
-    pub(crate) keep_curswant: bool,
+    /// The cursor, desired column and Visual start, in the one window.
+    pub(crate) win: Window,
     pub(crate) mode: Mode,
     /// Keys of a Normal/Visual command still being typed.
     pub(crate) pending: Vec<Key>,
-    /// The other end of the Visual area (Vim's `VIsual`).
-    pub(crate) vstart: Pos,
     /// The jumplist and the context mark (Vim's window state, see jumplist.rs).
     pub(crate) jumps: JumpList,
     ins_kind: InsertKind,
@@ -207,12 +204,9 @@ impl Editor {
     pub fn with_buffer(buf: Buffer) -> Self {
         Self {
             doc: Document::new(buf),
-            cursor: Pos::default(),
-            curswant: 0,
-            keep_curswant: false,
+            win: Window::default(),
             mode: Mode::Normal,
             pending: Vec::new(),
-            vstart: Pos::default(),
             jumps: JumpList::default(),
             ins_kind: InsertKind::Inline,
             ins_count: 1,
@@ -294,7 +288,7 @@ impl Editor {
     }
 
     pub fn cursor(&self) -> Pos {
-        self.cursor
+        self.win.cursor
     }
 
     /// The text of the document shown in the window.
@@ -304,7 +298,7 @@ impl Editor {
 
     /// The other end of the Visual area, when the area is shown.
     pub fn visual_start(&self) -> Option<Pos> {
-        self.shown_visual().map(|_| self.vstart)
+        self.shown_visual().map(|_| self.win.vstart)
     }
 
     /// The Visual mode whose area is drawn. That includes a `/` or `?` prompt
@@ -410,7 +404,7 @@ impl Editor {
         // column, even if the cursor did not move. Vertical motions and
         // partial commands (counts, prefixes, command-line typing) opt out.
         self.depth += 1;
-        self.keep_curswant = false;
+        self.win.keep_curswant = false;
         match self.mode {
             Mode::Normal | Mode::Visual(_) => self.normal_key(key),
             Mode::Insert | Mode::Replace => self.insert_key(key),
@@ -420,13 +414,17 @@ impl Editor {
         match self.mode {
             Mode::Normal => self.clamp_normal(),
             Mode::Visual(_) => {
-                self.cursor.line = self.cursor.line.min(self.doc.buf.last_line());
-                self.cursor.col = self.cursor.col.min(self.doc.buf.line_len(self.cursor.line));
+                self.win.cursor.line = self.win.cursor.line.min(self.doc.buf.last_line());
+                self.win.cursor.col = self
+                    .win
+                    .cursor
+                    .col
+                    .min(self.doc.buf.line_len(self.win.cursor.line));
             }
             _ => {}
         }
-        if !self.keep_curswant {
-            self.curswant = self.cursor_vcol();
+        if !self.win.keep_curswant {
+            self.win.curswant = self.cursor_vcol();
         }
         self.update_topline();
         self.sync_jumps();
@@ -434,7 +432,7 @@ impl Editor {
         // line mode are part of the command that started them, so it runs
         // when they end.
         if matches!(self.mode, Mode::Normal | Mode::Visual(_)) && self.pending.is_empty() {
-            self.jumps.check_pcmark(self.cursor);
+            self.jumps.check_pcmark(self.win.cursor);
         }
         self.depth -= 1;
         if self.depth == 0
@@ -507,37 +505,37 @@ impl Editor {
     }
 
     fn line_len(&self) -> usize {
-        self.doc.buf.line_len(self.cursor.line)
+        self.doc.buf.line_len(self.win.cursor.line)
     }
 
     /// The cursor's virtual column as Vim shows it in the current mode.
     pub fn cursor_vcol(&self) -> usize {
         text::cursor_vcol(
-            self.doc.buf.line(self.cursor.line),
-            self.cursor.col,
+            self.doc.buf.line(self.win.cursor.line),
+            self.win.cursor.col,
             matches!(self.mode, Mode::Insert | Mode::Replace),
             self.opts.tabstop(),
         )
     }
 
     fn clamp_normal(&mut self) {
-        self.cursor.line = self.cursor.line.min(self.doc.buf.last_line());
+        self.win.cursor.line = self.win.cursor.line.min(self.doc.buf.last_line());
         let len = self.line_len();
-        if self.cursor.col >= len {
-            self.cursor.col = len.saturating_sub(1);
+        if self.win.cursor.col >= len {
+            self.win.cursor.col = len.saturating_sub(1);
         }
     }
 
     pub(crate) fn goto_line_first_non_blank(&mut self, line: usize) {
-        self.keep_curswant = false;
-        self.cursor.line = line.min(self.doc.buf.last_line());
-        self.cursor.col = motion::first_non_blank(&self.doc.buf, self.cursor.line, true);
+        self.win.keep_curswant = false;
+        self.win.cursor.line = line.min(self.doc.buf.last_line());
+        self.win.cursor.col = motion::first_non_blank(&self.doc.buf, self.win.cursor.line, true);
     }
 
     pub(crate) fn file_info(&mut self) {
         let name = self.display_name();
         let lines = self.doc.buf.line_count();
-        let pct = (self.cursor.line + 1) * 100 / lines;
+        let pct = (self.win.cursor.line + 1) * 100 / lines;
         let modified = if self.doc.buf.modified {
             " [Modified]"
         } else {
@@ -569,14 +567,14 @@ impl Editor {
             first,
             count,
             self.doc.buf.line_count(),
-            self.cursor,
+            self.win.cursor,
             self.doc.buf.modified,
             self.doc.buf.marks,
         );
     }
 
     pub(crate) fn u_save_cursor(&mut self) {
-        self.u_save(self.cursor.line, 1, true);
+        self.u_save(self.win.cursor.line, 1, true);
     }
 
     fn u_saveline(&mut self, l: usize) {
@@ -586,8 +584,8 @@ impl Editor {
         self.doc.uline = Some(ULine {
             line: l,
             text: self.doc.buf.line_string(l),
-            col: if self.cursor.line == l {
-                self.cursor.col
+            col: if self.win.cursor.line == l {
+                self.win.cursor.col
             } else {
                 0
             },
@@ -642,7 +640,7 @@ impl Editor {
             }
             self.doc.buf.restore(&step.snap);
             self.doc.buf.modified = step.modified;
-            self.cursor = self.undo_cursor(&step);
+            self.win.cursor = self.undo_cursor(&step);
             done += 1;
         }
         if done == 0 {
@@ -678,7 +676,7 @@ impl Editor {
         let oldsize = from.line_count().saturating_sub(top + step.below);
         let newsize = to.line_count().saturating_sub(top + step.below);
         let uh = step.uh_cursor;
-        let mut cursor = self.cursor;
+        let mut cursor = self.win.cursor;
         let lnum = uh.line + 1;
         if lnum >= top && lnum <= top + newsize + 1 {
             cursor = uh;
@@ -726,8 +724,8 @@ impl Editor {
         self.u_save(u.line, 1, false);
         let old = self.doc.buf.line_string(u.line);
         self.doc.buf.set_line(u.line, &u.text);
-        let col = if self.cursor.line == u.line {
-            self.cursor.col
+        let col = if self.win.cursor.line == u.line {
+            self.win.cursor.col
         } else {
             u.col
         };
@@ -736,10 +734,10 @@ impl Editor {
             text: old,
             col,
         });
-        self.cursor = Pos::new(u.line, u.col);
+        self.win.cursor = Pos::new(u.line, u.col);
         let len = self.line_len();
-        if self.cursor.col >= len {
-            self.cursor.col = len.saturating_sub(1);
+        if self.win.cursor.col >= len {
+            self.win.cursor.col = len.saturating_sub(1);
         }
     }
 
@@ -771,7 +769,7 @@ impl Editor {
                 .iter()
                 .take_while(|&&c| c == ' ' || c == '\t')
                 .count();
-            self.cursor = Pos::new(new, w);
+            self.win.cursor = Pos::new(new, w);
             self.did_ai = true;
         }
     }
@@ -848,7 +846,7 @@ impl Editor {
 
     /// Applies an editing key. Returns false for keys that do nothing.
     fn insert_edit(&mut self, key: Key) -> bool {
-        let Pos { line, col } = self.cursor;
+        let Pos { line, col } = self.win.cursor;
         let replace = self.mode == Mode::Replace;
         match key {
             Key::Char(_) | Key::Tab => {
@@ -867,7 +865,7 @@ impl Editor {
                     self.doc.buf.insert(line, col, c.encode_utf8(&mut [0; 4]));
                     self.ins_stack.push(RepItem::Appended);
                 }
-                self.cursor.col += 1;
+                self.win.cursor.col += 1;
             }
             Key::Enter | Key::Ctrl('j') => {
                 self.u_save_cursor();
@@ -914,13 +912,13 @@ impl Editor {
                 } else {
                     0
                 };
-                self.cursor = Pos::new(line + 1, w);
+                self.win.cursor = Pos::new(line + 1, w);
                 self.ins_stack.push(RepItem::Newline);
             }
             Key::Backspace if replace => match self.ins_stack.pop() {
                 Some(RepItem::Replaced(c)) => {
                     self.u_save_cursor();
-                    self.cursor.col -= 1;
+                    self.win.cursor.col -= 1;
                     self.doc.buf.remove(line, col - 1, 1);
                     self.doc
                         .buf
@@ -928,18 +926,18 @@ impl Editor {
                 }
                 Some(RepItem::Appended) => {
                     self.u_save_cursor();
-                    self.cursor.col -= 1;
+                    self.win.cursor.col -= 1;
                     self.doc.buf.remove(line, col - 1, 1);
                 }
                 Some(RepItem::Newline) => {
                     let prev_len = self.doc.buf.line_len(line - 1);
                     self.u_save(line - 1, 2, true);
                     self.doc.buf.remove(line - 1, prev_len, 1);
-                    self.cursor = Pos::new(line - 1, prev_len);
+                    self.win.cursor = Pos::new(line - 1, prev_len);
                 }
                 None => {
                     if col > 0 {
-                        self.cursor.col -= 1;
+                        self.win.cursor.col -= 1;
                     } else {
                         self.beep();
                     }
@@ -952,12 +950,12 @@ impl Editor {
                 if col > 0 {
                     self.u_save_cursor();
                     self.doc.buf.remove(line, col - 1, 1);
-                    self.cursor.col -= 1;
+                    self.win.cursor.col -= 1;
                 } else if line > 0 {
                     let prev_len = self.doc.buf.line_len(line - 1);
                     self.u_save(line - 1, 2, true);
                     self.doc.buf.remove(line - 1, prev_len, 1);
-                    self.cursor = Pos::new(line - 1, prev_len);
+                    self.win.cursor = Pos::new(line - 1, prev_len);
                 } else {
                     self.beep();
                     return false;
@@ -982,7 +980,7 @@ impl Editor {
 
     /// True when only white space precedes the cursor (Vim's `inindent(0)`).
     fn in_indent(&self) -> bool {
-        self.line_vec(self.cursor.line)[..self.cursor.col]
+        self.line_vec(self.win.cursor.line)[..self.win.cursor.col]
             .iter()
             .all(|&c| c == ' ' || c == '\t')
     }
@@ -997,7 +995,7 @@ impl Editor {
     /// Vim's `ins_tab()` for 'expandtab', 'softtabstop' and 'smarttab'.
     /// Returns false when the Tab is an ordinary character.
     fn ins_tab(&mut self) -> bool {
-        let Pos { line, col } = self.cursor;
+        let Pos { line, col } = self.win.cursor;
         let ts = self.opts.tabstop();
         let sw = self.opts.shiftwidth();
         let sts = self.opts.softtabstop();
@@ -1037,7 +1035,7 @@ impl Editor {
     /// The end of Vim's `ins_tab()`: the white space before the cursor is
     /// written with Tabs wherever a Tab stop is reached within it.
     fn tabify_before_cursor(&mut self) {
-        let Pos { line, col } = self.cursor;
+        let Pos { line, col } = self.win.cursor;
         let ts = self.opts.tabstop();
         let v = self.line_vec(line);
         let mut start = col;
@@ -1061,13 +1059,13 @@ impl Editor {
         self.doc.buf.remove(line, start, col - start);
         let s: String = new.iter().collect();
         self.doc.buf.insert(line, start, &s);
-        self.cursor.col = start + new.len();
+        self.win.cursor.col = start + new.len();
     }
 
     /// Whether a BS in Insert mode is handled by 'softtabstop' or
     /// 'smarttab' (the condition of Vim's `ins_bs()`).
     fn bs_uses_sts(&self) -> bool {
-        let Pos { line, col } = self.cursor;
+        let Pos { line, col } = self.win.cursor;
         if col == 0 {
             return false;
         }
@@ -1082,7 +1080,7 @@ impl Editor {
     /// Vim's `ins_bs()` with 'softtabstop' or 'smarttab': BS deletes white
     /// space back to the previous stop, then fills up to it with spaces.
     fn ins_bs_sts(&mut self) {
-        let Pos { line, mut col } = self.cursor;
+        let Pos { line, mut col } = self.win.cursor;
         let ts = self.opts.tabstop();
         let step = if self.opts.smarttab() && self.in_indent() {
             self.opts.shiftwidth()
@@ -1114,28 +1112,28 @@ impl Editor {
             self.doc.buf.remove(line, col - 1, 1);
             col -= 1;
         }
-        self.cursor.col = col;
+        self.win.cursor.col = col;
     }
 
     fn insert_move(&mut self, key: Key) {
         match key {
-            Key::Left if self.cursor.col > 0 => self.cursor.col -= 1,
-            Key::Right if self.cursor.col < self.line_len() => self.cursor.col += 1,
+            Key::Left if self.win.cursor.col > 0 => self.win.cursor.col -= 1,
+            Key::Right if self.win.cursor.col < self.line_len() => self.win.cursor.col += 1,
             Key::Up | Key::Down => {
-                self.keep_curswant = true;
+                self.win.keep_curswant = true;
                 let ok = if key == Key::Down {
                     self.cursor_down_n(1)
                 } else {
                     self.cursor_up_n(1)
                 };
                 if ok {
-                    self.coladvance(self.curswant);
+                    self.coladvance(self.win.curswant);
                 } else {
                     self.beep();
                 }
             }
-            Key::Home => self.cursor.col = 0,
-            Key::End => self.cursor.col = self.line_len(),
+            Key::Home => self.win.cursor.col = 0,
+            Key::End => self.win.cursor.col = self.line_len(),
             _ => self.beep(),
         }
     }
@@ -1144,11 +1142,11 @@ impl Editor {
         let keys = std::mem::take(&mut self.ins_keys);
         for _ in 1..self.ins_count {
             if self.ins_kind == InsertKind::OpenLine {
-                let at = self.cursor.line + 1;
+                let at = self.win.cursor.line + 1;
                 self.u_save(at, 0, false);
                 self.doc.uline = None;
                 self.doc.buf.insert_line(at, "");
-                self.cursor = Pos::new(at, 0);
+                self.win.cursor = Pos::new(at, 0);
                 self.auto_indent(at, at - 1);
             }
             for &k in &keys {
@@ -1158,19 +1156,19 @@ impl Editor {
         self.ins_count = 1;
         if std::mem::take(&mut self.did_ai) {
             // Nothing was typed after an automatic indent: remove it.
-            let l = self.cursor.line;
+            let l = self.win.cursor.line;
             let mut len = self.doc.buf.line_len(l);
-            if self.cursor.col >= len {
+            if self.win.cursor.col >= len {
                 while len > 0 && matches!(self.doc.buf.char_at(l, len - 1), Some(' ' | '\t')) {
                     self.doc.buf.remove(l, len - 1, 1);
                     len -= 1;
                 }
-                self.cursor.col = len;
+                self.win.cursor.col = len;
             }
         }
         self.mode = Mode::Normal;
-        if self.cursor.col > 0 {
-            self.cursor.col -= 1;
+        if self.win.cursor.col > 0 {
+            self.win.cursor.col -= 1;
         }
         match std::mem::replace(&mut self.ins_post, PostInsert::None) {
             PostInsert::None => {}
@@ -1203,9 +1201,9 @@ impl Editor {
         match Buffer::load(path) {
             Ok((buf, stats)) => {
                 self.doc = Document::new(buf);
-                self.cursor = Pos::default();
-                self.curswant = 0;
-                self.keep_curswant = false;
+                self.win.cursor = Pos::default();
+                self.win.curswant = 0;
+                self.win.keep_curswant = false;
                 // The jumplist and the context mark refer to the old text.
                 self.jumps = JumpList::default();
                 let name = path.display();

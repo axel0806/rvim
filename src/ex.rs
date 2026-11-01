@@ -152,7 +152,7 @@ impl Editor {
                     // Lines deleted by an earlier command are marked usize::MAX.
                     let l = self.doc.buf.tracked[next];
                     if l != usize::MAX {
-                        self.cursor = Pos::new(l.min(self.doc.buf.last_line()), 0);
+                        self.win.cursor = Pos::new(l.min(self.doc.buf.last_line()), 0);
                         self.ex_tasks.push(ExTask::Ex(cmd));
                     }
                 }
@@ -160,11 +160,12 @@ impl Editor {
                     self.global_busy = false;
                     self.doc.buf.tracked.clear();
                     if self.global_need_beginline {
-                        self.cursor.col = first_non_blank(&self.doc.buf, self.cursor.line, true);
+                        self.win.cursor.col =
+                            first_non_blank(&self.doc.buf, self.win.cursor.line, true);
                     } else {
-                        let len = self.doc.buf.line_len(self.cursor.line);
-                        if self.cursor.col >= len {
-                            self.cursor.col = len.saturating_sub(1);
+                        let len = self.doc.buf.line_len(self.win.cursor.line);
+                        if self.win.cursor.col >= len {
+                            self.win.cursor.col = len.saturating_sub(1);
                         }
                     }
                     let diff = self.doc.buf.line_count() as i64 - old_lines;
@@ -409,7 +410,7 @@ impl Editor {
 
     fn parse_range<'a>(&mut self, s: &'a str) -> ExRes<(Range, &'a str)> {
         let mut rest = skip_ws(s);
-        let cur = self.cursor.line + 1;
+        let cur = self.win.cursor.line + 1;
         let last = self.doc.buf.line_count();
         let mut base = cur;
         let mut lines: Vec<usize> = Vec::new();
@@ -461,7 +462,7 @@ impl Editor {
                             return Err("E16: Invalid range".into());
                         }
                         base = l.max(1);
-                        self.cursor.line = base - 1;
+                        self.win.cursor.line = base - 1;
                     }
                 }
                 _ => break,
@@ -763,17 +764,17 @@ impl Editor {
         if self.doc.buf.has_no_lines() && delete {
             return Ok(());
         }
-        let saved = self.cursor;
-        self.cursor = Pos::new(r.line1 - 1, 0);
-        self.cursor.col = first_non_blank(&self.doc.buf, self.cursor.line, true);
+        let saved = self.win.cursor;
+        self.win.cursor = Pos::new(r.line1 - 1, 0);
+        self.win.cursor.col = first_non_blank(&self.doc.buf, self.win.cursor.line, true);
         let mut oa = self.line_oparg(if delete { Op::Delete } else { Op::Yank }, r, reg);
         if delete {
             self.op_delete(&mut oa);
-            self.keep_curswant = false;
+            self.win.keep_curswant = false;
         } else {
             self.op_yank(&oa, false, true);
             // The cursor does not move for :yank.
-            self.cursor = saved;
+            self.win.cursor = saved;
         }
         Ok(())
     }
@@ -822,8 +823,8 @@ impl Editor {
         for (i, l) in lines.iter().enumerate() {
             self.doc.buf.insert_line(at + i, l);
         }
-        self.cursor.line = at + n - 1;
-        self.cursor.col = first_non_blank(&self.doc.buf, self.cursor.line, true);
+        self.win.cursor.line = at + n - 1;
+        self.win.cursor.col = first_non_blank(&self.doc.buf, self.win.cursor.line, true);
         self.doc.uline = None;
         if n > 2 {
             self.info(format!("{n} more lines"));
@@ -862,8 +863,8 @@ impl Editor {
         } else {
             at + lines.len() - 1
         };
-        self.cursor.line = last;
-        self.cursor.col = first_non_blank(&self.doc.buf, last, true);
+        self.win.cursor.line = last;
+        self.win.cursor.col = first_non_blank(&self.doc.buf, last, true);
         self.doc.uline = None;
         self.info(format!(
             "\"{}\" {}L, {}B",
@@ -876,7 +877,7 @@ impl Editor {
 
     /// Parses the destination of `:m` / `:t`.
     fn copymove_dest(&mut self, arg: &str) -> ExRes<usize> {
-        let (addr, rest) = self.get_address(arg, self.cursor.line + 1)?;
+        let (addr, rest) = self.get_address(arg, self.win.cursor.line + 1)?;
         if !skip_ws(rest).is_empty() {
             return Err(format!("E488: Trailing characters: {rest}"));
         }
@@ -893,9 +894,9 @@ impl Editor {
             }
             if dest == r.line2 || dest + 1 == r.line1 {
                 // Already there: the cursor still moves.
-                self.cursor.line = (if dest >= r.line2 { dest } else { r.line2 }) - 1;
-                self.cursor.line = r.line2 - 1;
-                self.cursor.col = first_non_blank(&self.doc.buf, self.cursor.line, true);
+                self.win.cursor.line = (if dest >= r.line2 { dest } else { r.line2 }) - 1;
+                self.win.cursor.line = r.line2 - 1;
+                self.win.cursor.col = first_non_blank(&self.doc.buf, self.win.cursor.line, true);
                 return Ok(());
             }
             let moved: Vec<String> = (r.line1 - 1..r.line2)
@@ -912,13 +913,13 @@ impl Editor {
                     self.doc.buf.insert_line(dest + i, l);
                 }
                 self.doc.buf.delete_lines(r.line1 - 1, n);
-                self.cursor.line = dest - 1;
+                self.win.cursor.line = dest - 1;
             } else {
                 self.doc.buf.delete_lines(r.line1 - 1, n);
                 for (i, l) in moved.iter().enumerate() {
                     self.doc.buf.insert_line(dest + i, l);
                 }
-                self.cursor.line = dest + n - 1;
+                self.win.cursor.line = dest + n - 1;
             }
             let new_first = if dest >= r.line2 { dest - n } else { dest };
             // The jumplist and the context mark follow the move as one
@@ -957,13 +958,13 @@ impl Editor {
             for (i, l) in copied.iter().enumerate() {
                 self.doc.buf.insert_line(dest + i, l);
             }
-            self.cursor.line = dest + n - 1;
+            self.win.cursor.line = dest + n - 1;
             if n > 2 {
                 self.info(format!("{n} more lines"));
             }
         }
         self.doc.uline = None;
-        self.cursor.col = first_non_blank(&self.doc.buf, self.cursor.line, true);
+        self.win.cursor.col = first_non_blank(&self.doc.buf, self.win.cursor.line, true);
         Ok(())
     }
 
@@ -1006,12 +1007,12 @@ impl Editor {
         self.doc.buf.set_mark(c, Pos::new(line, col));
         // Vim's beginline() on the temporary cursor sets the desired column,
         // so `:k` resets it even though the cursor does not move.
-        self.keep_curswant = false;
+        self.win.keep_curswant = false;
         Ok(())
     }
 
     fn ex_join(&mut self, mut r: Range, bang: bool, arg: &str) -> ExRes<()> {
-        self.cursor.line = (r.line1 - 1).min(self.doc.buf.last_line());
+        self.win.cursor.line = (r.line1 - 1).min(self.doc.buf.last_line());
         let arg = arg.trim();
         if let Ok(n) = arg.parse::<usize>() {
             if n == 0 {
@@ -1035,9 +1036,9 @@ impl Editor {
         if r.line1 == r.line2 {
             return Ok(());
         }
-        self.cursor = Pos::new(r.line1 - 1, 0);
+        self.win.cursor = Pos::new(r.line1 - 1, 0);
         self.do_join(r.line2 - r.line1 + 1, !bang, true);
-        self.cursor.col = first_non_blank(&self.doc.buf, self.cursor.line, true);
+        self.win.cursor.col = first_non_blank(&self.doc.buf, self.win.cursor.line, true);
         Ok(())
     }
 
@@ -1056,12 +1057,12 @@ impl Editor {
             return Err(format!("E488: Trailing characters: {rest}"));
         }
         self.check_range_lines(r)?;
-        self.cursor = Pos::new(r.line1 - 1, 0);
-        self.cursor.col = first_non_blank(&self.doc.buf, self.cursor.line, true);
+        self.win.cursor = Pos::new(r.line1 - 1, 0);
+        self.win.cursor.col = first_non_blank(&self.doc.buf, self.win.cursor.line, true);
         let oa = self.line_oparg(if left { Op::LShift } else { Op::RShift }, r, None);
         self.op_shift(&oa, false, amount);
-        self.cursor.line = r.line2 - 1;
-        self.cursor.col = first_non_blank(&self.doc.buf, self.cursor.line, true);
+        self.win.cursor.line = r.line2 - 1;
+        self.win.cursor.col = first_non_blank(&self.doc.buf, self.win.cursor.line, true);
         Ok(())
     }
 
@@ -1085,7 +1086,7 @@ impl Editor {
         } else {
             let mut l = r.line1.max(1);
             loop {
-                self.cursor = Pos::new((l - 1).min(self.doc.buf.last_line()), 0);
+                self.win.cursor = Pos::new((l - 1).min(self.doc.buf.last_line()), 0);
                 run(self);
                 l += 1;
                 if l > r.line2 {
@@ -1392,7 +1393,7 @@ impl Editor {
             nlines: 0,
             last_line: None,
             multiline_pat: re_multiline(pattern),
-            saved_cursor: self.cursor,
+            saved_cursor: self.win.cursor,
             got_match: false,
             found: false,
             got_quit: false,
@@ -1488,7 +1489,7 @@ impl Editor {
                         } else if st.ask {
                             // Like Vim, the cursor goes to the match asked about.
                             st.awaiting = true;
-                            self.cursor = Pos::new(st.lnum, m.start.1);
+                            self.win.cursor = Pos::new(st.lnum, m.start.1);
                             self.message = Some(Message {
                                 text: format!("replace with {} (y/n/a/q/l/^E/^Y)?", st.rep),
                                 error: false,
@@ -1519,7 +1520,7 @@ impl Editor {
                 // 3. Substitute the string. Like Vim, the cursor then sits at
                 // the start of the line (also where undo returns to).
                 if action == Action::Substitute {
-                    self.cursor = Pos::new(st.lnum, 0);
+                    self.win.cursor = Pos::new(st.lnum, 0);
                     let out = match expr_text {
                         Some(text) => text
                             .chars()
@@ -1684,7 +1685,7 @@ impl Editor {
         }
 
         if st.flags.count_only {
-            self.cursor = st.saved_cursor;
+            self.win.cursor = st.saved_cursor;
             if st.nsubs > 0 {
                 self.info(format!(
                     "{} match{} on {} line{}",
@@ -1711,10 +1712,11 @@ impl Editor {
             if !st.ask
                 && let Some(l) = st.last_line
             {
-                self.cursor.line = l.min(self.doc.buf.last_line());
-                self.cursor.col = 0;
+                self.win.cursor.line = l.min(self.doc.buf.last_line());
+                self.win.cursor.col = 0;
                 if !self.global_busy {
-                    self.cursor.col = first_non_blank(&self.doc.buf, self.cursor.line, true);
+                    self.win.cursor.col =
+                        first_non_blank(&self.doc.buf, self.win.cursor.line, true);
                 }
             }
             if st.nsubs > 2 {
@@ -1778,7 +1780,7 @@ impl Editor {
     pub(crate) fn confirm_key(&mut self, key: Key) {
         if let Key::Ctrl(c @ ('e' | 'y')) = key {
             self.scroll_window_for_prompt(c == 'e');
-            self.keep_curswant = true;
+            self.win.keep_curswant = true;
             return;
         }
         let answer = match key {
@@ -1835,7 +1837,7 @@ impl Editor {
             }
         }
         // Waiting keeps the desired column; a finished `:s` moves the cursor.
-        self.keep_curswant = self.sub.is_some();
+        self.win.keep_curswant = self.sub.is_some();
     }
 
     /// The match a `c` flag prompt asks about: start and end (exclusive), for
@@ -1851,10 +1853,10 @@ impl Editor {
     /// Vim's `u_save()` for a change at the start of line `first`: the undo
     /// cursor is at column 0, whatever the cursor does during a prompt.
     fn u_save_line_start(&mut self, first: usize, count: usize) {
-        let at = self.cursor;
-        self.cursor = Pos::new(first, 0);
+        let at = self.win.cursor;
+        self.win.cursor = Pos::new(first, 0);
         self.u_save(first, count, false);
-        self.cursor = at;
+        self.win.cursor = at;
     }
 }
 

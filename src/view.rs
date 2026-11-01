@@ -109,7 +109,7 @@ fn visual_cells(ed: &Editor, line: usize, lay: &Layout) -> Vec<(usize, usize)> {
             let (la, ra) = text::vcol_range(ed.doc.buf.line(a.line), a.col, ts);
             let (lb, rb) = text::vcol_range(ed.doc.buf.line(b.line), b.col, ts);
             let left = la.min(lb);
-            let to_eol = ed.curswant == usize::MAX;
+            let to_eol = ed.win.curswant == usize::MAX;
             let right = if to_eol { usize::MAX } else { ra.max(rb) };
             let mut vcol = 0;
             for i in 0..len {

@@ -82,10 +82,10 @@ impl Editor {
     }
 
     fn check_cursor_col(&mut self) {
-        let len = self.doc.buf.line_len(self.cursor.line);
+        let len = self.doc.buf.line_len(self.win.cursor.line);
         let allow_end = matches!(self.mode, Mode::Insert | Mode::Replace);
-        if self.cursor.col >= len {
-            self.cursor.col = if allow_end {
+        if self.win.cursor.col >= len {
+            self.win.cursor.col = if allow_end {
                 len
             } else {
                 len.saturating_sub(1)
@@ -133,15 +133,15 @@ impl Editor {
             }
             _ => {}
         }
-        if oa.start < self.cursor {
-            oa.end = self.cursor;
-            self.cursor = oa.start;
+        if oa.start < self.win.cursor {
+            oa.end = self.win.cursor;
+            self.win.cursor = oa.start;
         } else {
             oa.end = oa.start;
-            oa.start = self.cursor;
+            oa.start = self.win.cursor;
         }
         oa.line_count = oa.end.line - oa.start.line + 1;
-        self.keep_curswant = false;
+        self.win.keep_curswant = false;
         oa.empty = !oa.linewise
             && (!oa.inclusive || (op == Op::Yank && gchar(&self.doc.buf, oa.end).is_none()))
             && oa.start == oa.end;
@@ -150,7 +150,7 @@ impl Editor {
         if !oa.linewise && !oa.inclusive && !info.no_adj && oa.end.col == 0 && oa.line_count > 1 {
             oa.line_count -= 1;
             oa.end.line -= 1;
-            if inindent(&self.doc.buf, self.cursor, 0) {
+            if inindent(&self.doc.buf, self.win.cursor, 0) {
                 oa.linewise = true;
             } else {
                 oa.end.col = self.doc.buf.line_len(oa.end.line);
@@ -181,24 +181,24 @@ impl Editor {
             'S' | 'R' => vmode = VisualMode::Line,
             'X' | 'Y' | 'D' | 'C' if vmode != VisualMode::Block => vmode = VisualMode::Line,
             'D' | 'C' => {
-                self.curswant = usize::MAX;
+                self.win.curswant = usize::MAX;
             }
             _ => {}
         }
         let replay = self.replaying_visual;
         if replay.is_none() {
             self.doc.last_visual = Some(LastVisual {
-                start: self.vstart,
-                end: self.cursor,
+                start: self.win.vstart,
+                end: self.win.cursor,
                 mode: vmode,
-                curswant: self.curswant,
+                curswant: self.win.curswant,
             });
         }
         let mut oa = OpArg {
             op,
             reg,
-            start: self.vstart,
-            end: self.vstart,
+            start: self.win.vstart,
+            end: self.win.vstart,
             linewise: false,
             inclusive: true,
             block: false,
@@ -209,17 +209,17 @@ impl Editor {
             empty: false,
             use_reg_one: false,
             force: None,
-            is_max: self.curswant == usize::MAX,
+            is_max: self.win.curswant == usize::MAX,
         };
         if vmode == VisualMode::Line {
             oa.start.col = 0;
         }
-        if oa.start < self.cursor {
-            oa.end = self.cursor;
-            self.cursor = oa.start;
+        if oa.start < self.win.cursor {
+            oa.end = self.win.cursor;
+            self.win.cursor = oa.start;
         } else {
             oa.end = oa.start;
-            oa.start = self.cursor;
+            oa.start = self.win.cursor;
         }
         oa.line_count = oa.end.line - oa.start.line + 1;
 
@@ -228,7 +228,7 @@ impl Editor {
         }
         // Remember the size for "1v" and "." (Vim's resel_VIsual_*).
         if replay.is_none() {
-            let vcol = if self.curswant == usize::MAX {
+            let vcol = if self.win.curswant == usize::MAX {
                 usize::MAX
             } else if vmode == VisualMode::Block {
                 oa.end_vcol - oa.start_vcol + 1
@@ -272,7 +272,7 @@ impl Editor {
             }
         }
         self.mode = Mode::Normal;
-        self.keep_curswant = false;
+        self.win.keep_curswant = false;
         oa.empty = !oa.linewise
             && ((!oa.inclusive && !oa.block)
                 || (op == Op::Yank && gchar(&self.doc.buf, oa.end).is_none()))
@@ -293,7 +293,7 @@ impl Editor {
             oa.start_vcol = oa.start_vcol.min(s2);
             oa.end_vcol = oa.end_vcol.max(e2);
         }
-        if self.curswant == usize::MAX {
+        if self.win.curswant == usize::MAX {
             oa.end_vcol = 0;
             for l in oa.start.line..=oa.end.line {
                 let line = self.doc.buf.line(l);
@@ -305,12 +305,12 @@ impl Editor {
         }
         let save_mode = self.mode;
         self.mode = Mode::Visual(VisualMode::Block);
-        self.cursor.line = oa.end.line;
+        self.win.cursor.line = oa.end.line;
         self.coladvance(oa.end_vcol);
-        oa.end = self.cursor;
-        self.cursor = oa.start;
+        oa.end = self.win.cursor;
+        self.win.cursor = oa.start;
         self.coladvance(oa.start_vcol);
-        oa.start = self.cursor;
+        oa.start = self.win.cursor;
         self.mode = save_mode;
     }
 
@@ -319,7 +319,7 @@ impl Editor {
             Op::LShift | Op::RShift => self.op_shift(&oa, true, amount),
             Op::Join | Op::JoinNs => {
                 oa.line_count = oa.line_count.max(2);
-                if self.cursor.line + oa.line_count - 1 > self.doc.buf.last_line() {
+                if self.win.cursor.line + oa.line_count - 1 > self.doc.buf.last_line() {
                     self.beep();
                 } else {
                     self.do_join(oa.line_count, oa.op == Op::Join, true);
@@ -365,7 +365,7 @@ impl Editor {
         }
         if oa.block {
             let mut width = oa.end_vcol - oa.start_vcol;
-            if self.curswant == usize::MAX && width > 0 {
+            if self.win.curswant == usize::MAX && width > 0 {
                 width -= 1;
             }
             kind = RegType::Block(width);
@@ -455,7 +455,7 @@ impl Editor {
             while i < line.len() && (line[i] == ' ' || line[i] == '\t') {
                 i += 1;
             }
-            if i >= line.len() && inindent(&self.doc.buf, self.cursor, 0) {
+            if i >= line.len() && inindent(&self.doc.buf, self.win.cursor, 0) {
                 oa.linewise = true;
             }
         }
@@ -489,13 +489,13 @@ impl Editor {
         let old_count = self.doc.buf.line_count() as i64;
         if oa.block {
             self.u_save(oa.start.line, oa.line_count, true);
-            for l in self.cursor.line..=oa.end.line {
+            for l in self.win.cursor.line..=oa.end.line {
                 let bd = self.block_prep(oa, l, true);
                 if bd.textlen == 0 {
                     continue;
                 }
-                if l == self.cursor.line {
-                    self.cursor.col = bd.textcol + bd.startspaces;
+                if l == self.win.cursor.line {
+                    self.win.cursor.col = bd.textcol + bd.startspaces;
                 }
                 let line = self.line_vec(l);
                 let mut new: Vec<char> = line[..bd.textcol].to_vec();
@@ -507,31 +507,31 @@ impl Editor {
         } else if oa.linewise {
             if oa.op == Op::Change {
                 if oa.line_count > 1 {
-                    let line = self.cursor.line;
+                    let line = self.win.cursor.line;
                     self.del_lines(line + 1, oa.line_count - 1);
-                    self.cursor.line = line;
+                    self.win.cursor.line = line;
                 }
                 self.u_save_cursor();
                 if self.opts.autoindent() {
                     // Keep the indent; it is removed again if nothing is typed.
-                    let line = self.line_vec(self.cursor.line);
+                    let line = self.line_vec(self.win.cursor.line);
                     let w = line
                         .iter()
                         .position(|&c| c != ' ' && c != '\t')
                         .unwrap_or(line.len());
-                    self.set_line_vec(self.cursor.line, &line[..w]);
-                    self.cursor.col = w;
+                    self.set_line_vec(self.win.cursor.line, &line[..w]);
+                    self.win.cursor.col = w;
                     self.did_ai = w > 0;
                 } else {
-                    self.cursor.col = 0;
-                    self.doc.buf.set_line(self.cursor.line, "");
+                    self.win.cursor.col = 0;
+                    self.doc.buf.set_line(self.win.cursor.line, "");
                 }
                 if oa.line_count > 1 {
                     self.doc.uline = None;
                 }
             } else {
-                self.del_lines(self.cursor.line, oa.line_count);
-                self.cursor.col = first_non_blank(&self.doc.buf, self.cursor.line, true);
+                self.del_lines(self.win.cursor.line, oa.line_count);
+                self.win.cursor.col = first_non_blank(&self.doc.buf, self.win.cursor.line, true);
                 self.doc.uline = None;
             }
         } else if oa.line_count == 1 {
@@ -539,19 +539,22 @@ impl Editor {
             let n = oa.end.col + 1 - usize::from(!oa.inclusive) - oa.start.col;
             self.del_bytes(n, true);
         } else {
-            self.u_save(self.cursor.line, oa.line_count, true);
+            self.u_save(self.win.cursor.line, oa.line_count, true);
             // Truncate the first line, delete the middle lines, cut the
             // start of the last line and join.
-            let line = self.line_vec(self.cursor.line);
-            self.set_line_vec(self.cursor.line, &line[..self.cursor.col.min(line.len())]);
-            let first = self.cursor.line;
+            let line = self.line_vec(self.win.cursor.line);
+            self.set_line_vec(
+                self.win.cursor.line,
+                &line[..self.win.cursor.col.min(line.len())],
+            );
+            let first = self.win.cursor.line;
             if oa.line_count > 2 {
                 self.doc.buf.delete_lines(first + 1, oa.line_count - 2);
             }
             let n = oa.end.col + 1 - usize::from(!oa.inclusive);
             let last = self.line_vec(first + 1);
             self.set_line_vec(first + 1, &last[n.min(last.len())..]);
-            self.cursor.line = first;
+            self.win.cursor.line = first;
             self.do_join(2, false, false);
         }
         self.msgmore(self.doc.buf.line_count() as i64 - old_count);
@@ -568,14 +571,14 @@ impl Editor {
         }
         self.u_save(first, n, false);
         self.doc.buf.delete_lines(first, n);
-        self.cursor.line = first.min(self.doc.buf.last_line());
-        self.cursor.col = 0;
+        self.win.cursor.line = first.min(self.doc.buf.last_line());
+        self.win.cursor.col = 0;
     }
 
     /// Vim's `del_bytes()` at the cursor. With `fixpos`, a cursor left past
     /// the end moves back onto the last char.
     fn del_bytes(&mut self, n: usize, fixpos: bool) {
-        let Pos { line, col } = self.cursor;
+        let Pos { line, col } = self.win.cursor;
         let len = self.doc.buf.line_len(line);
         if col >= len {
             return;
@@ -583,7 +586,7 @@ impl Editor {
         let n = n.min(len - col);
         if col + n >= len && col > 0 && fixpos && !matches!(self.mode, Mode::Insert | Mode::Replace)
         {
-            self.cursor.col -= 1;
+            self.win.cursor.col -= 1;
         }
         self.doc.buf.remove(line, col, n);
     }
@@ -598,14 +601,14 @@ impl Editor {
         } else if !self.op_delete_for_change(oa) {
             return;
         }
-        if l > self.cursor.col && self.doc.buf.line_len(self.cursor.line) > 0 {
-            inc(&self.doc.buf, &mut self.cursor);
+        if l > self.win.cursor.col && self.doc.buf.line_len(self.win.cursor.line) > 0 {
+            inc(&self.doc.buf, &mut self.win.cursor);
         }
         let post = if oa.block {
             PostInsert::BlockChange {
                 oa: *oa,
                 pre_textlen: self.doc.buf.line_len(oa.start.line),
-                textcol: self.cursor.col,
+                textcol: self.win.cursor.col,
             }
         } else {
             PostInsert::None
@@ -800,7 +803,7 @@ impl Editor {
     /// Vim's `op_shift()`.
     pub(crate) fn op_shift(&mut self, oa: &OpArg, curs_top: bool, amount: usize) {
         self.u_save(oa.start.line, oa.line_count, true);
-        let block_col = self.cursor.col;
+        let block_col = self.win.cursor.col;
         let left = oa.op == Op::LShift;
         for l in oa.start.line..=oa.end.line {
             if self.doc.buf.line_len(l) == 0 {
@@ -815,10 +818,10 @@ impl Editor {
         // Vim calls changed_lines() even if no line changed.
         self.doc.buf.mark_changed();
         if oa.block {
-            self.cursor = Pos::new(oa.start.line, block_col);
+            self.win.cursor = Pos::new(oa.start.line, block_col);
         } else if curs_top {
-            self.cursor.line = oa.start.line;
-            self.cursor.col = first_non_blank(&self.doc.buf, self.cursor.line, true);
+            self.win.cursor.line = oa.start.line;
+            self.win.cursor.col = first_non_blank(&self.doc.buf, self.win.cursor.line, true);
         }
         if oa.line_count > 2 {
             let op = if left { "<" } else { ">" };
@@ -1031,7 +1034,7 @@ impl Editor {
                 }
             }
         }
-        self.cursor = oa.start;
+        self.win.cursor = oa.start;
         self.check_cursor_col();
         self.op_start = oa.start;
         self.op_end = oa.end;
@@ -1041,7 +1044,7 @@ impl Editor {
 
     /// Vim's `op_insert()` (Visual `I` and `A`).
     fn op_insert(&mut self, oa: &mut OpArg) {
-        self.cursor.line = oa.start.line;
+        self.win.cursor.line = oa.start.line;
         let mut pre_textlen: i64 = 0;
         let mut bd = BlockDef::default();
         if oa.block {
@@ -1054,22 +1057,22 @@ impl Editor {
         }
         if oa.op == Op::Append {
             if oa.block {
-                let len = self.doc.buf.line_len(self.cursor.line);
-                self.cursor.col = (bd.textcol + bd.textlen).min(len);
+                let len = self.doc.buf.line_len(self.win.cursor.line);
+                self.win.cursor.col = (bd.textcol + bd.textlen).min(len);
                 if bd.is_short && !oa.is_max {
                     self.u_save_cursor();
-                    let at = self.cursor.col;
+                    let at = self.win.cursor.col;
                     self.doc
                         .buf
-                        .insert(self.cursor.line, at, &" ".repeat(bd.endspaces));
-                    self.cursor.col += bd.endspaces;
+                        .insert(self.win.cursor.line, at, &" ".repeat(bd.endspaces));
+                    self.win.cursor.col += bd.endspaces;
                     bd.textlen += bd.endspaces;
                 }
             } else {
-                self.cursor = oa.end;
+                self.win.cursor = oa.end;
                 self.check_cursor_col();
-                if self.doc.buf.line_len(self.cursor.line) > 0 && oa.start_vcol != oa.end_vcol {
-                    inc(&self.doc.buf, &mut self.cursor);
+                if self.doc.buf.line_len(self.win.cursor.line) > 0 && oa.start_vcol != oa.end_vcol {
+                    inc(&self.doc.buf, &mut self.win.cursor);
                 }
             }
         }
@@ -1095,7 +1098,7 @@ impl Editor {
         bd_textcol: usize,
         bd_textlen: usize,
     ) {
-        if self.cursor.line != oa.start.line {
+        if self.win.cursor.line != oa.start.line {
             return;
         }
         let mut textcol = bd_textcol;
@@ -1123,7 +1126,7 @@ impl Editor {
             let text: Vec<char> = rest[..ins_len as usize].to_vec();
             self.u_save(oa.start.line, oa.line_count, true);
             self.block_insert(&mut oa, &text);
-            self.cursor.col = oa.start.col;
+            self.win.cursor.col = oa.start.col;
             self.check_cursor_col();
         }
     }
@@ -1181,7 +1184,7 @@ impl Editor {
 
     /// Vim's `do_join()`: joins `count` lines at the cursor.
     pub(crate) fn do_join(&mut self, count: usize, insert_space: bool, save_undo: bool) -> bool {
-        let first = self.cursor.line;
+        let first = self.win.cursor.line;
         if save_undo {
             self.u_save(first, count, true);
         }
@@ -1260,9 +1263,9 @@ impl Editor {
             });
         }
         self.doc.buf.delete_lines(first + 1, count - 1);
-        self.cursor = Pos::new(first, col);
+        self.win.cursor = Pos::new(first, col);
         self.check_cursor_col();
-        self.keep_curswant = false;
+        self.win.keep_curswant = false;
         true
     }
 
@@ -1289,8 +1292,8 @@ impl Editor {
         flags: PutFlags,
         visual_block_end: Option<usize>,
     ) {
-        self.op_start = self.cursor;
-        self.op_end = self.cursor;
+        self.op_start = self.win.cursor;
+        self.op_end = self.win.cursor;
         self.regs.select(reg, false);
         let Some(r) = self.regs.current().cloned().filter(|r| !r.lines.is_empty()) else {
             let name = reg.unwrap_or('"');
@@ -1306,26 +1309,27 @@ impl Editor {
         if ytype == RegType::Line {
             if flags.line_split {
                 self.u_save_cursor();
-                let line = self.line_vec(self.cursor.line);
-                let mut p = self.cursor.col.min(line.len());
+                let line = self.line_vec(self.win.cursor.line);
+                let mut p = self.win.cursor.col.min(line.len());
                 if fwd && p < line.len() {
                     p += 1;
                 }
-                self.doc
-                    .buf
-                    .insert_line(self.cursor.line + 1, &line[p..].iter().collect::<String>());
-                self.set_line_vec(self.cursor.line, &line[..p]);
+                self.doc.buf.insert_line(
+                    self.win.cursor.line + 1,
+                    &line[p..].iter().collect::<String>(),
+                );
+                self.set_line_vec(self.win.cursor.line, &line[..p]);
                 nr_lines += 1;
                 fwd = true;
             }
             if flags.line_forward
                 && let Some(lv) = self.doc.last_visual
             {
-                self.cursor = lv.end;
+                self.win.cursor = lv.end;
                 fwd = true;
             }
-            self.op_start = self.cursor;
-            self.op_end = self.cursor;
+            self.op_start = self.win.cursor;
+            self.op_end = self.win.cursor;
         }
         if flags.line {
             ytype = RegType::Line;
@@ -1333,35 +1337,35 @@ impl Editor {
 
         match ytype {
             RegType::Block(_) => {
-                let n = (y_size + 1).min(self.doc.buf.line_count() - self.cursor.line);
-                self.u_save(self.cursor.line, n, false);
+                let n = (y_size + 1).min(self.doc.buf.line_count() - self.win.cursor.line);
+                self.u_save(self.win.cursor.line, n, false);
             }
             RegType::Line => {
-                let at = self.cursor.line + usize::from(fwd);
+                let at = self.win.cursor.line + usize::from(fwd);
                 self.u_save(at, 0, false);
             }
             RegType::Char => self.u_save_cursor(),
         }
 
-        let lnum = self.cursor.line;
-        let mut col = self.cursor.col;
+        let lnum = self.win.cursor.line;
+        let mut col = self.win.cursor.col;
 
         if let RegType::Block(y_width) = ytype {
-            let c = gchar(&self.doc.buf, self.cursor);
+            let c = gchar(&self.doc.buf, self.win.cursor);
             let mut colv;
             if fwd && c.is_some() {
                 colv = vcol_range(
                     self.doc.buf.line(lnum),
-                    self.cursor.col,
+                    self.win.cursor.col,
                     self.opts.tabstop(),
                 )
                 .1;
-                self.cursor.col += 1;
+                self.win.cursor.col += 1;
                 colv += 1;
             } else {
                 colv = vcol_range(
                     self.doc.buf.line(lnum),
-                    self.cursor.col,
+                    self.win.cursor.col,
                     self.opts.tabstop(),
                 )
                 .0;
@@ -1369,11 +1373,11 @@ impl Editor {
             let mut textcol = 0;
             let mut totlen = 0;
             for (i, yl) in y.iter().enumerate() {
-                if self.cursor.line > self.doc.buf.last_line() {
+                if self.win.cursor.line > self.doc.buf.last_line() {
                     self.doc.buf.insert_line(self.doc.buf.line_count(), "");
                     nr_lines += 1;
                 }
-                let old = self.line_vec(self.cursor.line);
+                let old = self.line_vec(self.win.cursor.line);
                 let mut vcol = 0;
                 let mut p = 0;
                 let mut incr = 0;
@@ -1417,38 +1421,41 @@ impl Editor {
                 }
                 new.extend(std::iter::repeat_n(' ', endspaces));
                 new.extend(&old[(textcol + delcount).min(old.len())..]);
-                self.set_line_vec(self.cursor.line, &new);
-                self.cursor.line += 1;
+                self.set_line_vec(self.win.cursor.line, &new);
+                self.win.cursor.line += 1;
                 if i == 0 {
-                    self.cursor.col += startspaces;
+                    self.win.cursor.col += startspaces;
                 }
             }
-            self.op_start = Pos::new(lnum, self.cursor.col);
-            self.op_end = Pos::new(self.cursor.line - 1, (textcol + totlen).saturating_sub(1));
+            self.op_start = Pos::new(lnum, self.win.cursor.col);
+            self.op_end = Pos::new(
+                self.win.cursor.line - 1,
+                (textcol + totlen).saturating_sub(1),
+            );
             if flags.cursend {
-                self.cursor = self.op_end;
-                self.cursor.col += 1;
-                let len = self.doc.buf.line_len(self.cursor.line);
-                self.cursor.col = self.cursor.col.min(len);
+                self.win.cursor = self.op_end;
+                self.win.cursor.col += 1;
+                let len = self.doc.buf.line_len(self.win.cursor.line);
+                self.win.cursor.col = self.win.cursor.col.min(len);
             } else {
-                self.cursor.line = lnum;
+                self.win.cursor.line = lnum;
             }
         } else {
             let yanklen = y[0].len();
             let mut after: i64 = lnum as i64;
             if ytype == RegType::Char {
-                if fwd && gchar(&self.doc.buf, self.cursor).is_some() {
+                if fwd && gchar(&self.doc.buf, self.win.cursor).is_some() {
                     col += 1;
                     if yanklen > 0 {
-                        self.cursor.col += 1;
+                        self.win.cursor.col += 1;
                         self.op_end.col += 1;
                     }
                 }
-                self.op_start = self.cursor;
+                self.op_start = self.win.cursor;
             } else if !fwd {
                 after -= 1;
             }
-            let new_cursor = self.cursor;
+            let new_cursor = self.win.cursor;
             if ytype == RegType::Char && y_size == 1 {
                 let start_lnum = lnum;
                 let end_lnum = visual_block_end.unwrap_or(lnum).max(lnum);
@@ -1478,8 +1485,8 @@ impl Editor {
                         }
                         new.extend(&old[c..]);
                         self.set_line_vec(l, &new);
-                        if l == self.cursor.line {
-                            self.cursor.col += totlen - 1;
+                        if l == self.win.cursor.line {
+                            self.win.cursor.col += totlen - 1;
                         }
                         l += 1;
                         if visual_block_end.is_none() || l > end_lnum {
@@ -1487,9 +1494,9 @@ impl Editor {
                         }
                     }
                 }
-                self.op_end = self.cursor;
+                self.op_end = self.win.cursor;
                 if totlen > 0 && flags.cursend {
-                    self.cursor.col += 1;
+                    self.win.cursor.col += 1;
                 }
             } else {
                 let mut new_lnum = new_cursor.line as i64;
@@ -1510,7 +1517,7 @@ impl Editor {
                         let mut first: Vec<char> = old[..c].to_vec();
                         first.extend(&y[0]);
                         self.set_line_vec(l, &first);
-                        self.cursor.line = l;
+                        self.win.cursor.line = l;
                         i = 1;
                     }
                     while i < y_size {
@@ -1541,7 +1548,7 @@ impl Editor {
                 if flags.cursend {
                     if ytype == RegType::Line {
                         let l = lnum_i.max(0) as usize;
-                        self.cursor = Pos::new(
+                        self.win.cursor = Pos::new(
                             if l >= self.doc.buf.last_line() {
                                 self.doc.buf.last_line()
                             } else {
@@ -1550,28 +1557,29 @@ impl Editor {
                             0,
                         );
                     } else {
-                        self.cursor = Pos::new(end_l, lastlen);
-                        self.op_end = self.cursor;
+                        self.win.cursor = Pos::new(end_l, lastlen);
+                        self.op_end = self.win.cursor;
                         if lastlen > 1 {
                             self.op_end.col = lastlen - 1;
                         }
                     }
                 } else if ytype == RegType::Line {
-                    self.cursor.col = 0;
+                    self.win.cursor.col = 0;
                     if fwd {
-                        self.cursor.line += 1;
+                        self.win.cursor.line += 1;
                     }
-                    self.cursor.col = first_non_blank(&self.doc.buf, self.cursor.line, true);
+                    self.win.cursor.col =
+                        first_non_blank(&self.doc.buf, self.win.cursor.line, true);
                 } else {
-                    self.cursor = new_cursor;
+                    self.win.cursor = new_cursor;
                 }
             }
         }
         self.msgmore(nr_lines);
-        self.keep_curswant = false;
-        let len = self.doc.buf.line_len(self.cursor.line);
-        if self.cursor.col > len {
-            self.cursor.col = len;
+        self.win.keep_curswant = false;
+        let len = self.doc.buf.line_len(self.win.cursor.line);
+        if self.win.cursor.col > len {
+            self.win.cursor.col = len;
         }
     }
 
@@ -1588,8 +1596,8 @@ impl Editor {
         } else {
             None
         };
-        let vstart = self.vstart;
-        let vend = self.cursor;
+        let vstart = self.win.vstart;
+        let vend = self.win.cursor;
         self.redo_building = Some(crate::editor::Redo {
             reg,
             count: None,
@@ -1620,8 +1628,8 @@ impl Editor {
             }
         }
         let mut dir_before = true;
-        if (vmode != VisualMode::Line && self.cursor.col < self.op_start.col)
-            || (vmode == VisualMode::Line && self.cursor.line < self.op_start.line)
+        if (vmode != VisualMode::Line && self.win.cursor.col < self.op_start.col)
+            || (vmode == VisualMode::Line && self.win.cursor.line < self.op_start.line)
         {
             dir_before = false;
         }
@@ -1638,7 +1646,7 @@ impl Editor {
             start: self.op_start,
             end: self.op_end,
             mode: vmode,
-            curswant: self.curswant,
+            curswant: self.win.curswant,
         });
         if empty
             && self.doc.buf.line_len(self.doc.buf.last_line()) == 0
@@ -1646,8 +1654,8 @@ impl Editor {
         {
             let last = self.doc.buf.last_line();
             self.doc.buf.delete_lines(last, 1);
-            if self.cursor.line > self.doc.buf.last_line() {
-                self.cursor.line = self.doc.buf.last_line();
+            if self.win.cursor.line > self.doc.buf.last_line() {
+                self.win.cursor.line = self.doc.buf.last_line();
                 self.coladvance(usize::MAX);
             }
         }
