@@ -35,6 +35,23 @@ fn checktime_with_no_file_changes_nothing() {
     check(&cross(TEXTS, &keys));
 }
 
+/// With the agent opt-in off (the default), a modified buffer with no file
+/// change keeps Vim's behaviour around `:w` and `:checktime`. The harness
+/// buffers have no file name, so `:w` is the no-name case; the checks that
+/// need a changed file are unit tests in `src/conflict.rs`.
+#[test]
+fn w_and_checktime_around_edits_and_undo_without_a_change() {
+    let keys = [
+        "ix<Esc>:checktime<CR>u<C-r>",
+        "jx:checktime<CR>ddu",
+        ":set ar<CR>ix<Esc>:checktime<CR>u",
+        "Ax<Esc>:checktime<CR>:set ar<CR>:checktime<CR>",
+        "ix<Esc>:w<CR>u",
+        "jx:checktime<CR>:w<CR>",
+    ];
+    check(&cross(TEXTS, &keys));
+}
+
 #[test]
 fn autoread_on_does_not_change_other_keys() {
     let keys = [

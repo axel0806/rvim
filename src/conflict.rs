@@ -313,6 +313,21 @@ mod tests {
     }
 
     #[test]
+    fn a_paste_is_ignored_while_the_prompt_is_open() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut ed, path) = open(&dir, "one\n");
+        modify_and_change_disk(&mut ed, &path, "two\n");
+        let beeps = ed.beeps;
+        ed.paste("pasted\ntext");
+        assert!(prompt_open(&ed), "the paste does not answer the prompt");
+        assert_eq!(ed.buf().lines(), ["xone"], "the paste is not inserted");
+        assert_eq!(ed.beeps, beeps + 1);
+        // The prompt still answers a key afterwards.
+        ed.feed("k");
+        assert!(!prompt_open(&ed));
+    }
+
+    #[test]
     fn escape_is_keep() {
         let dir = tempfile::tempdir().unwrap();
         let (mut ed, path) = open(&dir, "one\n");

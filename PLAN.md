@@ -2625,6 +2625,16 @@ plan, kept for the record; the files are the source of truth.
 - With the opt-in, a deleted file gives `"f" was deleted on disk`, not E211;
   the buffer is kept and `:w` writes it again. The `[deleted]` mark in the
   status line is not drawn yet.
+- The prompt's file reads (`conflict_load`, `conflict_merge`, `write_guard`)
+  run on the editor thread, as `check_disk` and `:checktime` do. This breaks
+  the rule that `Editor` does no blocking I/O (CLAUDE.md). It is a deliberate
+  deviation for now: the key press asks for the read, and the file is small
+  in practice. It moves to the worker with the rest of the file I/O later.
+- Tests of the prompt itself are unit tests in `src/conflict.rs`, not
+  differential cases: the harness cannot change a file on disk between keys,
+  so a changed file cannot be set up in Vim. The differential cases in
+  `tests/compat_reload.rs` cover the no-opt-in path with no file change (`:w`,
+  `:checktime`, edits and undo around them).
 - The baseline is kept for every file read or written, with or without the
   opt-in (one copy of the text per document, as lines). The memory cost is not
   yet limited for files near the 64 MiB watch cap.
