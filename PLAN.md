@@ -54,7 +54,6 @@ this, `--help` opened a buffer named `--help`.
 entry is removed when its branch lands on main):
 
 - Marks: `'[` `']` `'<` `'>` motions, mark setting per command, `:marks`, `:delmarks` (milestone 5; `normal.rs`, `document.rs`, a new Ex function)
-- Agent integration, step 2a: undo step source, disk state and hash, external change applied as one undo step with cursor mapping, `:checktime` (milestone 7; new `reload.rs`, `undo.rs`, `document.rs`)
 - Config file loader: location, format, `-u NONE`, options applied like `:set` (milestone 6, shared with agent step 4; new `config.rs`, `cli.rs`, `main.rs` startup)
 
 **Suggested order for what is left:** (1) Document/Window split, (2) splits +
@@ -1984,6 +1983,11 @@ plan, kept for the record; the files are the source of truth.
 
 ## Known differences from Vim
 
+- `:checktime`, `:e` and `:w` read and stat files synchronously inside the Editor,
+  against the CLAUDE.md rule of no blocking I/O. They are user-triggered and read
+  one file, as Vim does. The automatic path (the file watcher, agent step 2b)
+  must not: it polls on a worker thread and delivers `FileChanged` events that
+  carry the document version.
 - Command-line flags: `-v` means `--version` in rvim, but Vim's `-v` starts
   Vi mode (rvim has no Vi mode). Vim's other flags (`-u`, `-N`, `-R`, `-es`,
   and so on) are not parsed; an unknown `-x` is taken as a file name, as
