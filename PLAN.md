@@ -49,6 +49,21 @@ buffers + scrolling, (3) the ACP connector and file-change reload
 syntax, (5) prediction. Cut a new release (`git tag v0.1.0-alpha.N`) when a
 milestone lands; `.github/workflows/release.yml` builds the binaries.
 
+**Planned additions from the owner's todo (2026-11-01).** These are plans
+only. Nothing listed here is built, and the milestone table above is unchanged.
+
+- Start menu at startup, off by default: see "Start menu" (milestone 6).
+- License: Apache-2.0 for new code and the Vim license for Vim-derived code,
+  pending the owner's decision: see "Licensing".
+- Neovim-inspired features, reimplemented from Neovim's documentation: see
+  "Neovim-inspired features" (milestone 9 and later).
+- Lua extension layer: see "Lua extensions" (milestone 9).
+- Neovim plugin compatibility, in stages: see "Neovim plugin compatibility"
+  (milestone 9).
+- Makefile and repository documents (`SECURITY.md`, `CONTRIBUTING.md`,
+  `AGENTS.md`, `MAINTAIN.md`, `INSTALL.md`): see "Repository and packaging".
+- Future goals (AUR packages, logo): see "Future goals".
+
 ### Working notes (things that cost time)
 
 - Scrolling and the harness (milestone 5). Vim run with `-es` has a 24x80
@@ -123,6 +138,12 @@ top:
 The extensions are additive. With no config file, rvim behaves like
 `vim -N -u NONE` and the differential tests apply unchanged (see "Extensions
 and the Vim contract").
+
+Two further goals from the owner's todo sit beside the three above. First,
+rvim copies features of Neovim indirectly: each one is reimplemented from
+Neovim's public documentation, never from its source (see "Neovim-inspired
+features"). Second, rvim's start screen and its plugin story follow Neovim's
+pattern, but the Vim contract still decides what happens without an opt-in.
 
 ## Architecture
 
@@ -210,7 +231,8 @@ What the revised milestones fix, as the code stands today:
    files (see "Recovery").
 6. **Modern editing experience.** hlsearch, incsearch, matching parens,
    syntax highlighting (tree-sitter), line numbers, a config file, a command
-   palette, mouse. Details in "Editing experience".
+   palette, mouse, the start menu (see "Start menu"), and a `:Health` report
+   (see "Neovim-inspired features"). Details in "Editing experience".
 7. **Coding agent integration.** Automatic detection of installed agents
    (Claude Code, Codex, Cursor, Kimi Code, ...) and connection to them over
    ACP or the agent's own IDE integration, with a files-only fallback. File-change detection and reload as an
@@ -219,7 +241,14 @@ What the revised milestones fix, as the code stands today:
    integration".
 8. **Prediction.** Inline suggestions (ghost text) from a pluggable provider,
    accepted with a key. Details in "Prediction".
-9. **Extras (optional).** LSP client, a Vimscript subset, plugin API.
+9. **Extras (optional).** A built-in LSP client (see "Neovim-inspired
+   features"), a Vimscript subset, Lua scripting (see "Lua extensions"), a
+   plugin API that is compatible with Neovim plugins in stages (see "Neovim
+   plugin compatibility"), and the other Neovim-inspired features listed in
+   "Neovim-inspired features" that earlier milestones do not cover: the RPC
+   server and `--remote`, async jobs, floating windows and popup menus,
+   `vim.ui` hooks, and tree-sitter folding (which needs Vim's fold commands
+   first; they are not in the plan yet, see that section).
 
 ## Foundation (milestone 4)
 
@@ -347,6 +376,93 @@ case runs.
   which-key style hints for pending operators and prefixes, and Ex
   completion (`<Tab>` on commands, options, file names).
 - **Mouse**: click to place the cursor, drag for Visual, wheel to scroll.
+
+### Start menu
+
+A start screen like Neovim's intro screen. It is shown when rvim starts with
+no file argument and the buffer is empty. It is an extension, so it follows
+the Vim contract: with no config and no flag it is off, and rvim shows only
+the one-line version message (as `vim -N -u NONE` shows only its intro text).
+
+**Switch.** The first matching source wins:
+
+| Source | Effect |
+|---|---|
+| `--start-menu` or `--no-start-menu` | forces the menu on or off for this run |
+| `start.menu = true` or `false` in `config.toml` | the default when no flag is given |
+| modern profile (a config file exists, or `--modern`) | on, unless `start.menu = false` |
+
+**Content**, from top to bottom, centred in the frame (drawn to fit 80x24,
+the size the golden tests use):
+
+1. Logo. Until a logo exists (see "Future goals") it is the word `rvim` in a
+   box. The logo is hidden when the window is narrower than 60 columns or
+   shorter than 20 rows.
+2. The version line: `VERSION_MESSAGE`, the same text as `:version`. It is
+   always shown and cannot be turned off, because the Vim license (condition
+   II.3) requires the modified-version message in the intro screen.
+3. Menu items, each a line that can be selected:
+   - New file: an empty unnamed buffer (as `:enew`).
+   - Open file: puts `:e ` on the command line.
+   - Recent files: up to `start.recent_files` paths (default 10, a choice
+     not yet made), most recent first. A file that no longer exists is shown
+     dimmed and is not opened.
+   - Config: opens `$XDG_CONFIG_HOME/rvim/config.toml`. A missing file opens
+     as an empty buffer named after it; nothing is written until `:w`.
+   - Help: `:help` once it exists. Until then the item is shown dimmed.
+   - Quit: `:q`.
+   - Agent line (milestone 7): shown only when an agent is configured or
+     detected, for example `Agent: Claude Code (detected, not connected)`.
+     Absent otherwise.
+4. A hint line: `arrows select  Enter open  Esc close`.
+
+**Keys.** Vim's Normal mode uses nearly every letter, so the menu has no
+letter shortcuts. Items are chosen with the arrows and `<CR>`, or by a mouse
+click on the item (the mouse is part of milestone 6, see "Mouse" above). While
+the menu is shown:
+
+| Key | Effect |
+|---|---|
+| `<Up>`, `<Down>` | move the selection (in Vim these are `k` and `j`) |
+| `<CR>` | runs the selected item and closes the menu (in Vim it moves down a line) |
+| `<Esc>` | closes the menu and does nothing else |
+| any other key | closes the menu, and the key is handled by Vim exactly as it is with no menu |
+
+Rules:
+
+- The menu takes only the keys in the first three rows. `<Up>`, `<Down>` and
+  `<CR>` change their Vim meaning while the menu is shown, and their Vim
+  meaning returns when it closes. This is allowed only because the menu is on.
+- Any other key is not consumed. `3j`, `o`, `:`, `i` and `q` act as they do
+  with no menu. A count, register prefix or `:` starts that command in the
+  same step.
+- The menu is an overlay drawn on the Frame, not buffer text. The buffer,
+  cursor, registers and undo tree are the same as with no menu. Closing the
+  menu never runs an action the user did not choose.
+- A resize keeps the menu open and lays it out again. `:Start` (a new Ex
+  command, capital letter as required) shows the menu again.
+
+**Storage.** Recent files are kept in `$XDG_STATE_HOME/rvim/recent` (default
+`~/.local/state/rvim/recent`), one path per line. A worker writes the file on
+open and save, and only while the menu is enabled. With the menu off, rvim
+writes nothing for it.
+
+**Testing.**
+
+- Frame golden screens: the menu at 80x24, at 40x20 (logo hidden), with an
+  agent line, and with one item selected (the style of the selected row is
+  checked, not only its text). Golden files go under `tests/golden/`
+  (planned; format decided when built).
+- Dismissal table: for every key class (letters, digits, `:`, `<Esc>`,
+  arrows, `<CR>`, Ctrl keys, function keys) a unit test runs the sequence with
+  the menu on and with the menu off. For keys outside the menu's set it
+  asserts that buffer, cursor, registers and undo tree are equal. For the
+  menu's set it asserts the effect in the table above.
+- Differential tests: the harness runs Vim with `-N -u NONE`, so differential
+  cases always run with the menu off. A test asserts that the menu is off
+  with no config and no flag.
+- Recent-file list: unit tests for write on open, missing files and the
+  maximum count, using a temporary state directory.
 
 ## Agent integration (milestone 7)
 
@@ -567,6 +683,263 @@ ghost text after the cursor (further lines below it), accepted with a key.
   on disk locally (never uploaded) and shown by `:PredictStats`, so providers
   and debounce can be tuned.
 
+## Neovim-inspired features (milestone 9 and later)
+
+Neovim is the reference for the features in this section, not for Vim's
+behaviour. The rules:
+
+- **Indirect copying.** Each feature is described from Neovim's public
+  documentation: its `:help` pages, its API reference, and the protocol
+  specifications it links. The version used is recorded when the feature is
+  built (which Neovim version is current is UNVERIFIED). rvim's code is its
+  own Rust code. Neovim source (C or Lua) is not copied. If a Neovim file is
+  ever reused verbatim, the license check in "Licensing" comes first and the
+  file's license header is kept.
+- **Own tests.** Tests are written for rvim from the documented behaviour.
+  Neovim's test suite is not copied.
+- **Names.** Where rvim uses a Neovim name, such as
+  `vim.api.nvim_buf_get_lines`, the name is for compatibility (see "Neovim
+  plugin compatibility"); it is not copied text. Neovim's name and logo are
+  its own marks, so rvim's docs must not suggest that Neovim endorses rvim
+  (trademark view UNVERIFIED).
+- **Vim contract.** Each feature is an extension in the sense of "Extensions
+  and the Vim contract": off unless configured, and it never changes a Vim key
+  sequence while it is off.
+
+| Feature | Milestone | Needs the Document/Window split |
+|---|---|---|
+| LSP client and diagnostics | 9 | Yes: diagnostics belong to a Document and carry its version |
+| Tree-sitter highlighting and text objects | 6 (highlighting), 9 (text objects) | Yes: parse results belong to a Document version |
+| Lua scripting | 9 | Partly: Lua reads Documents and Windows through the editor |
+| RPC server, `--server`, `--remote` | 9 | Yes: remote commands name windows and documents |
+| Floating windows and popup menus | 6 | Yes: a Window needs a layout rectangle and a kind |
+| Built-in terminal (`:terminal`) | 7 | Yes: a terminal is a Window whose Document is a screen |
+| Async jobs | 9 | Yes: job output goes to a scratch Document |
+| Extmarks and virtual text | 5 (core), 7 to 9 (users) | Yes: extmarks belong to a Document |
+| `vim.ui` input and select hooks | 9 | Partly: a prompt is Window-level UI |
+| Tree-sitter folding | 9, after Vim folds | Yes: Vim folds are window-local |
+| `:Health` report | 6 | No |
+| XDG paths | 6 | No |
+| Default modern options | 6 | Yes: buffer-local and window-local options |
+
+Per feature:
+
+- **Built-in LSP client and diagnostics.** A client that starts a language
+  server from a command in the config (approved per project, like agents),
+  speaks JSON-RPC over stdio, and sends open, change and close notifications
+  with document versions. Diagnostics are stored on the Document with the
+  version they were computed for, drawn in a sign column and as underlines,
+  and listed by `:Diagnostics` (new Ex command). The protocol is taken from the
+  Language Server Protocol specification at a pinned version (which version is
+  current is UNVERIFIED). Inline completion stays deferred (see "Dependency
+  choices").
+- **Tree-sitter highlighting and text objects.** Highlighting is milestone 6
+  (see "Editing experience"). Text objects selected by syntax node (function,
+  class, argument) are a milestone 9 extension with rvim's own key choice,
+  not Neovim's keys (Neovim's own text object support is in its plugins, not
+  in core; UNVERIFIED). Parsing runs on a worker per document version.
+- **Lua scripting.** See "Lua extensions".
+- **RPC server, `--server` and `--remote`.** `rvim --listen <socket>` starts
+  a server; `rvim --server <socket> --remote <files>` sends `:edit` commands
+  to a running instance (flag names follow Neovim's `:help` as checked, which
+  is UNVERIFIED). The wire format is JSON-RPC, the same family as the agent
+  endpoint in `docs/agent-protocol.md`, not msgpack-RPC, so no msgpack
+  dependency is needed. The socket is user-only (mode 0600 or a per-user pipe
+  ACL). This is a separate opt-in endpoint from the agent endpoint, and
+  nothing listens by default.
+- **Floating windows and popup menus.** A floating window is a Window with its
+  own position and size, drawn over the layout in a fixed z-order. A popup
+  menu is a floating window anchored to the cursor. They serve Ex completion
+  and the command palette (milestone 6). The Frame needs layered cells, so
+  the `view.rs` layout stays a pure function.
+- **Built-in terminal.** The terminal pane of milestone 7 is the PTY window
+  type. This item adds Vim's `:terminal` command name and its Terminal-mode
+  exit `<C-\><C-n>`, as Vim documents them (`terminal.txt`; checked against a
+  Vim built with the terminal feature, UNVERIFIED on the reference Vim).
+- **Async jobs.** Start a child process, stream its stdout and stderr lines as
+  events, write to its stdin, and stop it. Exposed to Lua and as the Ex
+  command `:Job` (new). Runs on worker threads; each event carries the job id.
+  Needs the `process` capability (see "Lua extensions").
+- **Extmarks and virtual text.** Positions that move with edits and carry
+  data: highlight, virtual text and sign. The core (adjusting positions on
+  line changes) reuses the lowercase-mark code in `buffer.rs`, so it fits
+  milestone 5. Ghost text (milestone 8), diagnostics and hunk markers
+  (milestone 7) use it. Undo restores extmarks as it restores marks.
+- **`vim.ui` input and select hooks.** `vim.ui.input` and `vim.ui.select`
+  (function names and signatures from Neovim's documentation, UNVERIFIED)
+  give plugins and agent prompts one way to ask the user: on the command line
+  for input, and in a popup menu for a choice. The callback runs on the Lua
+  thread with the answer as an event.
+- **Tree-sitter folding.** Vim's fold commands (`zf`, `zo`, `zc`, `za`, `zR`,
+  `zM`, `foldmethod`) are not implemented yet, and the plan has no milestone
+  for them. Before a tree-sitter fold method is added, the Vim fold model
+  needs its own milestone and differential cases, because Vim has the
+  behaviour. Folds are window-local in Vim, so this depends on the Window type.
+- **`:Health`.** A scratch buffer listing checks: terminal capabilities
+  (colour, bracketed paste, kitty keyboard), config file errors, configured
+  and detected agents (existence checks only), recovery files left by a
+  crash, and `.vim` files in plugin packages that are skipped. Read-only.
+- **XDG paths.** Config in `$XDG_CONFIG_HOME/rvim` (default
+  `~/.config/rvim`), state in `$XDG_STATE_HOME/rvim`, data in
+  `$XDG_DATA_HOME/rvim` and cache in `$XDG_CACHE_HOME`, following the XDG
+  Base Directory specification. Windows locations (`%APPDATA%`,
+  `%LOCALAPPDATA%`) are UNVERIFIED and are checked against Neovim's
+  documented layout before use. Recovery files already use the state path.
+- **Default modern options.** The built-in modern profile (see "Editing
+  experience", Defaults) is a table of values in `options.rs`, applied only
+  under the rules there. Options that are buffer-local or window-local in
+  Vim keep their scope.
+
+## Lua extensions (milestone 9)
+
+Lua is the scripting language for plugins and user logic, as Neovim uses Lua
+for its `init.lua` and its plugins. Lua handles logic. `config.toml` keeps
+data (see "Config" under "Editing experience").
+
+- **Embedding.** The `mlua` crate (version UNVERIFIED), with Lua 5.4 built
+  from source through its `vendored` feature (feature names UNVERIFIED).
+  LuaJIT is the alternative: it is faster, but its platform coverage differs
+  (UNVERIFIED). Lua 5.4 is the first choice as the plain reference
+  implementation. Both need a C compiler, which tree-sitter already needs.
+  Binary size, build time and run-time cost are UNVERIFIED and are measured
+  before the choice is recorded in "Dependency choices". The licenses of Lua
+  and mlua are MIT in their repositories (UNVERIFIED here; check the license
+  file of the vendored source).
+- **Threads.** The Lua state lives on one worker thread. `Editor` never calls
+  Lua and never waits for it. Callbacks (keymaps, autocmds, user commands,
+  timers, job output) arrive as events, and results return as events. API
+  calls that read editor state (for example `nvim_buf_get_lines`) send a
+  request to the editor and wait for its reply on the Lua thread; the UI
+  thread never waits on Lua. Writes are applied on the UI thread as one undo
+  step tagged `plugin:<name>`, the same source-tagging rule as external
+  reloads and predictions.
+- **Time slices.** Each callback runs with an instruction-count hook and a
+  wall-clock budget (a default such as 100 ms is UNVERIFIED and will be
+  measured). A callback over budget is aborted with a message. A plugin that
+  goes over budget three times in one session is disabled until restart
+  (the counts are proposals, UNVERIFIED).
+- **Off by default.** No Lua state is created unless `[lua] enable = true` is
+  set in `config.toml` or `--lua` is given. The modern profile does not turn
+  Lua on by itself.
+- **Where code loads from**, in this order, when Lua is on:
+  - `$XDG_CONFIG_HOME/rvim/init.lua` (default `~/.config/rvim/init.lua`).
+  - `$XDG_CONFIG_HOME/rvim/lua/`, added to `package.path` for `require`.
+  - `pack/*/start/*` under `$XDG_CONFIG_HOME/rvim` and under
+    `$XDG_DATA_HOME/rvim/site`: the Lua files in each package's `plugin/`
+    directory load at start. `opt/` packages load with `:packadd`, which is
+    Vim's command name (implementation planned with Lua). `.vim` files in a
+    package are skipped and listed by `:Health`, because rvim runs no
+    Vimscript before the milestone 9 subset.
+- **Permissions.** Capabilities are `fs.read`, `fs.write`, `process` (start
+  child processes) and `network`. A plugin has none unless the config approves
+  it, for example `[lua.plugins."name"] allow = ["fs.read"]`. Approval is tied
+  to the plugin's name and a hash of its content, so an updated plugin needs
+  approval again. A call outside the approved set raises a Lua error at the
+  API boundary. This is a policy in rvim's API, not an operating-system
+  sandbox: an approved plugin runs with the user's privileges, and the user is
+  the trust boundary. Unapproved plugins do not get `io.popen`, `os.execute`
+  or `package.loadlib`. Lua's shared state makes full isolation hard, so the
+  exact mechanism is prototyped before it is fixed (UNVERIFIED design).
+- **API namespaces.**
+  - `rvim`: rvim's own API (`rvim.api_version`, `rvim.version`, and a
+    read-only `rvim.config`).
+  - `vim`: the Neovim-compatible surface described in "Neovim plugin
+    compatibility", stage 1. This covers `vim.api`, `vim.fn` (a subset,
+    implemented in Rust under Vim's function names), `vim.keymap.set`,
+    `vim.opt` (a typed wrapper over the options registry), `vim.g`, `vim.b`
+    and `vim.w` (variables), `vim.cmd` (runs an Ex command string through the
+    same path as typed `:` input and returns its error), `vim.schedule` (runs
+    on the UI thread after the current event), `vim.notify`, and autocmds for
+    the events rvim emits (listed in the API reference).
+- **Versioning.** The API has an integer version, `rvim.api_version`, starting
+  at 1 with the first release that contains Lua. Within one version, changes
+  are additions only. A removal or a change of meaning waits for the next
+  version, and the old form warns for one release first. The reference is
+  `docs/lua-api.md` (planned; not created).
+- **Agent endpoint.** Lua has no socket and no direct agent access. Any
+  `rvim.agent.*` function goes through the same approval and project allow-list
+  as the agent endpoint (see "Agent integration"). A plugin cannot approve an
+  agent or widen its allow-list.
+- **Config and Lua.** `config.toml` holds data: options, mappings that need no
+  code, the theme, the start menu switch, the Lua enable flag and plugin
+  approvals, agent registry additions, and prediction providers. It is read
+  before `init.lua`. Lua may set options and mappings in code; both go to the
+  same registry, and `:set` shows the final value.
+- **Tests.** Lua behaviour is tested in `cargo test` by driving a Lua state
+  with `Editor::handle_event` and asserting the document and messages. The
+  differential harness does not cover Lua: Vim's `:lua` interface is a
+  different API (UNVERIFIED details), so Neovim's documented behaviour is the
+  reference, as for the other features in this section.
+
+## Neovim plugin compatibility (milestone 9)
+
+The goal is to run plugins written for Neovim's Lua API unchanged, for the
+part of the API that the staged implementation covers.
+
+| Stage | Scope | Exit criterion |
+|---|---|---|
+| 0 | rvim's own API only (see "Lua extensions") | `init.lua`, keymaps and autocmds work; no compatibility claim |
+| 1 | a `vim.api` subset for small plugins (groups below) | the stage 1 plugins in `docs/compat/plugins.md` pass their smoke scripts |
+| 2 | unmodified pure-Lua plugins from the compatibility list, run in CI | each listed plugin passes, or has a recorded reason to fail |
+
+Stage 1 API groups (the names are to be checked against Neovim's current API
+reference at the version chosen; the list is UNVERIFIED):
+
+- **buffer**: get and set lines, line count, name, current buffer, buffer
+  options.
+- **window**: current window, get and set cursor, the window's buffer.
+- **option**: `nvim_get_option_value` and `nvim_set_option_value`, mapped onto
+  the options registry.
+- **keymap**: `nvim_set_keymap`, `nvim_del_keymap` and `vim.keymap.set`
+  (including its buffer-local form).
+- **autocmd**: `nvim_create_autocmd`, `nvim_create_augroup`,
+  `nvim_del_autocmd`, for the events rvim emits.
+- **extmark**: `nvim_create_namespace`, `nvim_buf_set_extmark`,
+  `nvim_buf_del_extmark`. Only after the extmark item in "Neovim-inspired
+  features" lands.
+- **user command**: `nvim_create_user_command`. A plugin's command name must
+  start with a capital letter, which is Vim's rule for user commands
+  (UNVERIFIED wording), so it cannot shadow a Vim command.
+
+Stage 2 adds what a plugin may need from elsewhere, each only once rvim has
+it: `vim.uv` (file and process I/O, behind the capabilities), `vim.lsp`,
+`vim.treesitter`, `vim.ui` and floating windows. A plugin that needs a missing
+feature is listed as failing with that reason. It is not skipped silently.
+
+Non-goals for the first versions:
+
+- Full API parity with Neovim, including every function and option.
+- Remote plugin hosts in other languages (Neovim's Python, Node and Ruby
+  providers, and msgpack remote plugins; names UNVERIFIED).
+- Running Vimscript (`.vim`) plugins. A Vimscript subset is a separate
+  milestone 9 item.
+- Neovim's external UI protocol, and exact redraw timing.
+- Neovim internals, including its runtime files and Lua modules that call
+  internal C functions.
+
+Compatibility test approach:
+
+1. `docs/compat/plugins.md` (planned; not created) holds one row per plugin:
+   name, repository URL, pinned commit, license (checked, not assumed), stage,
+   status (`pass`, `fail` or `not tested`), missing API calls, and the date
+   checked.
+2. Each plugin gets a smoke script written by rvim's maintainers, not the
+   plugin's own test suite. The script drives rvim headless (`Editor` with
+   `handle_event` and no terminal) with keys, and asserts the buffer, cursor
+   and messages after a documented use of the plugin.
+3. A CI job, not part of `cargo test`, clones the pinned commits into a
+   temporary directory and runs the scripts. It needs network access, so it
+   runs in CI only, when the list changes or on a schedule.
+4. A failing plugin stays in the table with `fail` and its reason. It is not
+   removed to make the table green.
+5. The first list is chosen by the owner. Candidates must be pure Lua, under
+   a permissive license (checked), with a small API use. plenary.nvim is a
+   candidate for its utility functions (UNVERIFIED that it is still pure Lua
+   and maintained).
+
+Every statement about Neovim's API in this section is UNVERIFIED until it is
+checked against Neovim's current API reference at the pinned version.
+
 ## Dependency choices
 
 Looked up on 2026-10-31 (versions, licences and dates from crates.io; items
@@ -586,6 +959,8 @@ possibly the ACP crate (check).
 | Terminal pane | `portable-pty` 0.9 plus `vt100` 0.18 | ConPTY on Windows 10 1809+. `portable-pty` has had no release since February 2025; expect ConPTY quirks |
 | Prediction providers | blocking HTTP (`ureq`, version UNVERIFIED) with small `serde_json` request types per provider | FIM endpoints (Ollama `/api/generate` with `suffix`, llama.cpp `/infill`, Codestral `/v1/fim/completions`, OpenAI-style `/v1/completions` with `suffix`) are UNVERIFIED. LSP 3.18 `textDocument/inlineCompletion` is preview and `lsp-types` 0.97 (2024) lacks it; async LSP stacks need tokio. Defer LSP inline completion |
 | ACP | `agent-client-protocol` 3.6.0 | See above; footprint unchecked |
+| Lua (milestone 9) | `mlua` (version UNVERIFIED) with Lua 5.4 `vendored` (UNVERIFIED); LuaJIT is the alternative | See "Lua extensions". Lua runs on one worker thread, so the `send` feature (UNVERIFIED) is not needed; footprint and build time to be measured |
+| LSP (milestone 9) | JSON-RPC framing written in rvim, sharing code with the agent connectors; `lsp-types` optional (version UNVERIFIED) | See "Neovim-inspired features". Blocking I/O on a worker, as for agents |
 
 Waking the UI from a worker: have workers send into the one event channel
 and let the input thread, not a poll timeout, own the wait (a small
@@ -609,6 +984,12 @@ request carries a generation number and stale results are discarded.
   `:set` semantics, paste in Insert mode) also gets differential cases.
 - Rendering is tested on the `Frame` (cells and styles), with golden files for
   a few screens, not through a real terminal.
+- The start menu (milestone 6) is on only when a config file exists, `--modern`,
+  `--start-menu` or `start.menu = true` turns it on. While it is shown it takes
+  `<Up>`, `<Down>` and `<CR>`, and `<Esc>` closes it. Every other key is
+  handled by Vim as usual (see "Start menu").
+- Lua (milestone 9) is off until `[lua] enable = true` or `--lua`. Neovim-style
+  features are off until configured, as the other extensions are.
 
 ## Differential testing
 
@@ -622,6 +1003,174 @@ differ, Vim is right.
 
 Things the harness cannot see: screen layout, messages, and file I/O. Those
 have unit tests (for layout, on the styled `Frame` once milestone 4 lands).
+
+## Licensing
+
+Status: a planning note. Nothing in this section is in effect. `LICENSE`,
+`Cargo.toml` and the README's License section are unchanged. The owner must
+confirm the scheme below, and should get legal advice, before any relicensing.
+
+**Current state** (checked 2026-11-01):
+
+- `LICENSE` is the full Vim license text. `Cargo.toml` has
+  `license = "Vim"`. The README's License section says the whole project is
+  under the Vim license. `VERSION_MESSAGE` in `src/lib.rs` carries the
+  modified-version notice that condition II.3 requires.
+- No file under `src/` has an SPDX identifier or a copyright line.
+
+**Goal.** Apache-2.0 for rvim's new code. The Vim license for parts derived
+from Vim: ports of Vim's C algorithms (the word motions, `searchit`, regex
+semantics, `do_sub`, and possibly scrolling; see the table). This is meant to
+resemble Neovim's arrangement (UNVERIFIED: check Neovim's `LICENSE` text and
+its file headers before the arrangement is copied).
+
+**Basis in the Vim license.** Section II.2.c lets a modified Vim choose its own
+license for the new code it adds, if the changes do not restrict others from
+making their own changes to the official Vim. Section II.1 keeps the license
+text unmodified, II.3 keeps the modified-version message in `:version` and the
+intro screen, and II.4 keeps the contact information. Whether Apache-2.0 meets
+the "does not restrict" test is for counsel (UNVERIFIED).
+
+**Vim-derived code, as the plan and the code comments state it.** Found by
+grepping `src/` for "port", "ported" and "Port of" and reading the module
+headers. The classification is a proposal to be checked file by file against
+Vim's source.
+
+| Module | What the code says | Class |
+|---|---|---|
+| `motion.rs` | Word motions are ports of `fwd_word`, `bck_word`, `end_word`; `findmatchlimit()` is a port; the `utf_class` table is from `mbyte.c` | Derived (port) |
+| `textobject.rs` | "ported from Vim's textobject.c" | Derived (port) |
+| `ops.rs` | "ported from Vim's ops.c and register.c" | Derived (port) |
+| `normal.rs` | "ports of Vim's normal.c `nv_*` functions" | Derived (port) |
+| `search.rs` | "a port of Vim's `searchit()` and `do_search()`" | Derived (port) |
+| `ex.rs` | The `:s` loops are "a port of the loops of Vim's `do_sub()`"; `do_move` and `ex_mark` follow Vim | Derived for the `:s` part; the rest to check |
+| `register.rs` | "following Vim's register.c" | To check: port or behaviour |
+| `undo.rs` | Vim's `u_undoredo()` model and `uh_namedm` | To check |
+| `cmdline.rs` | Vim's `histadd` | To check (small) |
+| `editor.rs` | Many "Vim's X()" comments (`u_sync`, `start_arrow`, `open_line`) | To check: mostly structure |
+| `regex.rs` | "Semantics follow Vim's backtracking engine" | To check: semantics only, or code |
+| `scroll.rs` | Rules from `scroll.txt`; its header says Vim's C was not ported | Likely new code, by its own header |
+| `text.rs`, `view.rs`, `buffer.rs`, `options.rs`, `key.rs`, `event.rs`, `macros.rs`, `recovery.rs`, `main.rs` | rvim's own design; Vim behaviour is checked only by differential tests | New |
+
+The tests in `tests/` are rvim's own cases, run against Vim. They are not
+copies of Vim's test suite (`src/testdir`), and must stay that way.
+
+**Scheme.**
+
+- **Per-file SPDX header**, first line after any shebang:
+  - `// SPDX-License-Identifier: Apache-2.0` for new files.
+  - `// SPDX-License-Identifier: Vim` for Vim-derived files. These also carry
+    `// Derived from Vim (see LICENSE-VIM). This is a modified version, not
+    the official Vim.` (the II.3 notice).
+  - A copyright line in both: `// Copyright (c) <year> <holder>` (holder not
+    chosen; see open questions). The identifier `Vim` is expected to be on the
+    SPDX list (UNVERIFIED).
+- **Mixed files.** A file that contains any ported code is Vim-licensed as a
+  whole. New code that does not depend on the port goes into a new Apache-2.0
+  module, so that the file can move out. For example, the `:s` port could move
+  to its own module, which would let most of `ex.rs` become Apache-2.0. Whether
+  to split is the owner's decision.
+- **Files.**
+  - `LICENSE`: Apache-2.0 text, for new code. It replaces the Vim text only
+    when the scheme is adopted.
+  - `LICENSE-VIM`: the current Vim license text, byte for byte, moved with
+    `git mv`. Renaming does not change the text.
+  - `NOTICE`: Apache-2.0 attribution, the Vim attribution (Bram Moolenaar and
+    the Vim contributors) and the modified-version statement.
+  - README License section: explains both files and which files are which.
+  - `Cargo.toml` `license`: an SPDX expression. How Cargo and crates.io treat
+    `Apache-2.0 AND Vim` is UNVERIFIED; `license-file` is the fallback.
+  - `.github/workflows/release.yml` copies `LICENSE*` into each archive, so
+    `LICENSE-VIM` ships with the binaries without a change there.
+- **Contributor rule** (in `CONTRIBUTING.md`, planned): a contribution to a new
+  file is Apache-2.0. A contribution to a Vim-derived file stays under the Vim
+  license. Porting Vim code is declared in the commit message and the PR, and
+  the new file gets the Vim header. Whether a contributor agreement (CLA) or a
+  DCO sign-off is needed is an open question.
+- **Process.**
+  1. The owner confirms this scheme and the table above.
+  2. Legal advice: the Vim license, Apache-2.0 compatibility, and whether a
+     Vim-derived file can be re-headed.
+  3. One commit adds the headers and `LICENSE-VIM` with no licence text changed.
+  4. A second commit changes `LICENSE`, `NOTICE`, the README and `Cargo.toml`.
+  5. The modified-version message stays in `:version` and the intro screen in
+     every case.
+
+**Open questions.** The copyright holder for new code. CLA or DCO. Whether
+`scroll.rs` and `regex.rs` are derived or new (a line-by-line check against
+Vim's source is needed). Whether the Vim-derived code should move to a
+separate crate. Keeping the whole project under the Vim license (today's
+state) is the simplest option and needs no change.
+
+## Repository and packaging
+
+Planned, not started. Nothing below exists in the repository yet (there is no
+`Makefile`; `.github/workflows/release.yml` is the only CI file).
+
+**Makefile.** Thin wrappers over cargo, so that the commands in CLAUDE.md and
+README.md have short names:
+
+| Target | Runs |
+|---|---|
+| `build` | `cargo build` |
+| `release` | `cargo build --release` |
+| `test` | `cargo test` |
+| `test-vim` | `RVIM_REQUIRE_VIM=1 cargo test`, which fails when Vim is missing |
+| `lint` | `cargo clippy --all-targets` and `cargo fmt --check` |
+| `fmt` | `cargo fmt` |
+| `run` | `cargo run -- $(FILE)` |
+| `clean` | `cargo clean` |
+| `install` | copies `rvim` to `$(DESTDIR)$(PREFIX)/bin` (`PREFIX` defaults to `/usr/local`), and `LICENSE*` and `README.md` to `$(DESTDIR)$(PREFIX)/share/doc/rvim/` |
+| `uninstall` | removes what `install` copied |
+| `dist` | builds the release binary and writes an archive with the same files, named as `release.yml` names them (checked when written) |
+
+Every target is `.PHONY`, and a failing command fails the target. Windows
+users run `cargo` directly, or run `make` from Git Bash if GNU make is
+installed there (UNVERIFIED). `make` does not replace CI, and `release.yml`
+stays the release path.
+
+**Documents.** None is drafted by this plan. Each one is planned as follows.
+
+| File | Content | When |
+|---|---|---|
+| `SECURITY.md` | Private reporting (GitHub private vulnerability reporting, UNVERIFIED that it is enabled on the repository); supported versions (the latest alpha until 0.1.0); the local-only statement: no telemetry, nothing leaves the machine unless the user configures a provider or command, the agent endpoint is local and on a user-only socket, prediction is off by default, recovery files stay on disk | Before the next release |
+| `INSTALL.md` | Release binaries per platform; `cargo install --path .` and `cargo install --git` (`cargo install rvim` only after a crates.io publish, not planned yet); building from source (the Rust toolchain needed for edition 2024 is UNVERIFIED as a minimum version); `make install`; packaging notes (keep `LICENSE*`, do not change `VERSION_MESSAGE`) | Before the next release |
+| `CONTRIBUTING.md` | The differential test rule (each behaviour gets `tests/compat_*.rs` cases; when Vim and rvim differ, fix rvim); how to run the tests (`make test-vim`, Vim 9 needed); commit and PR style (imperative subject, the milestone in brackets as in the history); PLAN.md is updated in every commit that moves a milestone; the licensing rule above | With the Makefile |
+| `AGENTS.md` | Instructions for coding agents: read `CLAUDE.md` for the rules and `PLAN.md` for the status, and the test commands. A pointer to `CLAUDE.md`, not a copy; a symlink is avoided because Windows checkouts need developer mode (UNVERIFIED for git) | With the Makefile |
+| `MAINTAIN.md` | Release process: tag `v0.1.0-alpha.N` on `main` after `make lint` and `make test-vim` pass; `release.yml` builds the binaries; release notes name the milestone. Milestone-release rule: release when a milestone moves to done or a user-visible feature lands. Triage: reproduce with `RVIM_REQUIRE_VIM=1`, add a differential case, fix rvim. The AUR update steps | After the first milestone release |
+
+## Future goals
+
+### Publish on the AUR
+
+- **Packages.** `rvim` builds from the source archive of a tagged release.
+  `rvim-bin` repackages the Linux release binary, if one is published for the
+  architecture. The PKGBUILDs live in the AUR repositories (keeping them in
+  this repository too, under `packaging/arch/`, is undecided).
+- **Depends on** the release archives and checksums, `make install` with
+  `PREFIX` and `DESTDIR`, and `LICENSE*` being installed. It should not start
+  before the Makefile, `LICENSE-VIM` and `INSTALL.md` exist.
+- **License field.** Matches the decision in "Licensing". Until then it is
+  `Vim`. Whether the AUR accepts the identifier `Vim` is UNVERIFIED.
+- **Name check** (UNVERIFIED, not yet done). Search the AUR, crates.io, Homebrew
+  and the major distribution repositories for existing `rvim` packages, and
+  check the name's trademark status, before publishing. Rename if it is taken.
+
+### Logo design
+
+- **Deliverables.** A vector master (`assets/logo.svg`, planned path), a
+  favicon (PNG and ICO exported from the SVG, for the project page and the
+  repository's social preview), a monochrome text version for the start menu
+  (a constant in the source, under 60 columns, drawn by the Frame), a header
+  image for the README, and the logo in release assets if the owner wants it.
+- **Placeholder until designed.** The start menu shows the word `rvim` in a box.
+  The README has no image.
+- **Constraints.** The logo must not imitate the Vim logo or any Neovim mark
+  (both are their projects' own marks; the trademark view is UNVERIFIED).
+  Colours should map to the theme groups in "Styled frame and diff redraw", so
+  the same design works in light and dark themes.
+- **Who decides.** The owner. The design brief is written with the owner before
+  work starts.
 
 ## Known differences from Vim
 
