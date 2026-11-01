@@ -7,7 +7,7 @@ a real Vim by the differential harness in `tests/common/mod.rs`.
 
 ## Status: read this first
 
-Last updated 2026-11-01 (Makefile added). **rvim is an alpha, roughly 25-30% of this plan.**
+Last updated 2026-11-01 (Makefile and CI workflow added; CI not yet run on GitHub). **rvim is an alpha, roughly 25-30% of this plan.**
 As of 2026-11-01 milestones 1-3 are done; 4 and 5 are partly done; 6 has the start menu only; 7-9 are plans.
 Released as `v0.1.0-alpha.1`, `v0.1.0-alpha.2` and `v0.1.0-alpha.3`. The next release is `v0.1.0-alpha.4`, not yet tagged. All tests pass against Vim 9.1 and clippy/fmt are
 clean at the last commit.
@@ -47,7 +47,6 @@ restored by undo in `undo.rs`), and the scrolling commands with `scrolloff`
 **In progress** (as of 2026-11-01; maintained by the orchestrator, and an
 entry is removed when its branch lands on main):
 
-- CI workflow: tests, clippy and fmt on Linux, macOS and Windows (`.github/workflows/ci.yml`)
 - `--help` and `--version` command-line flags (`src/main.rs`)
 
 **Suggested order for what is left:** (1) Document/Window split, (2) splits +
@@ -1804,7 +1803,7 @@ copies of Vim's test suite (`src/testdir`), and must stay that way.
 
 Status on 2026-11-01: the five repository documents are written (`SECURITY.md`,
 `CONTRIBUTING.md`, `AGENTS.md`, `MAINTAIN.md`, `INSTALL.md`). The `Makefile` is
-present. `.github/workflows/release.yml` is the only CI file. Where a document's
+present. `.github/workflows/ci.yml` runs on pushes to `main` and on pull requests: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` and `cargo test` on Linux, macOS and Windows, with real Vim installed (`RVIM_REQUIRE_VIM=1` on Linux only; elsewhere a missing Vim skips the differential tests with a warning). It has never run on GitHub yet. `.github/workflows/release.yml` is the release workflow. Where a document's
 text differs from the rows below, the document is the source of truth.
 
 **Makefile.** Thin wrappers over cargo, so that the commands in CLAUDE.md and
@@ -1985,6 +1984,10 @@ plan, kept for the record; the files are the source of truth.
   never run, because the development machine is Windows. Run
   `cargo test --lib recovery` on Linux or macOS (or in WSL with Rust) before
   trusting it; the release workflow has no test step, so this is a to-do.
+- CI (`.github/workflows/ci.yml`) has never run on GitHub. Its first run is
+  also the first execution of the Unix recovery-file tests (`cfg(unix)` in
+  `src/recovery.rs`), on the Linux and macOS runners. A failure there is a real
+  finding about the Unix code, not a CI setup problem to paper over.
 - Alt, F-keys, Insert and Shift-Tab work (milestone 4). The kitty keyboard
   protocol is still missing (milestone 4, "Left").
 - Jumplist: entries are positions in the one buffer. `:e` of another file

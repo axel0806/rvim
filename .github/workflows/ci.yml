@@ -1,0 +1,71 @@
+# CI: tests, clippy and fmt on Linux, macOS and Windows. Runs on pushes to
+# main and on pull requests. release.yml is separate and builds the binaries.
+#
+# Vim: the differential tests compare rvim with a real Vim. The runners install
+# whatever Vim their package manager ships, which is not always 9.1, the version
+# the tests were written against. A failure that comes from a different Vim
+# version needs a look (is it rvim, or Vim's behaviour?), not a skip.
+#
+# RVIM_REQUIRE_VIM=1 makes a missing Vim a failure. It is set only on Linux,
+# where the apt package installs reliably. On macOS and Windows a missing Vim
+# skips the differential checks with a warning, so a green run there proves
+# less; see the "Vim present?" step.
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, require_vim: "1" }
+          - { os: macos-latest, require_vim: "0" }
+          - { os: windows-latest, require_vim: "0" }
+    runs-on: ${{ matrix.os }}
+    env:
+      RVIM_REQUIRE_VIM: ${{ matrix.require_vim }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Vim (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get install -y vim
+      - name: Install Vim (macOS)
+        if: runner.os == 'macOS'
+        run: brew install vim
+      - name: Install Vim (Windows)
+        if: runner.os == 'Windows'
+        run: choco install vim -y
+      - name: Add Vim to PATH (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem -Path 'C:\Program Files', 'C:\Program Files (x86)' -Directory -Filter Vim -ErrorAction SilentlyContinue |
+            ForEach-Object { Get-ChildItem -Path $_.FullName -Recurse -Filter vim.exe -ErrorAction SilentlyContinue } |
+            Select-Object -First 1
+          if (-not $exe) { throw 'vim.exe not found after choco install' }
+          $exe.DirectoryName | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+      - name: Vim present?
+        run: |
+          if command -v vim >/dev/null 2>&1; then
+            vim --version | head -n 1
+          else
+            echo "::warning::Vim not found on ${{ matrix.os }}; the differential tests are skipped unless RVIM_REQUIRE_VIM=1"
+          fi
+      - name: Format
+        run: cargo fmt --check
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Test
+        run: cargo test

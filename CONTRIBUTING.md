@@ -129,7 +129,11 @@ This is not legal advice, and counsel review is still open. Read the
   status table, the "Left" lists, "Known differences" and the "Last updated"
   line (CLAUDE.md states this rule). Keep the README's "Where rvim differs
   from Vim" in step with "Known differences".
-- Before opening a PR, run `make check` (`make lint` and `make test-vim`).
+- Before opening a PR, run `make check` (`make lint` and `make test-vim`). CI
+  (`.github/workflows/ci.yml`) runs fmt, clippy with `-D warnings` and the
+  tests on Linux, macOS and Windows for every PR and push to `main`; it
+  requires Vim only on Linux, so a green CI run on macOS or Windows does not
+  prove the differential tests ran.
 
 ## Reporting security problems
 
