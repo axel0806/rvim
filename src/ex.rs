@@ -343,6 +343,13 @@ impl Editor {
                 return Err("E37: No write since last change (add ! to override)".into());
             }
             self.quit = true;
+        } else if n == "AgentScan" {
+            // rvim only (capital letter): scans for agents on a worker. It
+            // connects to nothing (agent_scan.rs).
+            if !p.arg.is_empty() {
+                return Err(format!("E488: Trailing characters: {}", p.arg));
+            }
+            self.agent_scan_command();
         } else if n == "ConfigWarnings" {
             // rvim only (capital letter, as CLAUDE.md asks): the problems
             // the config file had at startup.

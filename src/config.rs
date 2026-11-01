@@ -11,7 +11,8 @@
 //! [start]
 //! menu = true        # the start menu when no flag is given
 //!
-//! [agent]            # kept as read; milestone 7 reads it
+//! [agent]
+//! enabled = true     # agent indicators, and a scan at startup
 //! ```
 //!
 //! Nothing here blocks or touches the terminal. The one file read is
@@ -53,11 +54,21 @@ pub struct Config {
     pub options: Vec<(&'static str, OptValue)>,
     /// `[start] menu`, or None when the file does not set it.
     pub start_menu: Option<bool>,
-    /// The `[agent]` table as read. Not interpreted here.
-    pub agent: Option<Table>,
+    /// The `[agent]` table: the opt-in that shows the agent indicators.
+    pub agent: AgentConfig,
     /// Each problem, as one line for the message line; each starts with
     /// `config:`.
     pub warnings: Vec<String>,
+}
+
+/// The `[agent]` keys read in this version (PLAN.md, "Agent experience",
+/// Config). Only `enabled` is read. Its default is off, so with no config
+/// nothing agent-related runs.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AgentConfig {
+    /// `enabled = true`: the agent indicators are shown and a scan runs at
+    /// startup (`agent_scan.rs`). It turns on nothing else.
+    pub enabled: bool,
 }
 
 /// The path of `config.toml` for an environment. `env` looks up a variable
@@ -182,10 +193,7 @@ pub fn parse(text: &str) -> Config {
         match (key.as_str(), value) {
             ("options", v) => options(v, &mut cfg),
             ("start", v) => start(v, &mut cfg),
-            ("agent", Value::Table(t)) => cfg.agent = Some(t),
-            ("agent", _) => cfg
-                .warnings
-                .push("config: [agent] must be a table; ignored".into()),
+            ("agent", v) => agent(v, &mut cfg),
             ("profile" | "lua", _) => cfg
                 .warnings
                 .push(format!("config: [{key}] is not supported yet; ignored")),
@@ -230,6 +238,29 @@ fn options(value: Value, cfg: &mut Config) {
         };
         if let Some(v) = typed {
             cfg.options.push((def.name, v));
+        }
+    }
+}
+
+fn agent(value: Value, cfg: &mut Config) {
+    let Value::Table(table) = value else {
+        cfg.warnings
+            .push("config: [agent] must be a table; ignored".into());
+        return;
+    };
+    for (key, value) in table {
+        match (key.as_str(), value) {
+            ("enabled", Value::Boolean(on)) => cfg.agent.enabled = on,
+            ("enabled", _) => cfg
+                .warnings
+                .push("config: [agent] enabled takes true or false; ignored".into()),
+            // Planned for later steps (connections, logs); not read yet.
+            ("shareable" | "log", _) => cfg.warnings.push(format!(
+                "config: [agent] {key} is not supported yet; ignored"
+            )),
+            _ => cfg
+                .warnings
+                .push(format!("config: unknown key \"agent.{key}\"; ignored")),
         }
     }
 }
@@ -425,8 +456,7 @@ mod tests {
             ]
         );
         assert_eq!(cfg.start_menu, Some(true));
-        let agent = cfg.agent.expect("agent table kept");
-        assert_eq!(agent.get("enabled"), Some(&Value::Boolean(true)));
+        assert!(cfg.agent.enabled);
     }
 
     #[test]
@@ -472,6 +502,47 @@ mod tests {
         let cfg = parse("[options]\nlist = true\nruler = false\n");
         assert!(cfg.options.is_empty());
         assert!(cfg.warnings.is_empty());
+    }
+
+    #[test]
+    fn agent_enabled_is_the_only_key_read() {
+        assert!(!parse("").agent.enabled, "off by default");
+        let cfg = parse("[agent]\nenabled = false\n");
+        assert!(!cfg.agent.enabled);
+        assert!(cfg.warnings.is_empty(), "{:?}", cfg.warnings);
+    }
+
+    #[test]
+    fn agent_bad_values_and_unread_keys_warn() {
+        let cfg = parse("[agent]\nenabled = \"yes\"\n");
+        assert!(!cfg.agent.enabled);
+        assert!(sole_warning(&cfg).contains("[agent] enabled takes true or false"));
+
+        let cfg = parse("[agent]\nshareable = [\"C:/p\"]\nlog = \"events\"\nbogus = 1\n");
+        assert!(!cfg.agent.enabled);
+        assert_eq!(cfg.warnings.len(), 3, "{:?}", cfg.warnings);
+        let all = cfg.warnings.join("\n");
+        assert!(all.contains("[agent] shareable is not supported yet"));
+        assert!(all.contains("[agent] log is not supported yet"));
+        assert!(all.contains("unknown key \"agent.bogus\""));
+
+        let cfg = parse("agent = 1\n");
+        assert_eq!(cfg.warnings.len(), 1);
+        assert!(cfg.warnings[0].contains("[agent] must be a table"));
+    }
+
+    #[test]
+    fn agent_opt_in_starts_the_layer_and_a_startup_scan() {
+        use crate::agent_scan::AgentCmd;
+        let (mut ed, problems) = applied("[agent]\nenabled = true\n", None);
+        assert!(problems.is_empty(), "{problems:?}");
+        assert!(ed.agent_active);
+        assert_eq!(ed.take_agent_commands(), vec![AgentCmd::Scan]);
+
+        // No opt-in: no layer, no scan, nothing to take.
+        let (mut ed, _) = applied("", None);
+        assert!(!ed.agent_active);
+        assert!(ed.take_agent_commands().is_empty());
     }
 
     #[test]

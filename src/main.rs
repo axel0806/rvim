@@ -222,6 +222,8 @@ fn run(ed: &mut Editor) -> io::Result<Option<i32>> {
     let (watch_tx, watch_rx) = mpsc::channel();
     rvim::watch::spawn(watch_rx, tx.clone());
     forward_watch(ed, &watch_tx);
+    let agent_tx = tx.clone();
+    forward_agent(ed, &agent_tx);
     spawn_input(tx);
     while !ed.should_quit() {
         draw(&mut out, ed, &mut screen)?;
@@ -252,6 +254,7 @@ fn run(ed: &mut Editor) -> io::Result<Option<i32>> {
             }
         }
         forward_watch(ed, &watch_tx);
+        forward_agent(ed, &agent_tx);
         if ed.take_bell() {
             queue!(out, Print('\x07'))?;
         }
@@ -264,6 +267,27 @@ fn run(ed: &mut Editor) -> io::Result<Option<i32>> {
 fn forward_watch(ed: &mut Editor, watch_tx: &mpsc::Sender<rvim::watch::WatchCmd>) {
     for cmd in ed.take_watch_commands() {
         let _ = watch_tx.send(cmd);
+    }
+}
+
+/// Runs the agent layer's requests (`agent_scan.rs`). A scan runs on its own
+/// worker thread and comes back as `Event::AgentScan`; the editor never waits
+/// for it, and nothing here connects to an agent.
+fn forward_agent(ed: &mut Editor, tx: &mpsc::Sender<rvim::Event>) {
+    for cmd in ed.take_agent_commands() {
+        match cmd {
+            rvim::agent_scan::AgentCmd::Scan => {
+                let tx = tx.clone();
+                std::thread::spawn(move || {
+                    let report = rvim::agent_detect::scan(
+                        &rvim::agent_detect::RealEnv,
+                        rvim::agent_detect::Os::current(),
+                    );
+                    // A send fails only when the editor has ended.
+                    let _ = tx.send(rvim::Event::AgentScan(report.summary()));
+                });
+            }
+        }
     }
 }
 

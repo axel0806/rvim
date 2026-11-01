@@ -194,6 +194,13 @@ pub struct Editor {
     /// Problems found in the config file at startup (see `config.rs`), for
     /// `:ConfigWarnings`.
     pub(crate) config_warnings: Vec<String>,
+    /// The agent layer is on for this session: the config's opt-in, or
+    /// `:AgentScan` (see `agent_scan.rs`). Off, the status line is Vim's.
+    pub(crate) agent_active: bool,
+    /// The last scan's result, for the status indicator.
+    pub(crate) agent_scan: Option<crate::agent_detect::ScanSummary>,
+    /// Agent requests not yet taken by `take_agent_commands`.
+    pub(crate) agent_outbox: Vec<crate::agent_scan::AgentCmd>,
     pub(crate) message: Option<Message>,
     pub(crate) quit: bool,
     bell: bool,
@@ -294,6 +301,9 @@ impl Editor {
             cmd_paste: None,
             start_menu: None,
             config_warnings: Vec::new(),
+            agent_active: false,
+            agent_scan: None,
+            agent_outbox: Vec::new(),
             message: None,
             quit: false,
             bell: false,
@@ -444,6 +454,7 @@ impl Editor {
             Event::Paste(text) => self.paste(&text),
             Event::Resize(cols, rows) => self.set_screen_size(cols as usize, rows as usize),
             Event::FocusGained | Event::FocusLost | Event::Timer | Event::Signal(_) => {}
+            Event::AgentScan(scan) => self.agent_arrived(scan),
             Event::FileChanged {
                 doc,
                 version,

@@ -321,7 +321,20 @@ fn status_line(
     };
     let ruler = ruler(ed, below);
     let ruler_col = width.saturating_sub(18);
-    let mut s = truncate(&left, ruler_col.saturating_sub(1).max(1));
+    // The agent indicator (PLAN.md, "Agent experience", Lifecycle) sits just
+    // left of the ruler; the message keeps the cells before it. With the
+    // layer off, or no room, the row is Vim's.
+    let indicator = crate::agent_detect::indicator(ed.agent_active, ed.agent_scan.as_ref());
+    let (msg_cols, tag) = match indicator {
+        Some(t) if t.len() + 2 <= ruler_col => (ruler_col - t.len() - 1, Some(t)),
+        _ => (ruler_col, None),
+    };
+    let mut s = truncate(&left, msg_cols.saturating_sub(1).max(1));
+    s = pad(s, msg_cols);
+    if let Some(t) = tag {
+        s.push_str(&t);
+        s.push(' ');
+    }
     s = pad(s, ruler_col);
     s.push_str(&ruler);
     (pad(truncate(&s, width), width), error)

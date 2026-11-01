@@ -52,6 +52,9 @@ pub enum Event {
         mtime: Option<SystemTime>,
         size: usize,
     },
+    /// A scan for agents finished (`:AgentScan`, or the scan at startup with
+    /// the config's opt-in). Its thread is in `main.rs`; see `agent_scan.rs`.
+    AgentScan(crate::agent_detect::ScanSummary),
 }
 
 #[cfg(test)]

@@ -453,6 +453,7 @@ impl Editor {
         start_menu_flag: Option<bool>,
     ) -> Vec<String> {
         use crate::config::OptValue;
+        self.agent_opt_in(cfg.agent.enabled);
         let mut items: Vec<String> = cfg
             .options
             .iter()

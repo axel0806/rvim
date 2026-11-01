@@ -4,6 +4,7 @@
 
 pub mod acp;
 pub mod agent_detect;
+pub mod agent_scan;
 pub mod buffer;
 pub mod cli;
 mod cmdline;

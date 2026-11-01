@@ -490,6 +490,97 @@ impl ScanReport {
     }
 }
 
+/// What the editor keeps from a scan (milestone 7, step 4b). Plain data, so
+/// it can travel in an `Event`: the report itself holds `&'static` registry
+/// rows and is not kept.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ScanSummary {
+    /// Agents with an executable found, by registry id, in registry order.
+    pub found: Vec<(&'static str, How)>,
+    /// Agents with no executable but with a config directory.
+    pub config_only: Vec<&'static str>,
+    /// Agents with nothing found.
+    pub not_found: Vec<&'static str>,
+    /// The scan's warnings, as in [`ScanReport::warnings`].
+    pub warnings: Vec<String>,
+}
+
+impl ScanReport {
+    /// The part of the report the editor keeps.
+    pub fn summary(&self) -> ScanSummary {
+        let mut out = ScanSummary {
+            warnings: self.warnings.clone(),
+            ..ScanSummary::default()
+        };
+        for agent in AGENTS {
+            if let Some(f) = self.found.iter().find(|f| std::ptr::eq(f.agent, agent)) {
+                out.found.push((agent.id, f.how));
+                continue;
+            }
+            let config = self
+                .not_found
+                .iter()
+                .any(|n| std::ptr::eq(n.agent, agent) && n.config_dir.is_some());
+            if config {
+                out.config_only.push(agent.id);
+            } else {
+                out.not_found.push(agent.id);
+            }
+        }
+        out
+    }
+}
+
+impl ScanSummary {
+    /// The message line text for a scan: what was found and how, what has a
+    /// config directory only, what was not found, then the warnings. The
+    /// message line cuts it to its width.
+    pub fn message(&self) -> String {
+        let mut parts = Vec::new();
+        if !self.found.is_empty() {
+            let list: Vec<String> = self
+                .found
+                .iter()
+                .map(|(id, how)| {
+                    let how = match how {
+                        How::OnPath => "PATH",
+                        How::InstallDir => "install dir",
+                    };
+                    format!("{id} ({how})")
+                })
+                .collect();
+            parts.push(format!("found {}", list.join(", ")));
+        }
+        if !self.config_only.is_empty() {
+            parts.push(format!("config only: {}", self.config_only.join(", ")));
+        }
+        if !self.not_found.is_empty() {
+            parts.push(format!("not found: {}", self.not_found.join(", ")));
+        }
+        parts.extend(self.warnings.iter().map(|w| format!("warning: {w}")));
+        parts.join(" | ")
+    }
+}
+
+/// The status indicator text of the agent layer (PLAN.md, "Agent experience",
+/// Lifecycle), or None when the layer is off. `scan` is the last scan's
+/// result. Step 4b has no connections, so these are the states without one:
+/// `files only` before any scan, `none` after a scan that found nothing, and
+/// `<ids> found` otherwise.
+pub fn indicator(active: bool, scan: Option<&ScanSummary>) -> Option<String> {
+    if !active {
+        return None;
+    }
+    Some(match scan {
+        None => "ai: files only".to_string(),
+        Some(s) if s.found.is_empty() => "ai: none".to_string(),
+        Some(s) => {
+            let ids: Vec<&str> = s.found.iter().map(|(id, _)| *id).collect();
+            format!("ai: {} found", ids.join(", "))
+        }
+    })
+}
+
 fn protocol_list(agent: &AgentSpec) -> String {
     agent
         .protocols
