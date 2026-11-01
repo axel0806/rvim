@@ -101,7 +101,11 @@ rvim registers nothing with the system. There is no `make uninstall` yet.
   `~/.local/state/rvim/recovery` (from `HOME`, or `USERPROFILE`); otherwise the
   temp directory. Files are named `<file name>.<unix seconds>` (`unnamed` for a
   buffer with no file name). rvim never deletes them and does not offer them at
-  the next start.
+  the next start. On Unix the directory is created with mode 0700 and the files
+  with mode 0600 (owner-only); an existing directory you own is set to 0700. A
+  symbolic link, or a directory owned by someone else, is not used: the text
+  goes to a fresh private directory under the temp dir and the printed message
+  says so.
 - Not implemented: recovery on terminal close (SIGHUP) and swap files.
 
 ## Packaging status

@@ -41,8 +41,6 @@ restored by undo in `undo.rs`), and the scrolling commands with `scrolloff`
 **In progress** (as of 2026-11-01; maintained by the orchestrator, and an
 entry is removed when its branch lands on main):
 
-- Owner-only recovery files (mode 0600 on Unix, `src/recovery.rs`): being
-  built by a Haiku agent (branch name pending).
 - `:s` `\=` expressions (two agents, split from one): the expression module
   and `\=` in `:s` remain. Last open item of milestone 3.
 
@@ -53,8 +51,7 @@ reload and the ACP connector need no splits, so they can land before (2)
 finishes; only the side-by-side diff, the agent log split and the terminal
 pane wait for splits. (4) hlsearch/incsearch/syntax, (5) prediction. Cut a new release (`git tag v0.1.0-alpha.N`) when a
 milestone lands; `.github/workflows/release.yml` builds the binaries. Small items that can go at
-any time: owner-only (0600) recovery files (see "Known differences"), and the
-stale `--notes` string in `release.yml`, to refresh before tagging
+any time: the stale `--notes` string in `release.yml`, to refresh before tagging
 v0.1.0-alpha.3 (see "Repository and packaging").
 
 **Planned additions from the owner's todo (2026-11-01).** These are plans
@@ -1926,10 +1923,14 @@ plan, kept for the record; the files are the source of truth.
   changed. Still missing: hlsearch, incsearch, matching parens, syntax.
 - A panic writes unsaved text to a recovery file (`recovery.rs`), but a
   closed terminal (SIGHUP) does not yet, and there are no swap files.
-- Recovery files are written with `std::fs::write` and no permission change
-  (`src/recovery.rs`). On Unix they follow the umask and may be readable by
-  other users. Fix: create them owner-only (mode 0600). Still to do; listed in
-  "Suggested order".
+- Recovery files are created owner-only on Unix: the directory with mode 0700
+  (an existing directory the user owns is tightened to 0700; a symbolic link or
+  a directory of another owner is not used, and the file goes to a fresh private
+  directory under the temp dir, which the printed message names), each file with
+  mode 0600 and `create_new`, so an existing name or link is never written
+  through (`src/recovery.rs`). On Windows the default directory is under the
+  per-user `%LOCALAPPDATA%` and no permissions are set; that is the only Windows
+  protection.
 - Alt, F-keys, Insert and Shift-Tab work (milestone 4). The kitty keyboard
   protocol is still missing (milestone 4, "Left").
 - Jumplist: entries are positions in the one buffer. `:e` of another file

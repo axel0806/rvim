@@ -56,7 +56,18 @@ fn main() -> io::Result<()> {
         Err(_) => {
             if ed.buf.modified {
                 match rvim::recovery::write_recovery(&ed.buf, &rvim::recovery::recovery_dir()) {
-                    Ok(p) => eprintln!("rvim crashed. Unsaved text was saved to {}", p.display()),
+                    Ok(saved) => {
+                        if let Some(dir) = &saved.refused_dir {
+                            eprintln!(
+                                "rvim: recovery directory {} is a symbolic link or not yours; not used.",
+                                dir.display()
+                            );
+                        }
+                        eprintln!(
+                            "rvim crashed. Unsaved text was saved to {}",
+                            saved.path.display()
+                        );
+                    }
                     Err(e) => eprintln!("rvim crashed and could not save the text: {e}"),
                 }
             }

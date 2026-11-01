@@ -32,10 +32,11 @@ input files that reproduce the problem, and the impact you expect.
 - **File handling.** Reading or writing a file other than the one the user
   opened or named, including through symbolic links.
 - **Recovery files.** When rvim panics, it writes the unsaved text of modified
-  buffers to the state directory (PLAN.md, "Recovery"). rvim does not yet set
-  restrictive permissions on these files, so on Unix they follow the umask and
-  may be readable by other users. The fix (owner-only, mode 0600) is planned;
-  see PLAN.md, "Known differences".
+  buffers to the state directory (PLAN.md, "Recovery"). On Unix the files are
+  created owner-only (mode 0600) in an owner-only directory (0700), and an
+  existing name or a symbolic link is never written through. On Windows the
+  per-user `%LOCALAPPDATA%` directory is the only protection; see PLAN.md,
+  "Known differences".
 - **Command execution.** Running a shell command from text the user only opened
   or pasted. The code runs no external command today (there is no `:!` or
   filter). Any future one that runs file or clipboard text is in scope.
