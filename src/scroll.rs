@@ -170,12 +170,12 @@ impl Editor {
     /// First line the cursor may use in the current window (after
     /// 'scrolloff' rows above it).
     pub(crate) fn first_visible(&self) -> usize {
-        if self.top == 0 {
+        if self.win.top == 0 {
             return 0;
         }
         let so = self.so_rows();
         let last = self.doc.buf.last_line();
-        let mut l = self.top;
+        let mut l = self.win.top;
         let mut acc = 0;
         while acc < so && l < last {
             acc += self.line_rows(l);
@@ -187,14 +187,14 @@ impl Editor {
     /// Last line the cursor may use in the current window (after
     /// 'scrolloff' rows below it).
     pub(crate) fn last_visible(&self) -> usize {
-        let bot = self.bottom_of(self.top);
+        let bot = self.bottom_of(self.win.top);
         if bot >= self.doc.buf.line_count() {
             return self.doc.buf.last_line();
         }
         let so = self.so_rows();
         let mut l = bot - 1;
         let mut acc = 0;
-        while acc < so && l > self.top {
+        while acc < so && l > self.win.top {
             acc += self.line_rows(l);
             l -= 1;
         }
@@ -216,19 +216,19 @@ impl Editor {
         let r = self.text_rows();
         let so = self.so_rows();
         let cur = self.win.cursor.line.min(n - 1);
-        self.top = self.top.min(n - 1);
-        if self.top > 0 && (cur < self.top || self.rows_upto(self.top, cur, so) < so) {
+        self.win.top = self.win.top.min(n - 1);
+        if self.win.top > 0 && (cur < self.win.top || self.rows_upto(self.win.top, cur, so) < so) {
             let halfheight = (r / 2).saturating_sub(1).max(2);
-            self.top = if cur < self.top && self.top - cur >= halfheight {
+            self.win.top = if cur < self.win.top && self.win.top - cur >= halfheight {
                 self.top_for_cursor_middle(cur)
             } else {
                 self.top_for_cursor_top(cur)
             };
         }
-        let need = self.rows_upto(self.top, cur + 1, r) + self.rows_below(cur, so);
+        let need = self.rows_upto(self.win.top, cur + 1, r) + self.rows_below(cur, so);
         if need > r {
-            let bot = self.bottom_of(self.top);
-            self.top = if self.rows_upto(bot, cur + 1, r) <= r {
+            let bot = self.bottom_of(self.win.top);
+            self.win.top = if self.rows_upto(bot, cur + 1, r) <= r {
                 self.top_for_cursor_bottom(cur, so)
             } else {
                 self.top_for_cursor_middle(cur)
@@ -238,7 +238,7 @@ impl Editor {
 
     /// The first buffer line shown in the window (0-based).
     pub fn top_line(&self) -> usize {
-        self.top
+        self.win.top
     }
 
     /// Sets the window size in cells (the command line is the last row) and
@@ -254,7 +254,7 @@ impl Editor {
     fn page_down_top(&self, bot: usize) -> usize {
         let mut t = bot;
         let mut used = 0;
-        while t > self.top + 1 {
+        while t > self.win.top + 1 {
             let h = self.line_rows(t - 1);
             if used + h > 2 {
                 break;
@@ -268,7 +268,7 @@ impl Editor {
     /// The top line for `CTRL-B`: the first two lines of the old window
     /// become the last two lines of the new one.
     fn page_up_top(&self) -> usize {
-        let old = self.top;
+        let old = self.win.top;
         let r = self.text_rows();
         let mut t = (old + 2).min(self.doc.buf.line_count());
         let mut used = 0;
@@ -289,10 +289,10 @@ impl Editor {
     /// the match out of the window stops short of it.
     pub(crate) fn scroll_window_for_prompt(&mut self, down: bool) {
         let n = self.doc.buf.line_count();
-        self.top = if down {
-            (self.top + 1).min(n - 1)
+        self.win.top = if down {
+            (self.win.top + 1).min(n - 1)
         } else {
-            self.top.saturating_sub(1)
+            self.win.top.saturating_sub(1)
         };
         self.update_topline();
     }
@@ -304,21 +304,21 @@ impl Editor {
         let count1 = count.unwrap_or(1).max(1);
         match cmd {
             ScrollCmd::LineDown => {
-                let top = (self.top + count1).min(n - 1);
-                if top == self.top {
+                let top = (self.win.top + count1).min(n - 1);
+                if top == self.win.top {
                     return;
                 }
-                self.top = top;
+                self.win.top = top;
                 self.clamp_cursor_to_window();
                 self.win.keep_curswant = true;
                 self.coladvance(self.win.curswant);
             }
             ScrollCmd::LineUp => {
-                let top = self.top.saturating_sub(count1);
-                if top == self.top {
+                let top = self.win.top.saturating_sub(count1);
+                if top == self.win.top {
                     return;
                 }
-                self.top = top;
+                self.win.top = top;
                 self.clamp_cursor_to_window();
                 self.win.keep_curswant = true;
                 self.coladvance(self.win.curswant);
@@ -326,15 +326,15 @@ impl Editor {
             ScrollCmd::PageDown => {
                 let mut moved = false;
                 for _ in 0..count1 {
-                    let bot = self.bottom_of(self.top);
+                    let bot = self.bottom_of(self.win.top);
                     if bot >= n {
                         // The end is shown: the last line goes to the top.
-                        if self.top + 1 >= n {
+                        if self.win.top + 1 >= n {
                             break;
                         }
-                        self.top = n - 1;
+                        self.win.top = n - 1;
                     } else {
-                        self.top = self.page_down_top(bot);
+                        self.win.top = self.page_down_top(bot);
                     }
                     moved = true;
                 }
@@ -348,10 +348,10 @@ impl Editor {
             ScrollCmd::PageUp => {
                 let mut moved = false;
                 for _ in 0..count1 {
-                    if self.top == 0 {
+                    if self.win.top == 0 {
                         break;
                     }
-                    self.top = self.page_up_top();
+                    self.win.top = self.page_up_top();
                     moved = true;
                 }
                 if !moved {
@@ -384,8 +384,8 @@ impl Editor {
                     }
                     // Stop scrolling once the last line is at the bottom.
                     let max_top = self.top_for_cursor_bottom(n - 1, 0);
-                    while left > 0 && self.top + lines < max_top {
-                        let h = self.line_rows(self.top + lines) as isize;
+                    while left > 0 && self.win.top + lines < max_top {
+                        let h = self.line_rows(self.win.top + lines) as isize;
                         left -= h;
                         if left < 0 && scrolled > 0 {
                             break;
@@ -393,7 +393,7 @@ impl Editor {
                         lines += 1;
                         scrolled += h;
                     }
-                    self.top += lines;
+                    self.win.top += lines;
                     // At the end of the file the cursor still moves by the count.
                     let step = if lines > 0 { lines } else { amt };
                     self.win.cursor.line = (cur + step).min(n - 1);
@@ -402,8 +402,8 @@ impl Editor {
                         self.beep();
                         return;
                     }
-                    while left > 0 && self.top > lines {
-                        let h = self.line_rows(self.top - 1 - lines) as isize;
+                    while left > 0 && self.win.top > lines {
+                        let h = self.line_rows(self.win.top - 1 - lines) as isize;
                         left -= h;
                         if left < 0 && scrolled > 0 {
                             break;
@@ -411,7 +411,7 @@ impl Editor {
                         lines += 1;
                         scrolled += h;
                     }
-                    self.top -= lines;
+                    self.win.top -= lines;
                     let step = if lines > 0 { lines } else { amt };
                     self.win.cursor.line = cur.saturating_sub(step);
                 }
@@ -425,7 +425,7 @@ impl Editor {
                     self.win.cursor.line = c.saturating_sub(1).min(n - 1);
                 }
                 let cur = self.win.cursor.line;
-                self.top = match cmd {
+                self.win.top = match cmd {
                     ScrollCmd::Top { .. } => self.top_for_cursor_top(cur),
                     ScrollCmd::Middle { .. } => self.top_for_cursor_middle(cur),
                     _ => self.top_for_cursor_bottom(cur, self.so_rows()),
@@ -446,23 +446,23 @@ impl Editor {
             // The count and 'scrolloff' combine with max(), as in Vim's
             // nv_scroll(): the count is counted from the window edge and the
             // margin is the limit it may not pass.
-            'H' => (self.top + count1 - 1)
+            'H' => (self.win.top + count1 - 1)
                 .max(self.first_visible())
-                .min(self.bottom_of(self.top) - 1),
+                .min(self.bottom_of(self.win.top) - 1),
             'L' => {
-                let bot = self.bottom_of(self.top);
+                let bot = self.bottom_of(self.win.top);
                 (bot - 1)
                     .saturating_sub(count1 - 1)
                     .min(self.last_visible())
-                    .max(self.top)
+                    .max(self.win.top)
             }
             _ => {
                 // The line that splits the shown rows in half.
-                let bot = self.bottom_of(self.top);
-                let total = self.rows_upto(self.top, bot, usize::MAX);
+                let bot = self.bottom_of(self.win.top);
+                let total = self.rows_upto(self.win.top, bot, usize::MAX);
                 let half = total.div_ceil(2);
                 let mut acc = 0;
-                let mut l = self.top;
+                let mut l = self.win.top;
                 while l + 1 < bot {
                     acc += self.line_rows(l);
                     if acc >= half {

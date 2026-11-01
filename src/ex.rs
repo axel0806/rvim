@@ -972,8 +972,8 @@ impl Editor {
     /// entry `<C-o>` counts from (a message, not Vim's listing).
     fn ex_jumps(&mut self) {
         self.sync_jumps();
-        self.jumps.cleanup();
-        let (entries, idx) = self.jumps.entries();
+        self.win.jumps.cleanup();
+        let (entries, idx) = self.win.jumps.entries();
         let mut items: Vec<String> = entries
             .iter()
             .enumerate()

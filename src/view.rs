@@ -232,11 +232,11 @@ pub fn frame(ed: &Editor) -> Frame {
     let mut rows = Vec::with_capacity(text_height);
     let mut hl = vec![vec![Hl::Normal; width]; text_height];
     let mut cursor = (0, 0);
-    let mut line = ed.top;
+    let mut line = ed.win.top;
     while rows.len() < text_height && line < ed.doc.buf.line_count() {
         let lay = layout(ed.doc.buf.line(line), width, ed.opts.tabstop());
         let need = rows_needed(&lay, width);
-        if line != ed.top && rows.len() + need > text_height {
+        if line != ed.win.top && rows.len() + need > text_height {
             while rows.len() < text_height {
                 hl[rows.len()].fill(Hl::NonText);
                 rows.push(pad("@".into(), width));
@@ -342,7 +342,7 @@ fn ruler(ed: &Editor, below: usize) -> String {
             format!("{byte}-{vcol}")
         }
     };
-    let above = ed.top;
+    let above = ed.win.top;
     let pos = match (above, below) {
         (0, 0) => "All".to_string(),
         (0, _) => "Top".to_string(),
@@ -378,7 +378,7 @@ mod tests {
         assert_eq!(f.rows, ["abcd", "efgh", "ij  "]);
         ed.feed("G");
         let f = frame(&ed);
-        assert_eq!(ed.top, 1);
+        assert_eq!(ed.win.top, 1);
         assert_eq!(f.rows, ["x   ", "y   ", "z   "]);
         assert_eq!(f.cursor, (0, 2));
     }

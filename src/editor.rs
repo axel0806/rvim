@@ -114,8 +114,6 @@ pub struct Editor {
     pub(crate) mode: Mode,
     /// Keys of a Normal/Visual command still being typed.
     pub(crate) pending: Vec<Key>,
-    /// The jumplist and the context mark (Vim's window state, see jumplist.rs).
-    pub(crate) jumps: JumpList,
     ins_kind: InsertKind,
     ins_count: usize,
     ins_keys: Vec<Key>,
@@ -152,8 +150,6 @@ pub struct Editor {
     pub(crate) replaying_visual: Option<VisualRedo>,
     /// Size of the last Visual operation, for `1v` (Vim's resel_VIsual_*).
     pub(crate) resel: Option<VisualRedo>,
-    /// First buffer line shown in the window (Vim's `w_topline`).
-    pub(crate) top: usize,
     /// Screen size in cells; the last row is the command line.
     pub(crate) screen_cols: usize,
     pub(crate) screen_rows: usize,
@@ -207,7 +203,6 @@ impl Editor {
             win: Window::default(),
             mode: Mode::Normal,
             pending: Vec::new(),
-            jumps: JumpList::default(),
             ins_kind: InsertKind::Inline,
             ins_count: 1,
             ins_keys: Vec::new(),
@@ -234,7 +229,6 @@ impl Editor {
             redo_building: None,
             replaying_visual: None,
             resel: None,
-            top: 0,
             // Vim's default screen when it runs without a terminal.
             screen_cols: 80,
             screen_rows: 24,
@@ -432,7 +426,7 @@ impl Editor {
         // line mode are part of the command that started them, so it runs
         // when they end.
         if matches!(self.mode, Mode::Normal | Mode::Visual(_)) && self.pending.is_empty() {
-            self.jumps.check_pcmark(self.win.cursor);
+            self.win.jumps.check_pcmark(self.win.cursor);
         }
         self.depth -= 1;
         if self.depth == 0
@@ -1205,7 +1199,7 @@ impl Editor {
                 self.win.curswant = 0;
                 self.win.keep_curswant = false;
                 // The jumplist and the context mark refer to the old text.
-                self.jumps = JumpList::default();
+                self.win.jumps = JumpList::default();
                 let name = path.display();
                 match stats {
                     None => self.info(format!("\"{name}\" [New]")),

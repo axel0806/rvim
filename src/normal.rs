@@ -889,7 +889,7 @@ impl Editor {
     /// the context mark (see `PosEdit`).
     pub(crate) fn sync_jumps(&mut self) {
         for edit in self.doc.buf.take_pos_edits() {
-            self.jumps.apply(&edit);
+            self.win.jumps.apply(&edit);
         }
     }
 
@@ -901,7 +901,7 @@ impl Editor {
             return;
         }
         self.sync_jumps();
-        self.jumps.set_pcmark(self.win.cursor);
+        self.win.jumps.set_pcmark(self.win.cursor);
     }
 
     /// `<C-o>` and `<Tab>` (Vim's movemark() through nv_pcmark()). In Visual
@@ -913,6 +913,7 @@ impl Editor {
         }
         self.sync_jumps();
         let Some(p) = self
+            .win
             .jumps
             .move_by(count, self.win.cursor, !self.global_busy)
         else {
@@ -1126,7 +1127,7 @@ impl Editor {
             Motion::Mark { mark, linewise } => {
                 let target = if matches!(mark, '\'' | '`') {
                     self.sync_jumps();
-                    self.jumps.pcmark()
+                    self.win.jumps.pcmark()
                 } else {
                     self.doc.buf.mark(mark)
                 };
@@ -1606,7 +1607,7 @@ impl Editor {
                     // Vim's setmark_pos(): the context mark is kept even when
                     // the cursor does not move.
                     self.set_pcmark();
-                    self.jumps.keep_pcmark();
+                    self.win.jumps.keep_pcmark();
                 } else {
                     self.doc.buf.set_mark(c, self.win.cursor);
                 }
