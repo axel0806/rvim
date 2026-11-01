@@ -123,6 +123,15 @@ over the Agent Client Protocol; and optional inline code prediction. All of
 them will be off unless you configure them, so rvim stays `vim -N -u NONE`
 by default.
 
+## Documentation
+
+- [INSTALL.md](INSTALL.md): installing from a release or from source, and the
+  files rvim writes.
+- [CONTRIBUTING.md](CONTRIBUTING.md): building, testing and sending changes.
+- [SECURITY.md](SECURITY.md): how to report a vulnerability.
+- [AGENTS.md](AGENTS.md): entry point for coding agents working on rvim.
+- [MAINTAIN.md](MAINTAIN.md): releases, triage and review for maintainers.
+
 ## Tests
 
 ```

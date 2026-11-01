@@ -131,11 +131,12 @@ This is not legal advice, and counsel review is still open. Read the
 
 ## Reporting security problems
 
-Do not open a public issue for a security problem. `SECURITY.md` is planned but
-does not exist yet. The intended route is GitHub's private vulnerability
-reporting, which is not yet confirmed to be enabled for this repository.
+Do not open a public issue for a security problem. Report it as described in
+[SECURITY.md](SECURITY.md). Its private reporting route (GitHub's private
+vulnerability reporting) is not yet confirmed to be enabled for this repository.
 
 ## Coding agents
 
 Read [CLAUDE.md](CLAUDE.md) for the rules and [PLAN.md](PLAN.md) for the
-status. `AGENTS.md`, a pointer to CLAUDE.md, is planned but does not exist yet.
+status. [AGENTS.md](AGENTS.md) is the entry point for coding agents; it
+summarises the rules and points to CLAUDE.md, which wins on any difference.

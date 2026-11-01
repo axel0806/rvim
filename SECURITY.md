@@ -33,7 +33,9 @@ input files that reproduce the problem, and the impact you expect.
   opened or named, including through symbolic links.
 - **Recovery files.** When rvim panics, it writes the unsaved text of modified
   buffers to the state directory (PLAN.md, "Recovery"). rvim does not yet set
-  restrictive permissions on these files.
+  restrictive permissions on these files, so on Unix they follow the umask and
+  may be readable by other users. The fix (owner-only, mode 0600) is planned;
+  see PLAN.md, "Known differences".
 - **Command execution.** Running a shell command from text the user only opened
   or pasted. The code runs no external command today (there is no `:!` or
   filter). Any future one that runs file or clipboard text is in scope.
@@ -80,6 +82,10 @@ These are plans, not yet code:
 
 ## Response goals and disclosure
 
+<!-- MAINTAINER TO CONFIRM: the 7-day and 90-day goals and the credit policy
+below are proposals written by the drafting agent. They are not yet agreed by
+the maintainer. Confirm or edit them, then remove this comment. -->
+
 These are the maintainer's goals, not a promise or a service level:
 
 - Acknowledge a report within 7 days.
@@ -90,6 +96,9 @@ These are the maintainer's goals, not a promise or a service level:
 Please give the maintainer time to fix the problem before you publish details.
 Reporters are credited in the advisory and release notes, using the name or
 handle they give; tell the maintainer if you prefer to stay anonymous.
+
+<!-- end of items to confirm -->
+
 
 ## Vim-derived code
 

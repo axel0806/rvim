@@ -9,8 +9,9 @@ For maintainers. Code rules are in `CLAUDE.md`; plan and status are in
   (agent worktrees live in `.claude/worktrees/`).
 - Merge by fast-forward or rebase onto `main`. No merge commits for routine
   work.
-- Every commit updates `PLAN.md` (Status table, "In progress", "Last updated",
-  and any "Known differences" entry it changes).
+- Every commit that moves a milestone updates `PLAN.md` (Status table,
+  "In progress", "Last updated", and any "Known differences" entry it changes),
+  as CONTRIBUTING.md requires.
 - Commit subject: imperative, with the milestone in brackets when it applies
   (`Start menu: ... (milestone 6)`).
 
@@ -74,9 +75,8 @@ user-visible feature set lands together. Not for a small feature or a fix.
 - A missing Vim behaviour goes into "Known differences" in `PLAN.md` and
   `README.md`, or into the milestone that will build it.
 - An extension request is checked against the Vim contract first.
-- Security reports go through `SECURITY.md`, which is planned and not yet in
-  the repository. Until it exists, ask the reporter to contact the maintainer
-  privately and do not discuss exploit details in public.
+- Security reports follow [SECURITY.md](SECURITY.md). Do not discuss exploit
+  details in public; ask the reporter to use the private route it describes.
 
 ## Keeping PLAN.md truthful
 
@@ -113,10 +113,10 @@ user-visible feature set lands together. Not for a small feature or a fix.
 
 ## Packaging
 
-- `Makefile`, `INSTALL.md`, `CONTRIBUTING.md`, `AGENTS.md` and `SECURITY.md`
-  are planned (`PLAN.md`, "Repository and packaging") but not in the
-  repository yet. Until the Makefile exists, use the cargo commands in
-  `CLAUDE.md`.
+- `INSTALL.md`, `CONTRIBUTING.md`, `AGENTS.md`, `SECURITY.md` and this file are
+  in the repository (written 2026-11-01). The `Makefile` is still planned
+  (`PLAN.md`, "Repository and packaging") and not written. Until it exists, use
+  the cargo commands in `CLAUDE.md`.
 - AUR packages are planned as `rvim` (from a tagged source archive) and
   `rvim-bin` (the Linux release binary). Nothing is published yet; see
   `PLAN.md` "Future goals".

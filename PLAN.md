@@ -50,11 +50,14 @@ how it fits together" (section 11). That order refines this line: the file
 reload and the ACP connector need no splits, so they can land before (2)
 finishes; only the side-by-side diff, the agent log split and the terminal
 pane wait for splits. (4) hlsearch/incsearch/syntax, (5) prediction. Cut a new release (`git tag v0.1.0-alpha.N`) when a
-milestone lands; `.github/workflows/release.yml` builds the binaries.
+milestone lands; `.github/workflows/release.yml` builds the binaries. Small items that can go at
+any time: owner-only (0600) recovery files (see "Known differences"), and the
+stale `--notes` string in `release.yml`, to refresh before tagging
+v0.1.0-alpha.3 (see "Repository and packaging").
 
 **Planned additions from the owner's todo (2026-11-01).** These are plans
-only. Apart from the License item, which is done, nothing listed here is built,
-and the milestone table above is unchanged.
+only. Apart from the License item and the repository documents, which are done,
+nothing listed here is built, and the milestone table above is unchanged.
 
 - Start menu at startup, off by default: see "Start menu" (milestone 6).
 - License: Apache-2.0 for new code and the Vim license for Vim-derived code.
@@ -64,9 +67,14 @@ and the milestone table above is unchanged.
 - Lua extension layer: see "Lua extensions" (milestone 9).
 - Neovim plugin compatibility, in stages: see "Neovim plugin compatibility"
   (milestone 9).
-- Makefile and repository documents (`SECURITY.md`, `CONTRIBUTING.md`,
-  `AGENTS.md`, `MAINTAIN.md`, `INSTALL.md`): see "Repository and packaging".
+- Makefile: still to do; see "Repository and packaging".
+- Repository documents (`SECURITY.md`, `CONTRIBUTING.md`, `AGENTS.md`,
+  `MAINTAIN.md`, `INSTALL.md`): written 2026-11-01, done; see "Repository and
+  packaging".
 - Future goals (AUR packages, logo): see "Future goals".
+
+Still to do from this list: the Makefile, the AUR packages, the logo, and the
+plugin, Lua and Neovim items.
 
 Agent experience (how the agent parts fit together, with the implementation
 steps and test plan for them): see "Agent experience: how it fits together"
@@ -1682,15 +1690,14 @@ owner has not checked it line by line against Vim's source. These seven files
 need owner review, and they stay Vim until it is done. Their status is not an
 assertion that each line is a copy of Vim's code.
 
-**Contributor rule** (for `CONTRIBUTING.md`, not yet written): a contribution
+**Contributor rule** (in `CONTRIBUTING.md`): a contribution
 to an Apache-2.0 file is Apache-2.0. A contribution to a Vim-licensed file
 stays under the Vim license. Porting Vim code is declared in the commit message
 and the PR, and the new file gets the Vim header.
 
 **Previous state** (before 2026-11-01, kept for the record): `LICENSE` was the
-full Vim license text, `Cargo.toml` had `license = "Vim"`, and no file had an
-SPDX identifier.
-- No file under `src/` has an SPDX identifier or a copyright line.
+full Vim license text, `Cargo.toml` had `license = "Vim"`, and no file under
+`src/` had an SPDX identifier or a copyright line.
 
 **Goal.** Apache-2.0 for rvim's new code. The Vim license for parts derived
 from Vim: ports of Vim's C algorithms (the word motions, `searchit`, regex
@@ -1756,7 +1763,7 @@ copies of Vim's test suite (`src/testdir`), and must stay that way.
     `Apache-2.0 AND Vim` is UNVERIFIED; `license-file` is the fallback.
   - `.github/workflows/release.yml` copies `LICENSE*` into each archive, so
     `LICENSE-VIM` ships with the binaries without a change there.
-- **Contributor rule** (in `CONTRIBUTING.md`, planned): a contribution to a new
+- **Contributor rule** (in `CONTRIBUTING.md`, written 2026-11-01): a contribution to a new
   file is Apache-2.0. A contribution to a Vim-derived file stays under the Vim
   license. Porting Vim code is declared in the commit message and the PR, and
   the new file gets the Vim header. Whether a contributor agreement (CLA) or a
@@ -1790,10 +1797,13 @@ copies of Vim's test suite (`src/testdir`), and must stay that way.
 
 ## Repository and packaging
 
-Planned, not started. Nothing below exists in the repository yet (there is no
-`Makefile`; `.github/workflows/release.yml` is the only CI file).
+Status on 2026-11-01: the five repository documents are written (`SECURITY.md`,
+`CONTRIBUTING.md`, `AGENTS.md`, `MAINTAIN.md`, `INSTALL.md`). The Makefile is
+still to do, and its table below is the plan; there is no `Makefile` yet.
+`.github/workflows/release.yml` is the only CI file. Where a document's text
+differs from the rows below, the document is the source of truth.
 
-**Makefile.** Thin wrappers over cargo, so that the commands in CLAUDE.md and
+**Makefile (still to do).** Thin wrappers over cargo, so that the commands in CLAUDE.md and
 README.md have short names:
 
 | Target | Runs |
@@ -1815,15 +1825,21 @@ users run `cargo` directly, or run `make` from Git Bash if GNU make is
 installed there (UNVERIFIED). `make` does not replace CI, and `release.yml`
 stays the release path.
 
-**Documents.** None is drafted by this plan. Each one is planned as follows.
+**Release notes (to do before tagging).** The `--notes` string in
+`release.yml` is stale: it describes milestones 1-3 only. Refresh it from the
+Status table before tagging v0.1.0-alpha.3. That is a workflow edit for the
+release step and is not done yet.
 
-| File | Content | When |
+**Documents.** All five were written on 2026-11-01. The table is the original
+plan, kept for the record; the files are the source of truth.
+
+| File | Content | Status |
 |---|---|---|
-| `SECURITY.md` | Private reporting (GitHub private vulnerability reporting, UNVERIFIED that it is enabled on the repository); supported versions (the latest alpha until 0.1.0); the local-only statement: no telemetry, nothing leaves the machine unless the user configures a provider or command, the agent endpoint is local and on a user-only socket, prediction is off by default, recovery files stay on disk | Before the next release |
-| `INSTALL.md` | Release binaries per platform; `cargo install --path .` and `cargo install --git` (`cargo install rvim` only after a crates.io publish, not planned yet); building from source (the Rust toolchain needed for edition 2024 is UNVERIFIED as a minimum version); `make install`; packaging notes (keep `LICENSE*`, do not change `VERSION_MESSAGE`) | Before the next release |
-| `CONTRIBUTING.md` | The differential test rule (each behaviour gets `tests/compat_*.rs` cases; when Vim and rvim differ, fix rvim); how to run the tests (`make test-vim`, Vim 9 needed); commit and PR style (imperative subject, the milestone in brackets as in the history); PLAN.md is updated in every commit that moves a milestone; the licensing rule above | With the Makefile |
-| `AGENTS.md` | Instructions for coding agents: read `CLAUDE.md` for the rules and `PLAN.md` for the status, and the test commands. A pointer to `CLAUDE.md`, not a copy; a symlink is avoided because Windows checkouts need developer mode (UNVERIFIED for git) | With the Makefile |
-| `MAINTAIN.md` | Release process: tag `v0.1.0-alpha.N` on `main` after `make lint` and `make test-vim` pass; `release.yml` builds the binaries; release notes name the milestone. Milestone-release rule: release when a milestone moves to done or a user-visible feature lands. Triage: reproduce with `RVIM_REQUIRE_VIM=1`, add a differential case, fix rvim. The AUR update steps | After the first milestone release |
+| `SECURITY.md` | Private reporting (GitHub private vulnerability reporting, UNVERIFIED that it is enabled on the repository); supported versions (the latest alpha until 0.1.0); the local-only statement: no telemetry, nothing leaves the machine unless the user configures a provider or command, the agent endpoint is local and on a user-only socket, prediction is off by default, recovery files stay on disk | Written 2026-11-01 |
+| `INSTALL.md` | Release binaries per platform; `cargo install --path .` and `cargo install --git` (`cargo install rvim` only after a crates.io publish, not planned yet); building from source (the Rust toolchain needed for edition 2024 is UNVERIFIED as a minimum version); `make install`; packaging notes (keep `LICENSE*`, do not change `VERSION_MESSAGE`) | Written 2026-11-01 |
+| `CONTRIBUTING.md` | The differential test rule (each behaviour gets `tests/compat_*.rs` cases; when Vim and rvim differ, fix rvim); how to run the tests (`make test-vim`, Vim 9 needed); commit and PR style (imperative subject, the milestone in brackets as in the history); PLAN.md is updated in every commit that moves a milestone; the licensing rule above | Written 2026-11-01 |
+| `AGENTS.md` | Instructions for coding agents: read `CLAUDE.md` for the rules and `PLAN.md` for the status, and the test commands. A pointer to `CLAUDE.md`, not a copy; a symlink is avoided because Windows checkouts need developer mode (UNVERIFIED for git) | Written 2026-11-01 |
+| `MAINTAIN.md` | Release process: tag `v0.1.0-alpha.N` on `main` after `make lint` and `make test-vim` pass; `release.yml` builds the binaries; release notes name the milestone. Milestone-release rule: release when a milestone moves to done or a user-visible feature lands. Triage: reproduce with `RVIM_REQUIRE_VIM=1`, add a differential case, fix rvim. The AUR update steps | Written 2026-11-01 (the "after the first milestone release" timing no longer applies) |
 
 ## Future goals
 
@@ -1908,11 +1924,12 @@ stays the release path.
   changed. Still missing: hlsearch, incsearch, matching parens, syntax.
 - A panic writes unsaved text to a recovery file (`recovery.rs`), but a
   closed terminal (SIGHUP) does not yet, and there are no swap files.
-- Alt, F-keys and Shift-Tab now work. (Old note: - Alt, F-keys and Shift-Tab are ignored; there is no recovery file after a
-  crash. Both are fixed in milestone 4. (Bracketed paste is done: it is
-  enabled in `main.rs`, handled by `Editor::paste`, and tested in
-  `tests/paste.rs`; step (e) of milestone 4 still needs modifiers and the
-  kitty protocol.)
+- Recovery files are written with `std::fs::write` and no permission change
+  (`src/recovery.rs`). On Unix they follow the umask and may be readable by
+  other users. Fix: create them owner-only (mode 0600). Still to do; listed in
+  "Suggested order".
+- Alt, F-keys, Insert and Shift-Tab work (milestone 4). The kitty keyboard
+  protocol is still missing (milestone 4, "Left").
 - Jumplist: entries are positions in the one buffer. `:e` of another file
   clears the jumplist and the context mark (Vim keeps entries for other files
   and sets the context mark to the old position). `:jumps` prints one line
