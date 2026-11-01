@@ -7,7 +7,7 @@ a real Vim by the differential harness in `tests/common/mod.rs`.
 
 ## Status: read this first
 
-Last updated 2026-11-01 (CI first ran on GitHub; Linux builds Vim 9.1.1914 from source, and all three OS jobs require Vim; cell-level diff redraw in `redraw.rs`; kitty keyboard protocol, with `RVIM_NO_KITTY=1` to turn it off; SIGHUP/SIGTERM recovery on Unix, milestone 4; Makefile packaging targets `install` with `PREFIX`/`DESTDIR`, `uninstall` and `dist`). **rvim is an alpha, roughly 25-30% of this plan.**
+Last updated 2026-11-01 (Document/Window/Editor split step 1 of milestone 4; CI first ran on GitHub; Linux builds Vim 9.1.1914 from source, and all three OS jobs require Vim; cell-level diff redraw in `redraw.rs`; kitty keyboard protocol, with `RVIM_NO_KITTY=1` to turn it off; SIGHUP/SIGTERM recovery on Unix, milestone 4; Makefile packaging targets `install` with `PREFIX`/`DESTDIR`, `uninstall` and `dist`). **rvim is an alpha, roughly 25-30% of this plan.**
 As of 2026-11-01 milestones 1-3 are done; 4 and 5 are partly done; 6 has the start menu only; 7-9 are plans.
 Released as `v0.1.0-alpha.1`, `v0.1.0-alpha.2` and `v0.1.0-alpha.3`. The next release is `v0.1.0-alpha.4`, not yet tagged. All tests pass against Vim 9.1 and clippy/fmt are
 clean at the last commit.
@@ -16,7 +16,7 @@ clean at the last commit.
 |---|---|
 | 1 Core, 2 Vim grammar | Done |
 | 3 Search and Ex | 100%. `:s` `\=` expressions done as the subset in `src/expr.rs` (see Known differences) |
-| 4 Foundation | ~75%. Left: the Document/Window/Editor split (the biggest item; see "Foundation"), real local/global option scopes (`:setlocal`/`:setglobal` semantics; `:setlocal` is accepted as an alias of `:set`, `:setglobal` does not exist) |
+| 4 Foundation | ~75%. The Document/Window/Editor split: step 1 done (one document and one window; see "Foundation"). Left: stable ids and several windows, and the fields still in `Editor` listed there, real local/global option scopes (`:setlocal`/`:setglobal` semantics; `:setlocal` is accepted as an alias of `:set`, `:setglobal` does not exist) |
 | 5 Windows and buffers | ~30%. Done: macros (`q`, `@`, `@@`, `@:`), lowercase marks (`m{a-z}`, `'a`, `` `a ``, `:k`, `:mark`, `'a` addresses), the jumplist (`<C-o>`, `<Tab>` with counts, `:jumps`) and the context mark (`''`, `` `` ``, `m'`, `` m` ``), scrolling (`<C-e> <C-y> <C-f> <C-b> <C-d> <C-u> zt zz zb z<CR> z. z- H M L`, counts, `scrolloff`, wrapped lines). Left: splits, buffer list, the other marks (uppercase, `'[`/`']`, `'<`/`'>` motions), swap files |
 | 6 Modern editing experience | Started, not near done. Landed: the start menu (opt-in `--start-menu`, `startmenu` option). Left: hlsearch, incsearch, syntax, line numbers, config file, palette, mouse, `:Start`, the start menu's recent files, Config and agent entries, and its modern-profile default (see "Start menu") |
 | 7 Agent integration | 0%. Not started (file-change reload as an undo step, diff view, ACP connector, agent detection). Research is in "Detecting and connecting to agents" |
@@ -304,6 +304,8 @@ indexes) because agent and LSP events refer to them. Each document has a
 version counter that increments on every change; asynchronous results
 (highlighting, predictions, diagnostics) carry the version they were computed
 for and are dropped when it no longer matches.
+
+**Step 1 done (2026-11-01).** One document and one window, with the fields moved out of `Editor`. `src/document.rs` has `Document`: `buf` (the `Buffer`, marks included), `undo` (`UndoTree`), `uline` (`ULine`) and `last_visual` (Vim's `b_visual`, so it goes with the document, as marks do). `src/window.rs` has `Window`: `cursor`, `curswant`, `keep_curswant`, `vstart`, `jumps` and `top`. `Editor` holds them as `doc` and `win`. Still in `Editor`: `op_start`/`op_end` (the `'[` and `']` marks; they move with the marks work), `screen_cols`/`screen_rows` (the terminal size), `scroll_opt` (the `'scroll'` option, window-local in Vim, so it waits for window-local options), and the rest of the table (mode, registers, search, `.`, command line, messages, options). Accessors: `Editor::buf()` (read-only; tests and `main.rs` use it) and `Editor::cursor()`. Code inside the crate uses the direct paths `self.doc.buf` and `self.win.cursor`, not `&self` methods, so two fields can still be borrowed at once. Not yet: several documents or windows, stable ids, the document version counter, `buf_mut()`.
 
 ### Event loop
 
@@ -2062,7 +2064,7 @@ plan, kept for the record; the files are the source of truth.
 - Marks: only lowercase marks exist. Missing: `mA`-`mZ` (file marks),
   `m[ m] m< m>`, `'[ ']` and `` `[ `] `` as motions, `'<` and `'>` as
   Normal-mode motions, `:marks` and `:delmarks`. The
-  Visual marks stay in `Editor::last_visual` and do not follow edits.
+  Visual marks stay in `Document::last_visual` and do not follow edits.
 - Marks have no column adjustment for single-line edits, as in Vim (`x`, `D`,
   `r`, insert-mode typing do not move them). Joins (`J`, `gJ`, `:j`, `<BS>`
   and `<Del>` at a line end) and `:s` with a line break in the pattern keep
