@@ -17,18 +17,18 @@ use std::sync::mpsc;
 use std::time::Instant;
 
 fn main() -> io::Result<()> {
-    // `--start-menu` turns the start menu on; `--no-start-menu` is the
-    // default. The first other argument is the file to open.
-    let mut start_menu = false;
-    let mut path = None;
-    for arg in std::env::args_os().skip(1) {
-        match arg.to_str() {
-            Some("--start-menu") => start_menu = true,
-            Some("--no-start-menu") => start_menu = false,
-            _ if path.is_none() => path = Some(arg),
-            _ => {}
+    // Help and version print and exit before the terminal is touched.
+    let (start_menu, path) = match rvim::cli::parse(std::env::args_os().skip(1)) {
+        rvim::cli::Action::Help => {
+            print!("{}", rvim::cli::help_text());
+            return Ok(());
         }
-    }
+        rvim::cli::Action::Version => {
+            print!("{}", rvim::cli::version_text());
+            return Ok(());
+        }
+        rvim::cli::Action::Edit { start_menu, path } => (start_menu, path),
+    };
     let mut ed = match path {
         Some(path) => Editor::open(&PathBuf::from(path)),
         None => Editor::new(),

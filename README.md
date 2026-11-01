@@ -13,8 +13,9 @@ full list of known differences.
 cargo run --release -- path/to/file
 ```
 
-`rvim --start-menu` (no file) shows a start menu with New file, Open file and
-Quit, opt-in and off by default. Arrows and Enter choose, Esc closes; any other
+`rvim --help` lists the command-line options and `rvim --version` prints the
+version (both exit at once). `rvim --start-menu` (no file) shows a start menu
+with New file, Open file and Quit, opt-in and off by default. Arrows and Enter choose, Esc closes; any other
 key closes it and works as usual. See [PLAN.md](PLAN.md) ("Start menu") for
 what is still to do.
 

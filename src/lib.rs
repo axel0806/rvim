@@ -3,6 +3,7 @@
 //! dependency; `main.rs` is the crossterm front end.
 
 pub mod buffer;
+pub mod cli;
 mod cmdline;
 pub mod editor;
 pub mod event;

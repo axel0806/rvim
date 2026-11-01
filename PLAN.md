@@ -42,7 +42,11 @@ the part after the replacement's delimiter and the flags separates commands
 editing and history landed in commit e556a0b. Lowercase marks `a`-`z` (kept
 in `buffer.rs`, followed through edits by the buffer's line methods, saved and
 restored by undo in `undo.rs`), and the scrolling commands with `scrolloff`
-(`scroll.rs`; the window's top line now lives in `Editor`).
+(`scroll.rs`; the window's top line now lives in `Editor`). Command-line
+flags: `-h`/`--help` prints the usage and `-v`/`--version` prints
+`VERSION_MESSAGE`, both to stdout with exit 0 and no terminal set-up
+(`cli.rs`, `tests/cli_flags.rs`); `--` ends the options, as in Vim. Before
+this, `--help` opened a buffer named `--help`.
 
 **In progress** (as of 2026-11-01; maintained by the orchestrator, and an
 entry is removed when its branch lands on main):
@@ -1883,6 +1887,10 @@ plan, kept for the record; the files are the source of truth.
 
 ## Known differences from Vim
 
+- Command-line flags: `-v` means `--version` in rvim, but Vim's `-v` starts
+  Vi mode (rvim has no Vi mode). Vim's other flags (`-u`, `-N`, `-R`, `-es`,
+  and so on) are not parsed; an unknown `-x` is taken as a file name, as
+  before.
 - Emoji use approximate block ranges instead of Vim's full `emoji_all` table
   for word motions; composing characters are separate characters.
 - Options come from the registry in `options.rs` (all global for now).

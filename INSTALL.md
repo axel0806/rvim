@@ -69,12 +69,16 @@ tree-sitter highlighting will need one (PLAN.md, "Dependency choices").
 ```
 rvim path/to/file.txt
 rvim --start-menu
+rvim --help
+rvim --version
 ```
 
 `--start-menu` shows a start menu (New file, Open file, Quit) when no file is
 given. It is off by default; `--no-start-menu` is the default and can be
-given explicitly. Any other argument is the file name. Without a config file,
-rvim behaves as `vim -N -u NONE`.
+given explicitly. `--help` (or `-h`) prints the options and `--version` (or
+`-v`) prints the version and the modified-Vim notice; both exit at once.
+Any other argument is the file name, and `--` ends the options. Without a
+config file, rvim behaves as `vim -N -u NONE`.
 
 Platform notes:
 
