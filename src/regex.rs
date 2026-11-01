@@ -21,6 +21,11 @@ pub type P = (usize, usize);
 pub trait Lines {
     fn line_count(&self) -> usize;
     fn chars(&self, l: usize) -> Vec<char>;
+    /// The chars of line `l`, shared when the source already holds them, so
+    /// that matching many times on one text does not copy it each time.
+    fn shared_chars(&self, l: usize) -> Rc<Vec<char>> {
+        Rc::new(self.chars(l))
+    }
 }
 
 impl Lines for Buffer {
@@ -948,11 +953,11 @@ impl<'a> Matcher<'a> {
         if let Some(v) = self.cache.borrow().get(&l) {
             return v.clone();
         }
-        let v = Rc::new(if l < self.src.line_count() {
-            self.src.chars(l)
+        let v = if l < self.src.line_count() {
+            self.src.shared_chars(l)
         } else {
-            Vec::new()
-        });
+            Rc::new(Vec::new())
+        };
         self.cache.borrow_mut().insert(l, v.clone());
         v
     }

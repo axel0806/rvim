@@ -22,6 +22,7 @@
 
 use crate::regex::{Lines, Match, Opts, Regex};
 use std::cmp::Ordering;
+use std::rc::Rc;
 
 /// Nesting of expressions (parentheses, lists, arguments). Vim accepts 200
 /// levels and fails at 1000. Here the count is 100, and the stack used by
@@ -37,6 +38,39 @@ pub const MAX_ITEMS: usize = 1_000_000;
 pub const MAX_BYTES: usize = 64 << 20;
 /// Width of a printf() field.
 pub const MAX_WIDTH: usize = 1_000_000;
+/// Bytes of all the values one expression may keep: each result of a
+/// function counts, so lists of big results cannot exhaust the memory.
+pub const MAX_TOTAL: usize = 256 << 20;
+
+/// The value of the digits `digits` in `radix`, saturated at 2^64 (which is
+/// above every limit used here, so the callers clamp it).
+fn magnitude(digits: &str, radix: u32) -> u128 {
+    let mut v: u128 = 0;
+    for c in digits.chars() {
+        if let Some(d) = c.to_digit(radix) {
+            v = (v * radix as u128 + d as u128).min(1 << 64);
+        }
+    }
+    v
+}
+
+/// The bytes a value takes, for the limit on the total.
+fn value_size(v: &Value) -> usize {
+    match v {
+        Value::Num(_) => 8,
+        Value::Str(s) => s.len(),
+        Value::List(items) => 8 + items.iter().map(value_size).sum::<usize>(),
+    }
+}
+
+/// A value as a string, taking a string without copying it.
+fn into_str(v: Value) -> R<String> {
+    match v {
+        Value::Num(n) => Ok(n.to_string()),
+        Value::Str(s) => Ok(s),
+        Value::List(_) => err("E730: Using a List as a String"),
+    }
+}
 
 /// A value of the expression language.
 #[derive(Clone, Debug, PartialEq)]
@@ -113,6 +147,7 @@ pub fn eval(src: &str, env: &Env) -> R<(Value, Vec<String>)> {
         errs: Vec::new(),
         depth: 0,
         stack_base: stack_address(&marker),
+        used: 0,
     };
     let v = p.expr1(true)?;
     if !matches!(p.tok(), Tok::End) {
@@ -132,6 +167,9 @@ pub fn eval_text(src: &str, env: &Env) -> R<(String, Vec<String>)> {
             for item in &items {
                 out.push_str(&item_text(item));
                 out.push('\n');
+                if out.len() > MAX_BYTES {
+                    return too_big();
+                }
             }
             out
         }
@@ -212,7 +250,7 @@ fn lex_number(s: &str) -> Option<(i64, usize)> {
         if n == 0 {
             return None;
         }
-        let v = i64::from_str_radix(&h[..n], 16).ok()?;
+        let v = magnitude(&h[..n], 16).min(i64::MAX as u128) as i64;
         return Some((v, 2 + n));
     }
     let n = s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len());
@@ -223,48 +261,44 @@ fn lex_number(s: &str) -> Option<(i64, usize)> {
     let octal = digits.len() > 1
         && digits.starts_with('0')
         && digits.bytes().all(|b| (b'0'..=b'7').contains(&b));
-    let v = if octal {
-        i64::from_str_radix(digits, 8).ok()?
-    } else {
-        digits.parse::<i64>().ok()?
-    };
+    let radix = if octal { 8 } else { 10 };
+    let v = magnitude(digits, radix).min(i64::MAX as u128) as i64;
     Some((v, n))
 }
 
-/// The byte length of `cs`.
-fn bytes(cs: &[char]) -> usize {
-    cs.iter().map(|c| c.len_utf8()).sum()
-}
+/// The characters after an opening quote, with their byte offsets. The text
+/// is read as it is needed: a string token does not copy the rest of the
+/// expression (that would make lexing quadratic).
+type Chars<'a> = std::iter::Peekable<std::str::CharIndices<'a>>;
 
 /// A single-quoted string: `''` is one quote, nothing else is special.
 fn lex_single(s: &str) -> Option<(String, usize)> {
-    let body: Vec<char> = s[1..].chars().collect();
+    let mut it: Chars = s[1..].char_indices().peekable();
     let mut out = String::new();
-    let mut i = 0;
-    while i < body.len() {
-        if body[i] == '\'' {
-            if body.get(i + 1) == Some(&'\'') {
+    while let Some((i, c)) = it.next() {
+        if c == '\'' {
+            if it.peek().map(|&(_, n)| n) == Some('\'') {
+                it.next();
                 out.push('\'');
-                i += 2;
                 continue;
             }
-            return Some((out, 1 + bytes(&body[..i]) + 1));
+            return Some((out, 1 + i + 1));
         }
-        out.push(body[i]);
-        i += 1;
+        out.push(c);
     }
     None
 }
 
-/// The digits from `from` (at most `max`) in `radix`, added to `first`.
+/// The digits in `radix` taken from `it` (at most `max`), added to `first`.
 /// Returns the value and the number of digits taken.
-fn take_digits(body: &[char], from: usize, max: usize, radix: u32, first: u32) -> (u32, usize) {
+fn take_digits(it: &mut Chars, max: usize, radix: u32, first: u32) -> (u32, usize) {
     let mut v = first;
     let mut n = 0;
     while n < max {
-        match body.get(from + n).and_then(|c| c.to_digit(radix)) {
+        match it.peek().and_then(|&(_, c)| c.to_digit(radix)) {
             Some(d) => {
                 v = v.wrapping_mul(radix).wrapping_add(d);
+                it.next();
                 n += 1;
             }
             None => break,
@@ -293,21 +327,17 @@ fn key_code(name: &str) -> Option<char> {
 /// A double-quoted string with backslash escapes. An unknown escape gives the
 /// character after the backslash.
 fn lex_double(s: &str) -> Option<(String, usize)> {
-    let body: Vec<char> = s[1..].chars().collect();
+    let mut it: Chars = s[1..].char_indices().peekable();
     let mut out = String::new();
-    let mut i = 0;
-    while i < body.len() {
-        let c = body[i];
-        i += 1;
+    while let Some((i, c)) = it.next() {
         if c == '"' {
-            return Some((out, 1 + bytes(&body[..i - 1]) + 1));
+            return Some((out, 1 + i + 1));
         }
         if c != '\\' {
             out.push(c);
             continue;
         }
-        let d = *body.get(i)?;
-        i += 1;
+        let (j, d) = it.next()?;
         match d {
             'b' => out.push('\u{8}'),
             'e' => out.push('\u{1b}'),
@@ -321,27 +351,31 @@ fn lex_double(s: &str) -> Option<(String, usize)> {
                     'u' => 4,
                     _ => 8,
                 };
-                let (v, n) = take_digits(&body, i, max, 16, 0);
+                let (v, n) = take_digits(&mut it, max, 16, 0);
                 if n == 0 {
                     out.push(d);
                 } else {
                     out.push(char::from_u32(v).unwrap_or('\u{fffd}'));
-                    i += n;
                 }
             }
             '0'..='7' => {
                 let first = d.to_digit(8).unwrap_or(0);
-                let (v, n) = take_digits(&body, i, 2, 8, first);
-                i += n;
+                let (v, _) = take_digits(&mut it, 2, 8, first);
                 out.push(char::from_u32(v).unwrap_or('\u{fffd}'));
             }
             '<' => {
-                let name: String = body[i..].iter().take_while(|&&c| c != '>').collect();
-                let closed = body.get(i + name.chars().count()) == Some(&'>');
+                // A key name is short: look at most 16 characters ahead.
+                let ahead = &s[1 + j + 1..];
+                let name: String = ahead.chars().take_while(|&c| c != '>').take(16).collect();
+                let len = name.chars().count();
+                let closed = ahead[name.len()..].starts_with('>');
                 match key_code(&name) {
                     Some(c) if closed => {
                         out.push(c);
-                        i += name.chars().count() + 1;
+                        // The name and the `>` are consumed.
+                        for _ in 0..=len {
+                            it.next();
+                        }
                     }
                     _ => out.push('<'),
                 }
@@ -365,6 +399,8 @@ struct Parser<'a> {
     depth: usize,
     /// Address of a local in `eval()`: the stack used is measured from it.
     stack_base: usize,
+    /// Bytes of the function results kept so far (see [`MAX_TOTAL`]).
+    used: usize,
 }
 
 /// The address of `marker`, as a number (a local of the caller).
@@ -444,6 +480,15 @@ impl Parser<'_> {
         } else {
             Err(syntax_error(self.src))
         }
+    }
+
+    /// Counts a function result against [`MAX_TOTAL`].
+    fn charge(&mut self, v: &Value) -> R<()> {
+        self.used = self.used.saturating_add(value_size(v));
+        if self.used > MAX_TOTAL {
+            return too_big();
+        }
+        Ok(())
     }
 
     /// One level of nesting: every parenthesis, list and argument comes
@@ -543,7 +588,7 @@ impl Parser<'_> {
             self.next();
             let right = self.expr6(ev)?;
             left = if ev {
-                arith(op, &left, &right)?
+                arith(op, std::mem::replace(&mut left, Value::Num(0)), right)?
             } else {
                 Value::Num(0)
             };
@@ -560,7 +605,7 @@ impl Parser<'_> {
             self.next();
             let right = self.expr7(ev)?;
             left = if ev {
-                arith(op, &left, &right)?
+                arith(op, std::mem::replace(&mut left, Value::Num(0)), right)?
             } else {
                 Value::Num(0)
             };
@@ -678,7 +723,9 @@ impl Parser<'_> {
                 if !ev {
                     return Ok(Value::Num(0));
                 }
-                call(&name, &args, self.env, &mut self.errs)
+                let v = call(&name, &args, self.env, &mut self.errs)?;
+                self.charge(&v)?;
+                Ok(v)
             }
             _ => Err(syntax_error(self.src)),
         }
@@ -695,10 +742,18 @@ fn str_to_num(s: &str) -> i64 {
         Some(r) => (true, r),
         None => (false, t.strip_prefix('+').unwrap_or(t)),
     };
-    let n = t.bytes().take_while(u8::is_ascii_digit).fold(0i64, |a, b| {
-        a.wrapping_mul(10).wrapping_add((b - b'0') as i64)
-    });
-    if neg { n.wrapping_neg() } else { n }
+    // Clamped as Vim's string-to-number does: a negative one to the smallest.
+    let digits: String = t.chars().take_while(|c| c.is_ascii_digit()).collect();
+    let m = magnitude(&digits, 10);
+    if neg {
+        if m > i64::MAX as u128 {
+            i64::MIN
+        } else {
+            -(m as i64)
+        }
+    } else {
+        m.min(i64::MAX as u128) as i64
+    }
 }
 
 fn to_num(v: &Value) -> R<i64> {
@@ -795,17 +850,21 @@ fn divide(x: i64, y: i64) -> i64 {
     x.wrapping_div(y)
 }
 
-fn arith(op: &str, a: &Value, b: &Value) -> R<Value> {
+fn arith(op: &str, a: Value, b: Value) -> R<Value> {
     match op {
+        // The left string is taken, not copied, so a chain of `.` appends in
+        // place.
         "." | ".." => {
-            let s = to_str(a)? + &to_str(b)?;
-            if s.len() > MAX_BYTES {
+            let mut s = into_str(a)?;
+            let rhs = into_str(b)?;
+            if s.len() + rhs.len() > MAX_BYTES {
                 return too_big();
             }
+            s.push_str(&rhs);
             Ok(Value::Str(s))
         }
         _ => {
-            let (x, y) = (to_num(a)?, to_num(b)?);
+            let (x, y) = (to_num(&a)?, to_num(&b)?);
             Ok(Value::Num(match op {
                 "+" => x.wrapping_add(y),
                 "-" => x.wrapping_sub(y),
@@ -898,7 +957,7 @@ fn lossy(b: &[u8]) -> String {
 // ---- regular expressions on strings ------------------------------------------
 
 /// One line of text, for the regex engine.
-struct Text(Vec<char>);
+struct Text(Rc<Vec<char>>);
 
 impl Lines for Text {
     fn line_count(&self) -> usize {
@@ -906,6 +965,10 @@ impl Lines for Text {
     }
 
     fn chars(&self, _line: usize) -> Vec<char> {
+        self.0.as_ref().clone()
+    }
+
+    fn shared_chars(&self, _line: usize) -> Rc<Vec<char>> {
         self.0.clone()
     }
 }
@@ -926,7 +989,7 @@ fn compile(pat: &str, ic: bool) -> Result<Regex, String> {
 
 fn regex_matches(s: &str, pat: &str, ic: bool) -> Result<bool, String> {
     let re = compile(pat, ic)?;
-    Ok(re.is_match(&Text(s.chars().collect()), 0))
+    Ok(re.is_match(&Text(Rc::new(s.chars().collect())), 0))
 }
 
 /// `substitute()`: the replacement expands `&`, `\&`, `\0` to `\9` and
@@ -934,8 +997,11 @@ fn regex_matches(s: &str, pat: &str, ic: bool) -> Result<bool, String> {
 /// are not supported here.
 fn substitute_text(s: &str, pat: &str, rep: &str, global: bool, ic: bool) -> Result<String, Fail> {
     let re = compile(pat, ic).map_err(Fail::Regex)?;
-    let chars: Vec<char> = s.chars().collect();
+    let chars: Rc<Vec<char>> = Rc::new(s.chars().collect());
     let text = Text(chars.clone());
+    let rep_chars: Vec<char> = rep.chars().collect();
+    // Each `&` or `\` of the replacement can stand for the whole match.
+    let refs = rep_chars.iter().filter(|c| matches!(c, '&' | '\\')).count();
     let mut out = String::new();
     let mut copy = 0;
     let mut col = 0;
@@ -944,10 +1010,21 @@ fn substitute_text(s: &str, pat: &str, rep: &str, global: bool, ic: bool) -> Res
             break;
         };
         let (ms, me) = (m.start.1, m.end.1);
-        out.extend(&chars[copy.min(ms)..ms]);
-        out.push_str(&expand_sub(rep, &m, &chars));
-        if out.len() > MAX_BYTES {
+        // The projected size is checked before the match is appended (at
+        // 4 bytes per character, which is an upper bound).
+        if out
+            .len()
+            .saturating_add(rep.len())
+            .saturating_add(refs * 4 * me.saturating_sub(ms))
+            > MAX_BYTES
+        {
             return Err(Fail::Limit);
+        }
+        out.extend(&chars[copy.min(ms)..ms]);
+        if refs == 0 {
+            out.extend(rep_chars.iter());
+        } else {
+            out.push_str(&expand_sub(&rep_chars, &m, &chars));
         }
         copy = me;
         if !global {
@@ -963,7 +1040,7 @@ fn substitute_text(s: &str, pat: &str, rep: &str, global: bool, ic: bool) -> Res
 }
 
 /// The replacement `rep` for match `m` of `chars`.
-fn expand_sub(rep: &str, m: &Match, chars: &[char]) -> String {
+fn expand_sub(r: &[char], m: &Match, chars: &[char]) -> String {
     let group = |g: usize| -> String {
         let span = if g == 0 {
             Some((m.start, m.end))
@@ -982,7 +1059,6 @@ fn expand_sub(rep: &str, m: &Match, chars: &[char]) -> String {
             None => String::new(),
         }
     };
-    let r: Vec<char> = rep.chars().collect();
     let mut out = String::new();
     let mut i = 0;
     while i < r.len() {
@@ -1022,7 +1098,7 @@ fn split_white(s: &str) -> Result<Vec<String>, Fail> {
 /// end (unless `keep`); a match of nothing does not split.
 fn split_pattern(s: &str, pat: &str, ic: bool, keep: bool) -> Result<Vec<String>, Fail> {
     let re = compile(pat, ic).map_err(Fail::Regex)?;
-    let chars: Vec<char> = s.chars().collect();
+    let chars: Rc<Vec<char>> = Rc::new(s.chars().collect());
     let text = Text(chars.clone());
     let mut items = Vec::new();
     let (mut start, mut col) = (0, 0);
@@ -1101,6 +1177,9 @@ fn call(name: &str, args: &[Value], env: &Env, errs: &mut Vec<String>) -> R<Valu
                     out.push('\\');
                 }
                 out.push(c);
+                if out.len() > MAX_BYTES {
+                    return too_big();
+                }
             }
             Ok(Value::Str(out))
         }
@@ -1165,7 +1244,9 @@ fn call(name: &str, args: &[Value], env: &Env, errs: &mut Vec<String>) -> R<Valu
                     if items.is_empty() || n == 0 {
                         return Ok(Value::List(Vec::new()));
                     }
-                    if items.len().saturating_mul(n) > MAX_ITEMS {
+                    if items.len().saturating_mul(n) > MAX_ITEMS
+                        || value_size(&args[0]).saturating_mul(n) > MAX_BYTES
+                    {
                         return too_big();
                     }
                     Ok(Value::List(
@@ -1235,13 +1316,10 @@ fn call(name: &str, args: &[Value], env: &Env, errs: &mut Vec<String>) -> R<Valu
                 _ => t,
             };
             let radix = base as u32;
-            let mut v: i64 = 0;
-            for c in t.chars().take_while(|c| c.is_digit(radix)) {
-                v = v
-                    .wrapping_mul(base)
-                    .wrapping_add(c.to_digit(radix).unwrap_or(0) as i64);
-            }
-            Ok(Value::Num(if neg { v.wrapping_neg() } else { v }))
+            let digits: String = t.chars().take_while(|c| c.is_digit(radix)).collect();
+            // Clamped like Vim's str2nr(): a negative number stops at -MAX.
+            let v = magnitude(&digits, radix).min(i64::MAX as u128) as i64;
+            Ok(Value::Num(if neg { -v } else { v }))
         }
         "string" => Ok(Value::Str(repr(&args[0]))),
         "strlen" => Ok(Value::Num(to_str(&args[0])?.len() as i64)),
@@ -1287,12 +1365,14 @@ fn call(name: &str, args: &[Value], env: &Env, errs: &mut Vec<String>) -> R<Valu
         }
         "tolower" | "toupper" => {
             let upper = name == "toupper";
-            Ok(Value::Str(
-                to_str(&args[0])?
-                    .chars()
-                    .map(|c| one_char_case(c, upper))
-                    .collect(),
-            ))
+            let mut out = String::new();
+            for c in to_str(&args[0])?.chars() {
+                out.push(one_char_case(c, upper));
+                if out.len() > MAX_BYTES {
+                    return too_big();
+                }
+            }
+            Ok(Value::Str(out))
         }
         "trim" => {
             let mask = match args.get(1) {
@@ -1560,6 +1640,96 @@ mod tests {
             Value::Str(String::new())
         );
         assert_eq!(num("len(join(repeat(['ab'], 100000), ','))"), 299_999);
+    }
+
+    /// The large inputs that once hung: each must finish. The times are
+    /// printed (run with `--nocapture`) for the record.
+    #[test]
+    fn big_inputs_finish() {
+        use std::time::{Duration, Instant};
+        let time = |label: &str, src: &str| {
+            let t = Instant::now();
+            let r = eval(src, &Env::default());
+            let d = t.elapsed();
+            eprintln!("{label}: {d:?}");
+            assert!(d < Duration::from_secs(60), "{label} took {d:?}");
+            r
+        };
+        let split = time(
+            "split 200000 items",
+            "len(split(repeat('a,', 200000), ','))",
+        );
+        assert_eq!(split.unwrap().0, Value::Num(200_000));
+        let subst = time(
+            "substitute 1000000 matches",
+            "substitute(repeat('a',1000000), 'a', repeat('b',100), 'g')",
+        );
+        assert!(subst.is_err());
+        let chain = vec!["'x'"; 100_000].join(" . ");
+        let concat = time("concat 100000 terms", &format!("len({chain})"));
+        assert_eq!(concat.unwrap().0, Value::Num(100_000));
+        let index = time("[1][MIN]", "[1][-9223372036854775807-1]");
+        assert!(index.is_err());
+    }
+
+    #[test]
+    fn split_scales_linearly_with_the_items() {
+        use std::time::{Duration, Instant};
+        let time = |n: usize| {
+            let src = format!("len(split(repeat('a,', {n}), ','))");
+            let t = Instant::now();
+            assert_eq!(num(&src), n as i64);
+            t.elapsed()
+        };
+        let small = time(20_000);
+        let big = time(40_000);
+        assert!(small < Duration::from_secs(2), "20000 items took {small:?}");
+        // Twice the items, about twice the time: a generous bound.
+        assert!(
+            big < small * 4 + Duration::from_millis(200),
+            "{small:?} vs {big:?}"
+        );
+    }
+
+    #[test]
+    fn substitute_stops_at_the_size_limit_quickly() {
+        let t = std::time::Instant::now();
+        assert!(fails_with(
+            "substitute(repeat('a',1000000), 'a', repeat('b',100), 'g')",
+            "E342"
+        ));
+        assert!(t.elapsed() < std::time::Duration::from_secs(10));
+    }
+
+    #[test]
+    fn integers_are_clamped_as_vim_does() {
+        // str2nr() and literals: to the largest number, negatives to -MAX.
+        assert_eq!(num("str2nr('99999999999999999999')"), i64::MAX);
+        assert_eq!(num("str2nr('-99999999999999999999')"), -i64::MAX);
+        assert_eq!(num("str2nr('-9223372036854775808')"), -i64::MAX);
+        assert_eq!(num("str2nr('ffffffffffffffffff', 16)"), i64::MAX);
+        assert_eq!(num("99999999999999999999"), i64::MAX);
+        assert_eq!(num("-99999999999999999999"), -i64::MAX);
+        assert_eq!(num("0xffffffffffffffffff"), i64::MAX);
+        // String-to-number in arithmetic: a negative one to the smallest.
+        assert_eq!(num("'99999999999999999999' + 0"), i64::MAX);
+        assert_eq!(num("'-99999999999999999999' + 0"), i64::MIN);
+    }
+
+    #[test]
+    fn concatenation_chains_append_in_place() {
+        let t = std::time::Instant::now();
+        let src = format!("len({})", vec!["'x'"; 20_000].join(" . "));
+        assert_eq!(num(&src), 20_000);
+        assert!(t.elapsed() < std::time::Duration::from_secs(5));
+    }
+
+    #[test]
+    fn total_size_of_kept_values_is_limited() {
+        // Each repeat() is under its own limit; the list keeps them all.
+        let big = "repeat('x', 60000000)";
+        let src = format!("[{}]", [big; 6].join(", "));
+        assert!(fails_with(&src, "E342"));
     }
 
     #[test]

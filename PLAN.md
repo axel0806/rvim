@@ -1930,8 +1930,17 @@ plan, kept for the record; the files are the source of truth.
   `repeat()`, `join()`, `.`, `substitute()`), give E342 "Out of memory!" and
   the match is replaced by nothing (Vim may return "" for some of these instead, for
   example `repeat('x', 9223372036854775807)`); a `printf()` width above
-  1,000,000 gives E1510. The `c` flag with `\=` evaluates the expression when
-  the match is answered, as the plain replacement is asked about.
+  1,000,000 gives E1510. The values one expression keeps (the results of
+  function calls, `MAX_TOTAL`, 256 MB) are limited too, so a list of big
+  results gives E342. `str2nr()` and literals clamp a too-large number to the
+  largest one, as Vim does (`-MAX` for a negative `str2nr()`); a string in
+  arithmetic clamps a negative one to the smallest (`'-9...9' + 0`), as Vim
+  does. `substitute()` checks the projected size before each match is
+  appended, so a size error comes early.
+  Speed: `split()` and `substitute()` take time linear in the matches; a `.`
+  chain appends in place, so long chains are linear here, where Vim copies the
+  left side on each `.`. The `c` flag with `\=` evaluates the expression
+  when the match is answered, as the plain replacement is asked about.
 - The `\n` (NUL) replacement is not implemented. `:p`, `:nu`, `:=` only set a
   message.
 - The `c` flag of `:s` (`ex.rs`, `SubRun`): `<C-e>` and `<C-y>` only ask
