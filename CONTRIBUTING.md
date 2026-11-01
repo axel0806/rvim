@@ -28,8 +28,9 @@ cargo test --test compat_m1 -- motions       # one test
 ```
 
 The differential tests run each (text, keys) case in Vim and in rvim, and
-compare lines, cursor, modified flag and registers. They need Vim 9.1 on
-`PATH` or in `RVIM_REFERENCE_VIM`. Without `RVIM_REQUIRE_VIM=1`, a missing Vim
+compare lines, cursor, modified flag and registers. They need Vim 9.1.1914 (the
+version the tests are valid for) on `PATH` or in `RVIM_REFERENCE_VIM`. Vim 9.2
+should pass too; if it does not, report the difference. Without `RVIM_REQUIRE_VIM=1`, a missing Vim
 only prints a warning and the comparisons are skipped, so a green run proves
 nothing about them. Use `RVIM_REQUIRE_VIM=1` when you report a result.
 
@@ -131,9 +132,10 @@ This is not legal advice, and counsel review is still open. Read the
   from Vim" in step with "Known differences".
 - Before opening a PR, run `make check` (`make lint` and `make test-vim`). CI
   (`.github/workflows/ci.yml`) runs fmt, clippy with `-D warnings` and the
-  tests on Linux, macOS and Windows for every PR and push to `main`; it
-  requires Vim only on Linux, so a green CI run on macOS or Windows does not
-  prove the differential tests ran.
+  tests on Linux, macOS and Windows for every PR and push to `main`, with
+  `RVIM_REQUIRE_VIM=1` on all three, so the differential tests run on every OS.
+  Linux uses Vim 9.1.1914 built from source; macOS and Windows use the package
+  manager's Vim.
 
 ## Reporting security problems
 

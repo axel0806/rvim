@@ -1,19 +1,22 @@
 # CI: tests, clippy and fmt on Linux, macOS and Windows. Runs on pushes to
-# main and on pull requests. release.yml is separate and builds the binaries.
+# main and ci-* branches, and on pull requests. release.yml is separate and
+# builds the binaries.
 #
-# Vim: the differential tests compare rvim with a real Vim. The runners install
-# whatever Vim their package manager ships, which is not always 9.1, the version
-# the tests were written against. A failure that comes from a different Vim
-# version needs a look (is it rvim, or Vim's behaviour?), not a skip.
-#
-# RVIM_REQUIRE_VIM=1 makes a missing Vim a failure. It is set only on Linux,
-# where the apt package installs reliably. On macOS and Windows a missing Vim
-# skips the differential checks with a warning, so a green run there proves
-# less; see the "Vim present?" step.
+# Vim: the differential tests compare rvim with a real Vim, and every runner
+# must have Vim present (RVIM_REQUIRE_VIM=1, so a missing Vim fails the job).
+# The Vim version each runner uses is printed in the "Vim present?" step.
+#   Linux:   Vim 9.1.1914 built from the pinned tag, the version the tests are
+#            written against. Built from source because distro packages lag
+#            (Ubuntu's apt Vim is 9.1.0016, which differs on ''-after-:N).
+#            Cached under ~/vim-9.1.1914 by runner image.
+#   macOS:   Homebrew's current Vim (9.2.x).
+#   Windows: Chocolatey's current Vim (9.2.x), found by the PATH step.
+# A failure that comes from a different Vim version needs a look (is it rvim,
+# or Vim's behaviour?), not a skip.
 name: ci
 on:
   push:
-    branches: [main]
+    branches: [main, 'ci-*']
   pull_request:
 permissions:
   contents: read
@@ -22,13 +25,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - { os: ubuntu-latest, require_vim: "1" }
-          - { os: macos-latest, require_vim: "0" }
-          - { os: windows-latest, require_vim: "0" }
+        os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     env:
-      RVIM_REQUIRE_VIM: ${{ matrix.require_vim }}
+      RVIM_REQUIRE_VIM: 1
     defaults:
       run:
         shell: bash
@@ -38,9 +38,31 @@ jobs:
         with:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
-      - name: Install Vim (Linux)
+      - name: Vim cache key (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get install -y vim
+        id: vim-key
+        run: echo "key=vim-v9.1.1914-${ImageOS:-unknown}-$(uname -m)" >> "$GITHUB_OUTPUT"
+      - name: Restore Vim 9.1.1914 (Linux)
+        if: runner.os == 'Linux'
+        id: vim-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/vim-9.1.1914
+          key: ${{ steps.vim-key.outputs.key }}
+      - name: Build Vim 9.1.1914 (Linux, cache miss)
+        if: runner.os == 'Linux' && steps.vim-cache.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libncurses-dev
+          git clone --depth 1 --branch v9.1.1914 https://github.com/vim/vim "$RUNNER_TEMP/vim-src"
+          cd "$RUNNER_TEMP/vim-src/src"
+          ./configure --with-features=huge --disable-gui --without-x --disable-nls \
+            --prefix="$HOME/vim-9.1.1914"
+          make -j"$(nproc)"
+          make install
+      - name: Add Vim to PATH (Linux)
+        if: runner.os == 'Linux'
+        run: echo "$HOME/vim-9.1.1914/bin" >> "$GITHUB_PATH"
       - name: Install Vim (macOS)
         if: runner.os == 'macOS'
         run: brew install vim
@@ -51,17 +73,45 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $exe = Get-ChildItem -Path 'C:\Program Files', 'C:\Program Files (x86)' -Directory -Filter Vim -ErrorAction SilentlyContinue |
-            ForEach-Object { Get-ChildItem -Path $_.FullName -Recurse -Filter vim.exe -ErrorAction SilentlyContinue } |
-            Select-Object -First 1
-          if (-not $exe) { throw 'vim.exe not found after choco install' }
+          # Chocolatey's vim package extracts the zip to C:\tools\vim\vim9N\
+          # (no shim), so search there first, then the Program Files roots.
+          $roots = @(
+            'C:\tools',
+            'C:\Program Files',
+            'C:\Program Files (x86)',
+            'C:\ProgramData\chocolatey\lib\vim',
+            'C:\ProgramData\chocolatey\bin'
+          )
+          $found = @()
+          foreach ($root in $roots) {
+            if (Test-Path -LiteralPath $root) {
+              $found += Get-ChildItem -LiteralPath $root -Recurse -Depth 5 -Filter vim.exe -File -ErrorAction SilentlyContinue
+            }
+          }
+          # Rank: the vim9N\vim.exe layout first, then the choco and Vim
+          # install roots, then anything else (e.g. a Git for Windows vim).
+          $ranked = $found | Sort-Object -Property @{ Expression = {
+              if ($_.FullName -match '\\vim\d+\\vim\.exe$') { 0 }
+              elseif ($_.FullName -match '^C:\\(tools|ProgramData\\chocolatey)\\|^C:\\Program Files( \(x86\))?\\Vim\\') { 1 }
+              else { 2 }
+            } }, @{ Expression = { $_.FullName }; Descending = $true }
+          if (-not $ranked) {
+            throw "vim.exe not found after choco install. Searched (depth 5) under: $($roots -join ', ')"
+          }
+          $exe = $ranked[0]
+          Write-Host "Using $($exe.FullName); other candidates: $(($ranked | Select-Object -Skip 1 | ForEach-Object FullName) -join ', ')"
           $exe.DirectoryName | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
       - name: Vim present?
         run: |
-          if command -v vim >/dev/null 2>&1; then
-            vim --version | head -n 1
-          else
-            echo "::warning::Vim not found on ${{ matrix.os }}; the differential tests are skipped unless RVIM_REQUIRE_VIM=1"
+          if ! command -v vim >/dev/null 2>&1; then
+            echo "::error::vim not found on ${{ matrix.os }}"
+            exit 1
+          fi
+          vim --version > vim-version.txt
+          head -n 2 vim-version.txt
+          if [ "$RUNNER_OS" = "Linux" ] && ! grep -q 'Included patches: 1-1914' vim-version.txt; then
+            echo "::error::expected Vim 9.1.1914 on Linux"
+            exit 1
           fi
       - name: Format
         run: cargo fmt --check

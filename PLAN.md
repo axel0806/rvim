@@ -7,7 +7,7 @@ a real Vim by the differential harness in `tests/common/mod.rs`.
 
 ## Status: read this first
 
-Last updated 2026-11-01 (Makefile and CI workflow added; CI not yet run on GitHub). **rvim is an alpha, roughly 25-30% of this plan.**
+Last updated 2026-11-01 (CI first ran on GitHub; Linux builds Vim 9.1.1914 from source, and all three OS jobs require Vim). **rvim is an alpha, roughly 25-30% of this plan.**
 As of 2026-11-01 milestones 1-3 are done; 4 and 5 are partly done; 6 has the start menu only; 7-9 are plans.
 Released as `v0.1.0-alpha.1`, `v0.1.0-alpha.2` and `v0.1.0-alpha.3`. The next release is `v0.1.0-alpha.4`, not yet tagged. All tests pass against Vim 9.1 and clippy/fmt are
 clean at the last commit.
@@ -1807,7 +1807,7 @@ copies of Vim's test suite (`src/testdir`), and must stay that way.
 
 Status on 2026-11-01: the five repository documents are written (`SECURITY.md`,
 `CONTRIBUTING.md`, `AGENTS.md`, `MAINTAIN.md`, `INSTALL.md`). The `Makefile` is
-present. `.github/workflows/ci.yml` runs on pushes to `main` and on pull requests: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` and `cargo test` on Linux, macOS and Windows, with real Vim installed (`RVIM_REQUIRE_VIM=1` on Linux only; elsewhere a missing Vim skips the differential tests with a warning). It has never run on GitHub yet. `.github/workflows/release.yml` is the release workflow. Where a document's
+present. `.github/workflows/ci.yml` runs on pushes to `main` and `ci-*` branches and on pull requests: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` and `cargo test` on Linux, macOS and Windows, with `RVIM_REQUIRE_VIM=1` on all three, so a missing Vim fails the job. The "Vim present?" step prints the Vim version each runner used. Linux builds Vim 9.1.1914 from the `v9.1.1914` tag and caches it under `~/vim-9.1.1914`, because the tests are valid for that version. macOS uses Homebrew's Vim and Windows uses Chocolatey's (both 9.2.x); a difference there is a finding to report, not a reason to skip. Ubuntu's apt Vim (9.1.0016) is not used: on the first GitHub run (41298030211) three jump tests in `tests/compat_jumps.rs` differed from it on `''` after a `:N` line jump, while 9.1.1914 matches the tests. `.github/workflows/release.yml` is the release workflow. Where a document's
 text differs from the rows below, the document is the source of truth.
 
 **Makefile.** Thin wrappers over cargo, so that the commands in CLAUDE.md and
@@ -1989,12 +1989,11 @@ plan, kept for the record; the files are the source of truth.
   protection. **Linux verified (2026-11-01):** in WSL (Ubuntu, Vim 9.1 patches up to 2141, run as a
   normal user) `RVIM_REQUIRE_VIM=1 cargo test` passed in full, including the six
   `recovery` tests (modes, symlinked directory, planted symlink), and clippy with
-  `-D warnings` was clean. **macOS is still unverified**: the code compiles for
-  `aarch64-apple-darwin` but its tests have never run there (the CI macOS job will).
-- CI (`.github/workflows/ci.yml`) has never run on GitHub. Its first run is
-  also the first execution of the Unix recovery-file tests (`cfg(unix)` in
-  `src/recovery.rs`), on the Linux and macOS runners. A failure there is a real
-  finding about the Unix code, not a CI setup problem to paper over.
+  `-D warnings` was clean. The CI macOS job also ran them (see the CI bullet below).
+- CI (`.github/workflows/ci.yml`) first ran on GitHub on 2026-11-01 (run
+  41298030211). The Unix recovery-file tests (`cfg(unix)` in `src/recovery.rs`)
+  passed on the Linux and macOS runners. The Windows job did not reach the
+  tests (its Vim PATH step failed), so the Windows run is still unverified.
 - Alt, F-keys, Insert and Shift-Tab work (milestone 4). The kitty keyboard
   protocol is still missing (milestone 4, "Left").
 - Jumplist: entries are positions in the one buffer. `:e` of another file
