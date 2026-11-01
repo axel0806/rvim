@@ -319,6 +319,13 @@ impl Editor {
         };
         if link.life == Life::Disconnected && link.retry_at.is_some_and(|t| now >= t) {
             let (id, root, retries) = (link.id, link.cwd.clone(), link.retries);
+            // The approval may have been removed since the connection started:
+            // a retry needs it again, as a first connection does.
+            let project = root.to_string_lossy().into_owned();
+            if !self.agent.approvals.is_approved(id, &project) {
+                self.agent.link = None;
+                return self.error(format!("{id}-acp: approval removed; not reconnecting"));
+            }
             self.start_link(id, root, retries);
         }
     }

@@ -460,6 +460,11 @@ fn registry_matches_plan() {
         ("codex", vec!["codex"]),
         ("cursor", vec!["agent", "cursor-agent"]),
         ("kimi", vec!["kimi"]),
+        ("gemini", vec!["gemini"]),
+        ("github-copilot-cli", vec!["copilot"]),
+        ("opencode", vec!["opencode"]),
+        ("goose", vec!["goose"]),
+        ("qwen-code", vec!["qwen"]),
     ];
     let got: Vec<(&str, Vec<&str>)> = AGENTS
         .iter()

@@ -259,13 +259,17 @@ pub static AGENTS: &[AgentSpec] = &[
             },
         ],
         launch: "claude",
-        acp: "npx @agentclientprotocol/claude-agent-acp@0.99.1",
+        acp: "npx -y @agentclientprotocol/claude-agent-acp@0.99.1",
         notes: "Native install puts claude in ~/.local/bin (Windows: %USERPROFILE%\\.local\\bin\\claude.exe). \
-                The ACP adapter is the package in the ACP registry (the older @zed-industries name is gone). \
-                The IDE protocol (lock file, WebSocket) comes from a third-party write-up: UNVERIFIED. \
-                ~/.claude/local and %APPDATA%\\npm are install guesses: UNVERIFIED. CLAUDE_CONFIG_DIR is not on the setup page: UNVERIFIED.",
-        sources: "code.claude.com/docs/en/setup (read 2026-11-01); agentclientprotocol.com/get-started/agents and \
-                  cdn.agentclientprotocol.com registry v1.0.0 (read 2026-11-01)",
+                The ACP adapter is the package in the ACP registry (the older @zed-industries name is gone); it needs \
+                Node 22 or later, and on Windows the launcher npx is tried as npx.cmd. \
+                The IDE protocol is documented for VS Code only (code.claude.com/docs/en/ide-integrations, read 2026-11-01): \
+                a local WebSocket server on 127.0.0.1, a lock file ~/.claude/ide/<port>.lock (or $CLAUDE_CONFIG_DIR/ide/ \
+                when set), and the token sent in the header X-Claude-Code-Ide-Authorization. The lock file's JSON schema \
+                and the handshake are not documented: UNVERIFIED, and not a supported third-party API. \
+                ~/.claude/local and %APPDATA%\\npm are install guesses: UNVERIFIED. CLAUDE_CONFIG_DIR is named only in the IDE docs.",
+        sources: "code.claude.com/docs/en/setup and code.claude.com/docs/en/ide-integrations (read 2026-11-01); \
+                  agentclientprotocol.com/get-started/agents and cdn.agentclientprotocol.com registry v1.0.0 (read 2026-11-01)",
     },
     AgentSpec {
         id: "codex",
@@ -323,7 +327,7 @@ pub static AGENTS: &[AgentSpec] = &[
             },
             Named {
                 name: "cursor-agent",
-                verified: false,
+                verified: true,
                 path_hint: Some("cursor"),
             },
         ],
@@ -348,7 +352,7 @@ pub static AGENTS: &[AgentSpec] = &[
         acp: "agent acp",
         notes: "The docs name the executable agent (cursor.com/docs/cli/overview), with install by curl or irm. \
                 agent is a generic process name, so it counts only when its path (or its symlink target) contains \
-                \"cursor\". cursor-agent as a PATH name and the Unix install location are UNVERIFIED. \
+                \"cursor\". cursor-agent is the executable the ACP registry names (read 2026-11-01). The Unix install location is UNVERIFIED. \
                 Auth: cursor_login (agent login, CURSOR_API_KEY or CURSOR_AUTH_TOKEN). No config directory is known.",
         sources: "cursor.com/docs/cli/overview and cursor.com/docs/cli/acp (read 2026-11-01); \
                   cdn.agentclientprotocol.com registry v1.0.0 (read 2026-11-01)",
@@ -400,6 +404,137 @@ pub static AGENTS: &[AgentSpec] = &[
                 The installer location is not stated, so no install directory is probed.",
         sources: "kimi.com/code/docs (Kimi Code CLI getting started, read 2026-11-01); github.com/MoonshotAI/kimi-cli \
                   (read 2026-11-01); cdn.agentclientprotocol.com registry v1.0.0 (read 2026-11-01)",
+    },
+    AgentSpec {
+        id: "gemini",
+        display: "Gemini CLI",
+        executables: &[Named {
+            name: "gemini",
+            verified: false,
+            path_hint: None,
+        }],
+        install_dirs: &[],
+        config_dirs: &[],
+        protocols: &[
+            Conn {
+                kind: ProtocolKind::AcpNative,
+                verified: true,
+            },
+            Conn {
+                kind: ProtocolKind::FilesOnly,
+                verified: true,
+            },
+        ],
+        launch: "gemini",
+        acp: "npx -y @google/gemini-cli@0.66.0 --acp",
+        notes: "The ACP command is the registry entry (npm @google/gemini-cli, pinned to 0.66.0). It honours \
+                GEMINI_API_KEY and GOOGLE_AI_API_KEY. The installed executable name gemini is UNVERIFIED (from memory). \
+                No install or config directory is probed: UNVERIFIED.",
+        sources: "agentclientprotocol.com/get-started/agents and cdn.agentclientprotocol.com registry v1.0.0 (read 2026-11-01)",
+    },
+    AgentSpec {
+        id: "github-copilot-cli",
+        display: "GitHub Copilot CLI",
+        executables: &[Named {
+            name: "copilot",
+            verified: false,
+            path_hint: None,
+        }],
+        install_dirs: &[],
+        config_dirs: &[],
+        protocols: &[
+            Conn {
+                kind: ProtocolKind::AcpNative,
+                verified: true,
+            },
+            Conn {
+                kind: ProtocolKind::FilesOnly,
+                verified: true,
+            },
+        ],
+        launch: "copilot",
+        acp: "npx -y @github/copilot@1.0.105 --acp",
+        notes: "The ACP command is the registry entry (npm @github/copilot, pinned to 1.0.105). The installed \
+                executable name copilot is UNVERIFIED (from memory). Login and config locations: UNVERIFIED, not probed.",
+        sources: "agentclientprotocol.com/get-started/agents and cdn.agentclientprotocol.com registry v1.0.0 (read 2026-11-01)",
+    },
+    AgentSpec {
+        id: "opencode",
+        display: "OpenCode",
+        executables: &[Named {
+            name: "opencode",
+            verified: true,
+            path_hint: None,
+        }],
+        install_dirs: &[],
+        config_dirs: &[],
+        protocols: &[
+            Conn {
+                kind: ProtocolKind::AcpNative,
+                verified: true,
+            },
+            Conn {
+                kind: ProtocolKind::FilesOnly,
+                verified: true,
+            },
+        ],
+        launch: "opencode",
+        acp: "opencode acp",
+        notes: "The registry runs the executable opencode with the acp argument (binary release 2.2.5). Install \
+                and config locations are not probed: UNVERIFIED.",
+        sources: "agentclientprotocol.com/get-started/agents and cdn.agentclientprotocol.com registry v1.0.0 (read 2026-11-01)",
+    },
+    AgentSpec {
+        id: "goose",
+        display: "Goose",
+        executables: &[Named {
+            name: "goose",
+            verified: true,
+            path_hint: None,
+        }],
+        install_dirs: &[],
+        config_dirs: &[],
+        protocols: &[
+            Conn {
+                kind: ProtocolKind::AcpNative,
+                verified: true,
+            },
+            Conn {
+                kind: ProtocolKind::FilesOnly,
+                verified: true,
+            },
+        ],
+        launch: "goose",
+        acp: "goose acp",
+        notes: "The registry runs the executable goose with the acp argument (binary release 1.57.0). No Windows \
+                aarch64 build is listed. Install and config locations are not probed: UNVERIFIED.",
+        sources: "agentclientprotocol.com/get-started/agents and cdn.agentclientprotocol.com registry v1.0.0 (read 2026-11-01)",
+    },
+    AgentSpec {
+        id: "qwen-code",
+        display: "Qwen Code",
+        executables: &[Named {
+            name: "qwen",
+            verified: false,
+            path_hint: None,
+        }],
+        install_dirs: &[],
+        config_dirs: &[],
+        protocols: &[
+            Conn {
+                kind: ProtocolKind::AcpNative,
+                verified: true,
+            },
+            Conn {
+                kind: ProtocolKind::FilesOnly,
+                verified: true,
+            },
+        ],
+        launch: "qwen",
+        acp: "npx -y @qwen-code/qwen-code@0.26.5 --acp --experimental-skills",
+        notes: "The ACP command is the registry entry (npm @qwen-code/qwen-code, pinned to 0.26.5). The installed \
+                executable name qwen is UNVERIFIED (from memory). Config locations: UNVERIFIED, not probed.",
+        sources: "agentclientprotocol.com/get-started/agents and cdn.agentclientprotocol.com registry v1.0.0 (read 2026-11-01)",
     },
 ];
 

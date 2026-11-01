@@ -115,8 +115,8 @@ fn main() -> io::Result<()> {
     }
 }
 
-/// Reads the user's config file (`config.rs`). This is the only file read at
-/// startup, and it blocks for as long as a small local read takes: it runs
+/// Reads the user's config file (`config.rs`). The config file and the approvals file
+/// (`agent-approvals.toml`) are the files read at startup, and each blocks for as long as a small local read takes: it runs
 /// before the terminal is put in raw mode, so the user sees nothing change.
 fn load_config() -> rvim::config::Config {
     match rvim::config::config_path(|k| std::env::var_os(k), cfg!(windows)) {

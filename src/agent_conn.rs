@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
+use std::time::Duration;
 
 use crate::agent_approval;
 use crate::event::Event;
@@ -50,19 +51,50 @@ pub enum AgentEvent {
     Note(String),
 }
 
+/// The part of a child process the connection uses: a kill, and a check that
+/// never blocks whether it has exited. A trait so that tests can fake a child.
+pub(crate) trait Proc: Send {
+    fn kill(&mut self);
+    /// `Some(code)` once the process has exited (`code` is None when it had no
+    /// exit code); `None` while it runs. Never blocks.
+    fn try_exit(&mut self) -> Option<Option<i32>>;
+}
+
+impl Proc for Child {
+    fn kill(&mut self) {
+        let _ = Child::kill(self);
+    }
+
+    fn try_exit(&mut self) -> Option<Option<i32>> {
+        match self.try_wait() {
+            Ok(Some(status)) => Some(status.code()),
+            Ok(None) => None,
+            // The process cannot be queried any more; treat it as gone.
+            Err(_) => Some(None),
+        }
+    }
+}
+
+/// How often the reader checks whether a child that closed its stdout has
+/// exited. The lock is held only for each check, so `Stop` never waits for a
+/// `wait` that the agent may never finish.
+const EXIT_POLL: Duration = Duration::from_millis(20);
+
+type SharedChild = Arc<Mutex<Box<dyn Proc>>>;
+
 /// The live connection: its generation, its stdin queue and the child, which
-/// the reader thread also waits on.
+/// the reader thread also polls for its exit.
 struct Live {
     generation: u64,
     stdin: mpsc::Sender<Vec<u8>>,
-    child: Arc<Mutex<Child>>,
+    child: SharedChild,
 }
 
 impl Live {
     fn stop(self) {
         // Dropping `stdin` ends the writer thread and closes the pipe.
         if let Ok(mut child) = self.child.lock() {
-            let _ = child.kill();
+            child.kill();
         }
     }
 }
@@ -83,7 +115,7 @@ pub fn spawn(rx: mpsc::Receiver<ConnCmd>, tx: mpsc::Sender<Event>, approvals: Pa
                     }
                     match start_child(&command, &cwd) {
                         Ok((child, stdout, stdin)) => {
-                            let child = Arc::new(Mutex::new(child));
+                            let child: SharedChild = Arc::new(Mutex::new(Box::new(child)));
                             let (stdin_tx, stdin_rx) = mpsc::channel::<Vec<u8>>();
                             thread::spawn(move || write_loop(stdin, stdin_rx));
                             let (child_r, tx_r) = (Arc::clone(&child), tx.clone());
@@ -172,12 +204,7 @@ fn write_loop(mut stdin: ChildStdin, rx: mpsc::Receiver<Vec<u8>>) {
     }
 }
 
-fn read_loop(
-    mut stdout: ChildStdout,
-    generation: u64,
-    child: Arc<Mutex<Child>>,
-    tx: mpsc::Sender<Event>,
-) {
+fn read_loop<R: Read>(mut stdout: R, generation: u64, child: SharedChild, tx: mpsc::Sender<Event>) {
     let mut buf = vec![0u8; 64 * 1024];
     loop {
         match stdout.read(&mut buf) {
@@ -190,12 +217,24 @@ fn read_loop(
             }
         }
     }
-    let code = child
-        .lock()
-        .ok()
-        .and_then(|mut c| c.wait().ok())
-        .and_then(|status| status.code());
+    let code = wait_for_exit(&child);
     send(&tx, generation, AgentEvent::Ended(code));
+}
+
+/// Waits until the child exits, polling with the lock held only for each
+/// check. An agent may close stdout and keep running; then this waits until
+/// `Stop` kills it. A poisoned lock counts as exited.
+fn wait_for_exit(child: &SharedChild) -> Option<i32> {
+    loop {
+        let polled = match child.lock() {
+            Ok(mut c) => c.try_exit(),
+            Err(_) => return None,
+        };
+        if let Some(code) = polled {
+            return code;
+        }
+        thread::sleep(EXIT_POLL);
+    }
 }
 
 #[cfg(test)]
@@ -226,6 +265,68 @@ mod tests {
                 event: AgentEvent::SpawnFailed(reason),
             }) => assert!(reason.contains("rvim-no-such-agent-binary")),
             other => panic!("expected SpawnFailed, got {other:?}"),
+        }
+    }
+
+    /// A child that runs until it is killed, whatever its stdout does.
+    struct FakeProc {
+        killed: Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    impl Proc for FakeProc {
+        fn kill(&mut self) {
+            self.killed.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+
+        fn try_exit(&mut self) -> Option<Option<i32>> {
+            if self.killed.load(std::sync::atomic::Ordering::SeqCst) {
+                Some(Some(9))
+            } else {
+                None
+            }
+        }
+    }
+
+    /// stdout that is already closed, as when an agent closes it and keeps
+    /// running.
+    fn closed_stdout() -> std::io::Empty {
+        std::io::empty()
+    }
+
+    #[test]
+    fn stop_returns_while_the_reader_waits_for_a_child_that_closed_stdout() {
+        let killed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let child: SharedChild = Arc::new(Mutex::new(Box::new(FakeProc {
+            killed: Arc::clone(&killed),
+        })));
+        let (tx, rx) = mpsc::channel();
+        let reader_child = Arc::clone(&child);
+        thread::spawn(move || read_loop(closed_stdout(), 3, reader_child, tx));
+        // The reader now polls the child: nothing has been sent yet.
+        assert!(rx.recv_timeout(Duration::from_millis(100)).is_err());
+
+        let (stdin, _keep) = mpsc::channel::<Vec<u8>>();
+        let live = Live {
+            generation: 3,
+            stdin,
+            child,
+        };
+        let (done_tx, done_rx) = mpsc::channel();
+        thread::spawn(move || {
+            live.stop();
+            let _ = done_tx.send(());
+        });
+        done_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("Stop returns while the child runs");
+        assert!(killed.load(std::sync::atomic::Ordering::SeqCst));
+        // The reader sees the exit once the child is gone.
+        match rx.recv_timeout(Duration::from_secs(5)) {
+            Ok(Event::AgentConn {
+                generation: 3,
+                event: AgentEvent::Ended(Some(9)),
+            }) => {}
+            other => panic!("expected Ended after the kill, got {other:?}"),
         }
     }
 }

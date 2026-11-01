@@ -74,11 +74,23 @@ fn claude_on_path_is_found_and_the_others_are_not() {
     let s = scan_of(&host_with_claude_on_path());
     assert_eq!(s.found, vec![("claude", How::OnPath)]);
     assert!(s.config_only.is_empty());
-    assert_eq!(s.not_found, vec!["codex", "cursor", "kimi"]);
+    assert_eq!(
+        s.not_found,
+        vec![
+            "codex",
+            "cursor",
+            "kimi",
+            "gemini",
+            "github-copilot-cli",
+            "opencode",
+            "goose",
+            "qwen-code"
+        ]
+    );
     assert!(s.warnings.is_empty(), "{:?}", s.warnings);
     assert!(
         s.message()
-            .starts_with("found claude (PATH) | not found: codex, cursor, kimi"),
+            .starts_with("found claude (PATH) | not found: codex, cursor, kimi, gemini, github-copilot-cli, opencode, goose, qwen-code"),
         "{}",
         s.message()
     );
@@ -110,7 +122,7 @@ fn nothing_installed_gives_an_empty_found_list() {
     };
     let s = scan_of(&host);
     assert!(s.found.is_empty() && s.config_only.is_empty());
-    assert_eq!(s.not_found.len(), 4);
+    assert_eq!(s.not_found.len(), 9);
 }
 
 #[test]

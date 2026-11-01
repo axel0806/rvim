@@ -576,3 +576,101 @@ fn a_stale_generation_is_ignored() {
     assert!(status(&ed).contains("connecting"), "{}", status(&ed));
     assert_eq!(ed.agent_retry_at(), None);
 }
+
+// ---- 5b-1b: revoked approvals, paste, and the prompts' precedence ---------
+
+#[test]
+fn a_retry_after_the_approval_is_revoked_does_not_start() {
+    let mut ed = connected(1);
+    ed.take_agent_conn_commands();
+    ed.handle_event(Event::AgentConn {
+        generation: 1,
+        event: AgentEvent::Ended(Some(0)),
+    });
+    let due = ed.agent_retry_at().expect("a retry is scheduled");
+    // The approval is removed mid-session.
+    ed.set_agent_approvals(Approvals::default(), None);
+    ed.agent_timer(due);
+    let cmds = ed.take_agent_conn_commands();
+    assert!(starts(&cmds).is_empty(), "{cmds:?}");
+    assert_eq!(ed.agent_retry_at(), None);
+    assert!(
+        status(&ed).contains("approval removed; not reconnecting"),
+        "{}",
+        status(&ed)
+    );
+    // Later ticks start nothing either.
+    ed.agent_timer(due + Duration::from_secs(60));
+    assert!(starts(&ed.take_agent_conn_commands()).is_empty());
+}
+
+#[test]
+fn a_pasted_y_does_not_answer_the_consent_prompt() {
+    let mut ed = editor(false);
+    ed.agent_connect(None);
+    ed.handle_event(Event::Paste("y".into()));
+    let cmds = ed.take_agent_conn_commands();
+    assert!(starts(&cmds).is_empty(), "{cmds:?}");
+    assert!(
+        cmds.iter().all(|c| !matches!(c, ConnCmd::SaveApprovals(_))),
+        "{cmds:?}"
+    );
+    // The prompt is still up: `n` answers it.
+    ed.handle_key(Key::Char('n'));
+    assert!(status(&ed).contains("not connected"), "{}", status(&ed));
+    assert!(ed.take_agent_conn_commands().is_empty());
+}
+
+/// An editor on a modified buffer whose file changed on disk, with the agent
+/// opt-in on: the conflict prompt is up.
+fn conflicted(dir: &std::path::Path) -> Editor {
+    let path = dir.join("notes.txt");
+    std::fs::write(&path, "one\ntwo\n").expect("write");
+    let mut ed = Editor::open(&path);
+    ed.set_screen_size(200, 24);
+    ed.set_agent_enabled(true);
+    ed.set_agent_project(PathBuf::from(ROOT));
+    ed.set_agent_approvals(Approvals::default(), None);
+    ed.handle_event(Event::AgentScan(ScanSummary {
+        found: vec![("claude", How::OnPath)],
+        config_only: vec![],
+        not_found: vec![],
+        warnings: vec![],
+    }));
+    ed.feed("x");
+    std::fs::write(&path, "changed\n").expect("write");
+    ed.feed(":checktime<CR>");
+    assert!(
+        status(&ed).contains("changed on disk and in rvim"),
+        "{}",
+        status(&ed)
+    );
+    ed
+}
+
+#[test]
+fn the_conflict_prompt_takes_keys_before_consent() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut ed = conflicted(dir.path());
+    // Consent is asked while the conflict prompt is up.
+    ed.agent_connect(Some("claude"));
+    assert!(status(&ed).contains("Start claude"), "{}", status(&ed));
+    // `y` answers the conflict prompt (a beep), not the consent prompt.
+    ed.handle_key(Key::Char('y'));
+    let cmds = ed.take_agent_conn_commands();
+    assert!(starts(&cmds).is_empty(), "{cmds:?}");
+    assert!(
+        cmds.iter().all(|c| !matches!(c, ConnCmd::SaveApprovals(_))),
+        "{cmds:?}"
+    );
+    // `k` keeps the buffer and closes the conflict prompt; the consent prompt
+    // is still waiting, so `y` now approves and connects.
+    ed.handle_key(Key::Char('k'));
+    ed.handle_key(Key::Char('y'));
+    let cmds = ed.take_agent_conn_commands();
+    assert_eq!(starts(&cmds), vec![1]);
+    assert!(
+        cmds.iter().any(|c| matches!(c, ConnCmd::SaveApprovals(_))),
+        "{cmds:?}"
+    );
+}
