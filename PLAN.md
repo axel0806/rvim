@@ -55,6 +55,7 @@ entry is removed when its branch lands on main):
 
 - Marks: `'[` `']` `'<` `'>` motions, mark setting per command, `:marks`, `:delmarks` (milestone 5; `normal.rs`, `document.rs`, a new Ex function)
 - Agent integration, step 2a: undo step source, disk state and hash, external change applied as one undo step with cursor mapping, `:checktime` (milestone 7; new `reload.rs`, `undo.rs`, `document.rs`)
+- Config file loader: location, format, `-u NONE`, options applied like `:set` (milestone 6, shared with agent step 4; new `config.rs`, `cli.rs`, `main.rs` startup)
 
 **Suggested order for what is left:** (1) Document/Window split, (2) splits +
 buffers + scrolling, (3) milestone 7, in the step order of "Agent experience:
