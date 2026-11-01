@@ -53,7 +53,6 @@ this, `--help` opened a buffer named `--help`.
 **In progress** (as of 2026-11-01; maintained by the orchestrator, and an
 entry is removed when its branch lands on main):
 
-- Document/Window split, step 3: `buf_mut()`, window geometry, accessor-only access (milestone 4; based on the step 2 branch)
 - Real option scopes: `:setlocal`, `:setglobal`, buffer- and window-local values (milestone 4; `options.rs`, `ex.rs`; based on the step 2 branch)
 
 **Suggested order for what is left:** (1) Document/Window split, (2) splits +
@@ -251,7 +250,7 @@ What the revised milestones fix, as the code stands today:
    match (`scroll::scroll_window_for_prompt`; tests in `tests/confirm_prompt.rs`,
    not probed in Vim: `-es` does not show the window).
    Marks in Ex addresses (`'a`) are done with the marks (milestone 5).
-4. **Foundation (in progress).** Done: bracketed paste, Alt/F-keys/Insert/Shift-Tab, kitty keyboard protocol, Visual area drawn via highlight groups, cell-level diff redraw (`redraw.rs`), options registry (`autoindent`, `expandtab`, `shiftwidth`), panic recovery files, SIGHUP/SIGTERM recovery files on Unix, channel-based event loop with an input thread. Left: the Document/Window/Editor split, real option scopes (`:setlocal`/`:setglobal`; `:setlocal` is only an alias of `:set` for now). Original description: Restructure before adding more features, because windows,
+4. **Foundation (in progress).** Done: bracketed paste, Alt/F-keys/Insert/Shift-Tab, kitty keyboard protocol, Visual area drawn via highlight groups, cell-level diff redraw (`redraw.rs`), options registry (`autoindent`, `expandtab`, `shiftwidth`), panic recovery files, SIGHUP/SIGTERM recovery files on Unix, channel-based event loop with an input thread. Left: real option scopes (`:setlocal`/`:setglobal`; `:setlocal` is only an alias of `:set` for now). Original description: Restructure before adding more features, because windows,
    agents and prediction all depend on it. Order, each step landing with the
    differential tests green: (a) Document/Window/Editor split, (b) internal
    event loop, (c) styled frame with the Visual area drawn, (d) diff redraw,
