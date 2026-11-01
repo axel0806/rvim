@@ -166,10 +166,7 @@ fn rvim_hlsearch_flags(text: &str, steps: &[(&str, &str)]) -> Vec<bool> {
         .iter()
         .map(|(keys, _)| {
             ed.feed(keys);
-            frame(&ed)
-                .hl
-                .iter()
-                .any(|row| row.contains(&Hl::Search))
+            frame(&ed).hl.iter().any(|row| row.contains(&Hl::Search))
         })
         .collect()
 }

@@ -387,7 +387,15 @@ pub fn frame(ed: &Editor) -> Frame {
         let base = rows.len();
         for &(s, e) in &hits {
             if let Some(cells) = search_cells(s, e, line, &lay) {
-                paint(&mut hl, base, need, (nw, tw), text_height, cells, Hl::Search);
+                paint(
+                    &mut hl,
+                    base,
+                    need,
+                    (nw, tw),
+                    text_height,
+                    cells,
+                    Hl::Search,
+                );
             }
         }
         for (c0, c1) in visual_cells(ed, line, &lay) {
