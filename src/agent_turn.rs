@@ -163,6 +163,7 @@ impl Editor {
             }
             (Leader::Backslash, Key::Esc | Key::Ctrl('c')) => {
                 self.agent.turn.leader = Leader::None;
+                self.win_mut().keep_curswant = true;
                 true
             }
             (Leader::Backslash, _) => {
@@ -174,11 +175,18 @@ impl Editor {
             (Leader::Agent, key) => {
                 self.agent.turn.leader = Leader::None;
                 self.agent.turn.leader_until = None;
+                // Only `\al` moves the view; the others keep the desired
+                // column, as `<Esc>` and the Ex commands that do not move the
+                // cursor do (CLAUDE.md).
                 match key {
                     Key::Char('l') => self.agent_log_toggle(),
-                    Key::Char('c') => self.agent_cancel(),
-                    Key::Esc | Key::Ctrl('c') => {}
+                    Key::Char('c') => {
+                        self.win_mut().keep_curswant = true;
+                        self.agent_cancel();
+                    }
+                    Key::Esc | Key::Ctrl('c') => self.win_mut().keep_curswant = true,
                     _ => {
+                        self.win_mut().keep_curswant = true;
                         self.agent_open_prompt();
                         self.cmdline_key(key);
                     }
@@ -247,7 +255,9 @@ impl Editor {
         if let Some(id) = self.agent.turn.log {
             return id;
         }
-        let id = self.new_document(Buffer::from_text(""));
+        let mut buf = Buffer::from_text("");
+        buf.locked = true;
+        let id = self.new_document(buf);
         self.document_mut(id).nomodifiable = true;
         self.agent.turn.log = Some(id);
         self.agent.turn.fresh = true;
@@ -307,26 +317,37 @@ impl Editor {
         }
     }
 
-    fn log_push(&mut self, log: DocId, text: &str) {
-        let fresh = std::mem::take(&mut self.agent.turn.fresh);
+    /// Runs `f` on the log's text with the lock released: the only writes to
+    /// the log are the editor's own output, never a change the user typed.
+    fn log_buf<R>(&mut self, log: DocId, f: impl FnOnce(&mut Buffer) -> R) -> R {
         let buf = &mut self.document_mut(log).buf;
-        if fresh {
-            buf.set_line(0, text);
-        } else {
-            let at = buf.line_count();
-            buf.insert_line(at, text);
-        }
+        let locked = std::mem::replace(&mut buf.locked, false);
+        let out = f(buf);
+        buf.locked = locked;
         // Output is not a change the user made: the log is never modified.
         buf.modified = false;
+        out
+    }
+
+    fn log_push(&mut self, log: DocId, text: &str) {
+        let fresh = std::mem::take(&mut self.agent.turn.fresh);
+        self.log_buf(log, |buf| {
+            if fresh {
+                buf.set_line(0, text);
+            } else {
+                let at = buf.line_count();
+                buf.insert_line(at, text);
+            }
+        });
     }
 
     fn log_extend(&mut self, log: DocId, seg: &str) {
-        let buf = &mut self.document_mut(log).buf;
-        let last = buf.last_line();
-        let mut text = buf.line_string(last);
-        text.push_str(seg);
-        buf.set_line(last, &text);
-        buf.modified = false;
+        self.log_buf(log, |buf| {
+            let last = buf.last_line();
+            let mut text = buf.line_string(last);
+            text.push_str(seg);
+            buf.set_line(last, &text);
+        });
     }
 
     /// A session update from the agent, for the log.
@@ -499,5 +520,29 @@ fn tool_line(info: &ToolCallInfo) -> String {
     match info.status {
         Some(status) => format!("[tool] {what}: {}", status_word(status)),
         None => format!("[tool] {what}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::Editor;
+
+    #[test]
+    fn leader_keys_keep_the_cursor_and_the_desired_column() {
+        let mut ed = Editor::from_text("abcdef\nab\nabcdef\n");
+        ed.set_agent_enabled(true);
+        ed.feed("llllj");
+        assert_eq!((ed.cursor().line, ed.cursor().col), (1, 1));
+        assert_eq!(ed.win().curswant, 4);
+        // `\ac` (no turn: a message) and `\a` then `<Esc>` move nothing and
+        // keep the column the `j` before them set.
+        ed.feed("\\ac");
+        assert_eq!((ed.cursor().line, ed.cursor().col), (1, 1));
+        assert_eq!(ed.win().curswant, 4, "\\ac keeps the desired column");
+        ed.feed("\\a<Esc>");
+        assert_eq!((ed.cursor().line, ed.cursor().col), (1, 1));
+        assert_eq!(ed.win().curswant, 4, "\\a<Esc> keeps the desired column");
+        ed.feed("j");
+        assert_eq!((ed.cursor().line, ed.cursor().col), (2, 4));
     }
 }

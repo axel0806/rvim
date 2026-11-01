@@ -1766,7 +1766,10 @@ What is built (`src/agent_turn.rs`, with the lines in `src/acp.rs`,
 - The log is not modifiable. Changes give E21: a Normal or Visual command by
   its kind, and the Ex commands of `Editor::log_refusal`; `:w`, `:wq` and `:x`
   give E382 as Vim does for a `nofile` buffer. Output the editor writes is not
-  a user change.
+  a user change. The buffer is locked too (`Buffer::locked`: every text change
+  is a no-op while it is set, and the editor's own output unlocks it for its
+  write), so no path that misses the command gate can change the log. Visual
+  operators and `.` are gated like the Normal changes.
 - The leader keys, with the opt-in only (`[agent] enabled` or `--agent`): `\a`
   opens the prompt (Visual: `'<,'>Agent `); `\al` toggles the log; `\ac` is
   `:AgentCancel`. Because `\al` and `\ac` share the key after `\a`, `\a` alone
@@ -1799,7 +1802,13 @@ order, a second prompt, the prompt text with `|`, `:Agent` alone, cancel
 mid-turn, `-32000` on a prompt, a permission request answered as cancelled by
 `:AgentCancel`, the log not modifiable and not written by `:w`, the leader keys
 with the opt-in on a fake clock, and the leader keys off). `tests/compat_agent_keys.rs`
-(differential) checks the leader keys against Vim with the opt-in off.
+(differential) checks the leader keys against Vim with the opt-in off, and
+the desired column around `\` (`lllljXj`-style cases). The unit test
+`leader_keys_keep_the_cursor_and_the_desired_column` checks that `\ac` and
+`\a<Esc>` keep the column with the opt-in on. `tests/acp_auth_prompt.rs` runs
+`-32000` on `session/prompt` through the pure state machine (`NeedsAuth`, and
+`Notice::AuthRequired`), and `the_log_refuses_every_change_and_still_takes_output`
+covers the Visual operators, `.` and the Ex commands on the log.
 
 ## Prediction (milestone 8)
 

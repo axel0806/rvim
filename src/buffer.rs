@@ -49,6 +49,10 @@ pub struct Buffer {
     rope: Rope,
     pub path: Option<PathBuf>,
     pub modified: bool,
+    /// The text cannot change: the agent log (agent_turn.rs). Every text
+    /// change below is a no-op while this is set; the editor's own output to
+    /// the log unlocks it for the write.
+    pub(crate) locked: bool,
     /// Lines end in CRLF on disk ('fileformat' dos).
     pub crlf: bool,
     /// The buffer has no lines at all (new or empty file), which Vim writes
@@ -171,6 +175,7 @@ impl Buffer {
             rope: Rope::new(),
             path: None,
             modified: false,
+            locked: false,
             crlf: false,
             no_lines: true,
             changedtick: 0,
@@ -364,6 +369,9 @@ impl Buffer {
     /// buffer is modified afterwards; the caller clears that when the text
     /// is the file's.
     pub(crate) fn replace_text(&mut self, new: Buffer, remap: impl Fn(Pos) -> Pos + 'static) {
+        if self.locked {
+            return;
+        }
         self.rope = new.rope;
         self.crlf = new.crlf;
         self.touch();
@@ -429,6 +437,9 @@ impl Buffer {
 
     /// Restores text from a snapshot (undo/redo). Marks the buffer changed.
     pub fn restore(&mut self, snap: &Snapshot) {
+        if self.locked {
+            return;
+        }
         self.rope = snap.rope.clone();
         self.no_lines = snap.no_lines;
         self.changedtick += 1;
@@ -441,6 +452,9 @@ impl Buffer {
 
     /// Replaces the text of line `l`.
     pub fn set_line(&mut self, l: usize, text: &str) {
+        if self.locked {
+            return;
+        }
         let start = self.rope.line_to_char(l);
         let len = self.line_len(l);
         self.rope.remove(start..start + len);
@@ -451,6 +465,9 @@ impl Buffer {
     /// Deletes `n` whole lines starting at `l`. Deleting every line leaves
     /// one empty line and no "real" lines, as in Vim.
     pub fn delete_lines(&mut self, l: usize, n: usize) {
+        if self.locked {
+            return;
+        }
         let total = self.line_count();
         let n = n.min(total - l);
         if n == 0 {
@@ -515,6 +532,9 @@ impl Buffer {
     /// Inserts `text` (which may contain `\n`) before (l, c). As in Vim, a
     /// line break does not move marks on line `l`, whatever their column.
     pub fn insert(&mut self, l: usize, c: usize, text: &str) {
+        if self.locked {
+            return;
+        }
         let breaks = text.matches('\n').count();
         if breaks > 0 {
             for t in self.tracked.iter_mut() {
@@ -533,6 +553,9 @@ impl Buffer {
     /// Removing a line break joins lines: marks on the joined line move to
     /// the join point, as Vim's `do_join()` does.
     pub fn remove(&mut self, l: usize, c: usize, n: usize) {
+        if self.locked {
+            return;
+        }
         let i = self.index(l, c);
         let end = (i + n).min(self.rope.len_chars());
         let breaks = self
@@ -558,6 +581,9 @@ impl Buffer {
     /// Inserts a new line so that it becomes line `at` (`at` may equal
     /// `line_count()` to append).
     pub fn insert_line(&mut self, at: usize, text: &str) {
+        if self.locked {
+            return;
+        }
         for t in self.tracked.iter_mut() {
             if *t != usize::MAX && *t >= at {
                 *t += 1;

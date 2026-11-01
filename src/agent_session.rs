@@ -118,6 +118,11 @@ impl Editor {
             .min()
     }
 
+    /// The protocol state of the current connection (`acp.rs`), for tests.
+    pub fn agent_conn_state(&self) -> Option<ConnState> {
+        self.agent.link.as_ref().map(|l| l.conn.state().clone())
+    }
+
     /// When the scheduled retry is due, for tests and the status line.
     pub fn agent_retry_at(&self) -> Option<Instant> {
         self.agent.link.as_ref().and_then(|l| l.retry_at)

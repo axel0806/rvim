@@ -7,6 +7,7 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+use rvim::acp::ConnState;
 use rvim::agent_approval::Approvals;
 use rvim::agent_conn::{AgentEvent, ConnCmd};
 use rvim::agent_detect::{How, ScanSummary};
@@ -251,6 +252,7 @@ fn auth_required_on_a_prompt_is_the_auth_state() {
     );
     let cmds = ed.take_agent_conn_commands();
     assert_eq!(stops(&cmds), 1, "rvim stops the process it started");
+    assert_eq!(ed.agent_conn_state(), Some(ConnState::NeedsAuth));
     assert!(status(&ed).contains("ai: claude error"), "{}", status(&ed));
     assert!(status(&ed).contains("not logged in"), "{}", status(&ed));
     assert!(log(&ed).contains("[error] not logged in"), "{}", log(&ed));
@@ -340,6 +342,60 @@ fn leader_keys_work_once_opted_in() {
     assert!(status(&ed).contains("cancel sent"), "{}", status(&ed));
     let cmds = ed.take_agent_conn_commands();
     assert!(sent(&cmds).iter().any(|v| v["method"] == "session/cancel"));
+}
+
+#[test]
+fn the_log_refuses_every_change_and_still_takes_output() {
+    let mut ed = connected(1);
+    let id = start_turn(&mut ed, "hello");
+    update(&mut ed, 1, chunk("Hi\nthere"));
+    finish(&mut ed, 1, &id, "end_turn");
+    ed.feed(":AgentLog<CR>");
+    let before = text(&ed);
+    assert!(before.contains("there"), "{before:?}");
+    let keys = [
+        // Visual operators (Body::VisOp), Normal changes and dot.
+        "vd<Esc>",
+        "vx<Esc>",
+        "vc<Esc>",
+        "vs<Esc>",
+        "vC<Esc>",
+        "vX<Esc>",
+        "vR<Esc>",
+        "vJ<Esc>",
+        "vu<Esc>",
+        "vU<Esc>",
+        "v~<Esc>",
+        "dd",
+        "x",
+        "p",
+        "J",
+        "ox<Esc>",
+        "Ox<Esc>",
+        ".",
+        // Ex commands that change text.
+        ":s/>/X/<CR>",
+        ":normal dd<CR>",
+        ":g/>/d<CR>",
+        ":m0<CR>",
+        ":t0<CR>",
+        ":pu<CR>",
+        ":j<CR>",
+        ":><CR>",
+        ":retab<CR>",
+        ":sort<CR>",
+        ":d<CR>",
+    ];
+    for keys in keys {
+        ed.feed(keys);
+        assert_eq!(text(&ed), before, "{keys} changed the log");
+        assert!(status(&ed).contains("E21"), "{keys}: {}", status(&ed));
+    }
+    // The editor's own output still goes into the locked log.
+    let id = start_turn(&mut ed, "again");
+    finish(&mut ed, 1, &id, "end_turn");
+    assert!(text(&ed).contains("> again"), "{}", text(&ed));
+    assert!(!ed.buf().modified, "the log is not modified");
 }
 
 #[test]

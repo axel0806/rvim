@@ -8,6 +8,24 @@ mod common;
 use common::{check, cross};
 
 #[test]
+fn desired_column_around_the_leader_keys_with_the_layer_off() {
+    // CLAUDE.md: `lllljXj`-style cases. With the layer off, `\` is Vim's
+    // invalid key and the key after it is a command of its own, so the
+    // column the `j` set must survive the `\` exactly as Vim keeps it.
+    let texts = ["abcdefgh\nab\nabcdefgh\nabcdefgh\n"];
+    let keys = [
+        "lllj\\jX<Esc>",
+        "lllj\\jjX<Esc>",
+        "$j\\kX<Esc>",
+        "lllj2\\jX<Esc>",
+        "lllj\\ljX<Esc>",
+        "lllj\\<Esc>jX<Esc>",
+        "lllj\\\\jX<Esc>",
+    ];
+    check(&cross(&texts, &keys));
+}
+
+#[test]
 fn leader_agent_keys_are_vims_keys_with_the_layer_off() {
     let keys = [
         "\\aZ<Esc>",

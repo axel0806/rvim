@@ -1448,7 +1448,7 @@ impl Editor {
 
     fn is_change(body: &Body) -> bool {
         match body {
-            Body::Op { op, .. } => *op != Op::Yank,
+            Body::Op { op, .. } | Body::VisOp { op, .. } => *op != Op::Yank,
             Body::Simple(s) => matches!(
                 s,
                 Simple::Insert(_)
@@ -1932,6 +1932,10 @@ impl Editor {
 
     /// Repeats the last change (`.`).
     fn dot(&mut self, count: Option<usize>) {
+        // `.` repeats a change, and the agent log cannot change (agent_turn.rs).
+        if self.doc().nomodifiable {
+            return self.error("E21: Cannot make changes, 'modifiable' is off");
+        }
         let Some(r) = self.redo.clone() else {
             self.beep();
             return;
