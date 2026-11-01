@@ -53,7 +53,6 @@ this, `--help` opened a buffer named `--help`.
 **In progress** (as of 2026-11-01; maintained by the orchestrator, and an
 entry is removed when its branch lands on main):
 
-- Redraw escape-sequence tests and skipping the kitty query on `TERM=dumb` (hardening; `main.rs`, `redraw.rs`)
 - Document/Window split, step 2: ids and collections, per-document version counter, `'[`/`']` into `Document` (milestone 4; `editor.rs`, `document.rs`, `window.rs`)
 
 **Suggested order for what is left:** (1) Document/Window split, (2) splits +
