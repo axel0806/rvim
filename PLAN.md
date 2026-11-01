@@ -15,7 +15,7 @@ clean at the last commit.
 | Milestone | State |
 |---|---|
 | 1 Core, 2 Vim grammar | Done |
-| 3 Search and Ex | ~98%. Left: `:s` `\=` expressions |
+| 3 Search and Ex | 100%. `:s` `\=` expressions done as the subset in `src/expr.rs` (see Known differences) |
 | 4 Foundation | ~70%. Left: the Document/Window/Editor split (the biggest item; see "Foundation"), kitty keyboard protocol, cell-level diff redraw, `:setlocal`/`:setglobal`, recovery on terminal close (SIGHUP) |
 | 5 Windows and buffers | ~30%. Done: macros (`q`, `@`, `@@`, `@:`), lowercase marks (`m{a-z}`, `'a`, `` `a ``, `:k`, `:mark`, `'a` addresses), the jumplist (`<C-o>`, `<Tab>` with counts, `:jumps`) and the context mark (`''`, `` `` ``, `m'`, `` m` ``), scrolling (`<C-e> <C-y> <C-f> <C-b> <C-d> <C-u> zt zz zb z<CR> z. z- H M L`, counts, `scrolloff`, wrapped lines). Left: splits, buffer list, the other marks (uppercase, `'[`/`']`, `'<`/`'>` motions), swap files |
 | 6 Modern editing experience | Started, not near done. Landed: the start menu (opt-in `--start-menu`, `startmenu` option). Left: hlsearch, incsearch, syntax, line numbers, config file, palette, mouse, `:Start`, the start menu's recent files, Config and agent entries, and its modern-profile default (see "Start menu") |
@@ -23,7 +23,10 @@ clean at the last commit.
 | 8 Prediction | 0%. Not started |
 | 9 Extras | 0%. Not started |
 
-Since the alpha (all committed and pushed): bracketed paste, Alt/F-keys/Insert/
+Since the alpha (all committed and pushed): `:s/pat/\=expr/` with the
+expression subset in `src/expr.rs` (numbers, strings, lists, operators, `?:`,
+indexing and slicing, the common built-in functions, Vim's error messages;
+differential cases in `tests/compat_m3_expr.rs`), bracketed paste, Alt/F-keys/Insert/
 Shift-Tab, Visual area drawn through `view::Hl` groups, row-level diff redraw,
 the options registry (`options.rs`: `autoindent`, `expandtab`, `shiftwidth`,
 `tabstop`, `softtabstop`, `smarttab`, `shiftround` work; `text.rs` takes the
@@ -41,8 +44,7 @@ restored by undo in `undo.rs`), and the scrolling commands with `scrolloff`
 **In progress** (as of 2026-11-01; maintained by the orchestrator, and an
 entry is removed when its branch lands on main):
 
-- `:s` `\=` expressions (two agents, split from one): the expression module
-  and `\=` in `:s` remain. Last open item of milestone 3.
+(none)
 
 **Suggested order for what is left:** (1) Document/Window split, (2) splits +
 buffers + scrolling, (3) milestone 7, in the step order of "Agent experience:
@@ -237,7 +239,7 @@ What the revised milestones fix, as the code stands today:
    "Working notes"), and `<C-e>`/`<C-y>` in the prompt, which scroll the
    window one line and keep the match where it is, stopping short of the
    match (`scroll::scroll_window_for_prompt`; tests in `tests/confirm_prompt.rs`,
-   not probed in Vim: `-es` does not show the window). Left: `:s` `\=` expressions.
+   not probed in Vim: `-es` does not show the window).
    Marks in Ex addresses (`'a`) are done with the marks (milestone 5).
 4. **Foundation (in progress).** Done: bracketed paste, Alt/F-keys/Insert/Shift-Tab, Visual area drawn via highlight groups, row-level diff redraw, options registry (`autoindent`, `expandtab`, `shiftwidth`), panic recovery files, channel-based event loop with an input thread. Left: the Document/Window/Editor split, kitty keyboard protocol, cell-level diff, `:setlocal`, SIGHUP recovery. Original description: Restructure before adding more features, because windows,
    agents and prediction all depend on it. Order, each step landing with the
@@ -1910,8 +1912,19 @@ plan, kept for the record; the files are the source of truth.
   wraps in Vim but not in rvim (unexplained; see `compat_m3.rs`).
 - After `:%s/\n//` Vim leaves the cursor at the last join point; rvim puts
   it on the first non-blank.
-- `\=` expressions and the `\n` (NUL) replacement are not implemented.
-  `:p`, `:nu`, `:=` only set a message.
+- `:s` `\=` expressions (`src/expr.rs`) are a subset. Not supported: floats
+  (`1.5` is E15), dictionaries, funcrefs, lambdas, user functions, `v:`, `g:`
+  and other scoped variables, Vim9 syntax, `<Key>` names beyond `Esc CR NL Tab
+  BS Space lt Bslash Bar NUL`. Strings are indexed
+  by byte, so a cut inside a multi-byte character gives U+FFFD. `substitute()`
+  expands only `&`, `\&`, `\0`-`\9`, `\t`, `\n`, `\r`, `\\` (no case escapes,
+  no `~`). `split()` and `substitute()` match one line, so a pattern cannot
+  match a line break there. `printf()` has `%d %x %X %s %%` with `-`, `0` and
+  width. Error numbers of the cases that were not probed in Vim (unknown
+  `str2nr()` base, `printf()` odd conversions) are not checked. Errors inside
+  built-in functions give Vim's default value (0, "" or []) and go on.
+- The `\n` (NUL) replacement is not implemented. `:p`, `:nu`, `:=` only set a
+  message.
 - The `c` flag of `:s` (`ex.rs`, `SubRun`): `<C-e>` and `<C-y>` only ask
   again (Vim scrolls the window). A declined match over a line break (`n`
   after `\n`) moves on to the next line, where Vim sometimes offers the same
