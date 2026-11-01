@@ -15,7 +15,7 @@ clean at the last commit.
 | Milestone | State |
 |---|---|
 | 1 Core, 2 Vim grammar | Done |
-| 3 Search and Ex | ~97%. Left: `:s` `\=` expressions; `<C-e>`/`<C-y>` in the `c` prompt do not scroll yet |
+| 3 Search and Ex | ~98%. Left: `:s` `\=` expressions |
 | 4 Foundation | ~70%. Left: the Document/Window/Editor split (the biggest item; see "Foundation"), kitty keyboard protocol, cell-level diff redraw, `:setlocal`/`:setglobal`, recovery on terminal close (SIGHUP) |
 | 5 Windows and buffers | ~30%. Done: macros (`q`, `@`, `@@`, `@:`), lowercase marks (`m{a-z}`, `'a`, `` `a ``, `:k`, `:mark`, `'a` addresses), the jumplist (`<C-o>`, `<Tab>` with counts, `:jumps`) and the context mark (`''`, `` `` ``, `m'`, `` m` ``), scrolling (`<C-e> <C-y> <C-f> <C-b> <C-d> <C-u> zt zz zb z<CR> z. z- H M L`, counts, `scrolloff`, wrapped lines). Left: splits, buffer list, the other marks (uppercase, `'[`/`']`, `'<`/`'>` motions), swap files |
 | 6 Modern editing experience | 0%. Not started (hlsearch, incsearch, syntax, line numbers, config file, palette, mouse) |
@@ -42,8 +42,7 @@ restored by undo in `undo.rs`), and the scrolling commands with `scrolloff`
 entry is removed when its branch lands on main):
 
 - `:s` `\=` expressions (two agents, split from one): the expression module
-  and `\=` in `:s`, and `<C-e>`/`<C-y>` scrolling in the `c` prompt. Last open
-  items of milestone 3.
+  and `\=` in `:s` remain. Last open item of milestone 3.
 - Start menu (opt-in `--start-menu`, a `Frame` overlay shown when rvim starts
   with no file): being built by a Haiku agent (branch name pending).
 
@@ -230,8 +229,10 @@ What the revised milestones fix, as the code stands today:
    `:[range]r[ead] {file}` (`:r !cmd` is not done). Done since: the `c` flag
    of `:s`, `:&` and `:g` (Confirm mode: `y n a q l <Esc>`, one undo step,
    the match highlighted with `view::Hl::IncSearch`; the design is in the
-   "Working notes"). Left: `:s` `\=` expressions, and the `<C-e>`/`<C-y>`
-   scrolling of the prompt (its keys are not handled yet).
+   "Working notes"), and `<C-e>`/`<C-y>` in the prompt, which scroll the
+   window one line and keep the match where it is, stopping short of the
+   match (`scroll::scroll_window_for_prompt`; tests in `tests/confirm_prompt.rs`,
+   not probed in Vim: `-es` does not show the window). Left: `:s` `\=` expressions.
    Marks in Ex addresses (`'a`) are done with the marks (milestone 5).
 4. **Foundation (in progress).** Done: bracketed paste, Alt/F-keys/Insert/Shift-Tab, Visual area drawn via highlight groups, row-level diff redraw, options registry (`autoindent`, `expandtab`, `shiftwidth`), panic recovery files, channel-based event loop with an input thread. Left: the Document/Window/Editor split, kitty keyboard protocol, cell-level diff, `:setlocal`, SIGHUP recovery. Original description: Restructure before adding more features, because windows,
    agents and prediction all depend on it. Order, each step landing with the

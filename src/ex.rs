@@ -1672,10 +1672,14 @@ impl Editor {
     }
 
     /// An answer to the `c` flag prompt: `y n a q l`, `<Esc>` and `<C-c>`
-    /// (quit). Other keys ask again. Vim's `<C-e>` and `<C-y>` scroll the
-    /// window; rvim keeps no scroll state in the editor yet, so they ask
-    /// again too.
+    /// (quit). `<C-e>` and `<C-y>` scroll the window one line and keep the
+    /// prompt. Other keys ask again.
     pub(crate) fn confirm_key(&mut self, key: Key) {
+        if let Key::Ctrl(c @ ('e' | 'y')) = key {
+            self.scroll_window_for_prompt(c == 'e');
+            self.keep_curswant = true;
+            return;
+        }
         let answer = match key {
             Key::Char(c @ ('y' | 'n' | 'a' | 'q' | 'l')) => c,
             Key::Esc | Key::Ctrl('c') => 'q',

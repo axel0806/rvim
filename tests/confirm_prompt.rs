@@ -44,7 +44,7 @@ fn the_highlight_moves_with_the_prompt() {
 }
 
 #[test]
-fn ctrl_e_and_ctrl_y_ask_again() {
+fn ctrl_e_and_ctrl_y_keep_the_prompt() {
     let mut ed = Editor::from_text(TEXT);
     ed.feed(":%s/foo/X/gc<CR>");
     ed.feed("<C-e><C-y>");
@@ -159,4 +159,70 @@ fn each_line_of_a_global_asks_again_after_a() {
     ed.feed("a");
     assert_eq!(ed.mode(), Mode::Normal);
     assert_eq!(ed.buf.text(), "X\nX\nX");
+}
+
+/// `n` lines, each with a match: `foo 0` ... `foo {n-1}`.
+fn numbered(n: usize) -> String {
+    (0..n)
+        .map(|i| format!("foo {i}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[test]
+fn ctrl_e_and_ctrl_y_scroll_the_window_and_keep_the_match() {
+    let mut ed = Editor::from_text(&numbered(30));
+    ed.feed(":set so=0<CR>:%s/foo/X/gc<CR>nnnn");
+    assert_eq!(ed.mode(), Mode::Confirm);
+    assert_eq!((ed.cursor().line, ed.cursor().col), (4, 0));
+    // Ten text rows: lines 0 to 9 are shown.
+    ed.set_screen_size(40, 11);
+    assert_eq!(ed.top_line(), 0);
+    ed.feed("<C-e><C-e>");
+    assert_eq!(ed.mode(), Mode::Confirm);
+    assert_eq!(ed.top_line(), 2);
+    // The match does not move, and it is still the one highlighted.
+    assert_eq!((ed.cursor().line, ed.cursor().col), (4, 0));
+    assert!(ed.confirm_match().is_some_and(|(s, _)| s.line == 4));
+    // A third scroll would put line 4 above the window: the window stops
+    // with the match on its top line (scrolloff 0).
+    ed.feed("<C-e><C-e><C-e>");
+    assert_eq!(ed.top_line(), 4);
+    assert_eq!((ed.cursor().line, ed.cursor().col), (4, 0));
+    ed.feed("<C-y>");
+    assert_eq!(ed.top_line(), 3);
+    ed.feed("<C-y><C-y><C-y><C-y>");
+    assert_eq!(ed.top_line(), 0, "CTRL-Y stops at the first line");
+    assert_eq!(ed.mode(), Mode::Confirm);
+    assert_eq!(ed.buf.text(), numbered(30));
+    // The prompt still answers the match it was showing.
+    ed.feed("y");
+    assert_eq!(ed.buf.text().lines().nth(4), Some("X 4"));
+    assert_eq!(ed.buf.text().lines().nth(3), Some("foo 3"));
+}
+
+#[test]
+fn ctrl_e_keeps_the_match_in_the_window_with_scrolloff() {
+    let mut ed = Editor::from_text(&numbered(30));
+    ed.feed(":set so=2<CR>:%s/foo/X/gc<CR>nnnn");
+    assert_eq!(ed.mode(), Mode::Confirm);
+    ed.set_screen_size(40, 11);
+    ed.feed("<C-e><C-e><C-e><C-e><C-e><C-e>");
+    // 'scrolloff' keeps two lines above the match, so the window's top
+    // line is 2, not 6.
+    assert_eq!(ed.top_line(), 2);
+    assert_eq!((ed.cursor().line, ed.cursor().col), (4, 0));
+    assert_eq!(ed.mode(), Mode::Confirm);
+}
+
+#[test]
+fn ctrl_e_on_a_match_at_the_top_does_not_scroll_it_away() {
+    let mut ed = Editor::from_text(&numbered(30));
+    ed.feed(":set so=0<CR>:%s/foo/X/gc<CR>");
+    ed.set_screen_size(40, 11);
+    ed.feed("<C-e>");
+    assert_eq!(ed.mode(), Mode::Confirm);
+    assert_eq!(ed.top_line(), 0);
+    assert_eq!((ed.cursor().line, ed.cursor().col), (0, 0));
+    assert!(ed.confirm_match().is_some_and(|(s, _)| s.line == 0));
 }

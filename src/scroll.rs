@@ -283,6 +283,20 @@ impl Editor {
         t.min(old - 1)
     }
 
+    /// `CTRL-E` and `CTRL-Y` in the `:s` `c` prompt: the window moves one
+    /// line and the match (the cursor) stays where it is. The window is then
+    /// kept around the cursor as after any key, so a scroll that would take
+    /// the match out of the window stops short of it.
+    pub(crate) fn scroll_window_for_prompt(&mut self, down: bool) {
+        let n = self.buf.line_count();
+        self.top = if down {
+            (self.top + 1).min(n - 1)
+        } else {
+            self.top.saturating_sub(1)
+        };
+        self.update_topline();
+    }
+
     /// Runs a scroll command with its count (Vim's `nv_scroll_line`,
     /// `nv_halfpage`, `nv_zet`, `pagescroll`).
     pub(crate) fn scroll_cmd(&mut self, cmd: ScrollCmd, count: Option<usize>) {

@@ -80,9 +80,8 @@ use:
 - No config file (`vimrc`), plugins, Vimscript, `:help`, folds, completion,
   spell checking, `:terminal`, or `:!` shell commands.
 - `:s`: no `\=` expressions; the `\n` (NUL) replacement is not implemented.
-  The `c` flag asks like Vim, but `<C-e>` and `<C-y>` do not scroll the
-  window, and after a declined match over a line break the next match can
-  differ from Vim. `:p`, `:nu` and `:=` only show a message.
+  The `c` flag asks like Vim, and after a declined match over a line break
+  the next match can differ from Vim. `:p`, `:nu` and `:=` only show a message.
 - Emoji use approximate ranges for word motions, and combining characters are
   separate characters.
 
