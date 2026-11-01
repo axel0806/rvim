@@ -51,7 +51,7 @@ this, `--help` opened a buffer named `--help`.
 **In progress** (as of 2026-11-01; maintained by the orchestrator, and an
 entry is removed when its branch lands on main):
 
-(none)
+- Fix the first CI run: Linux apt Vim is older than 9.1.1914 (3 jump tests differ), Windows Vim path (branch `ci-fix-vim`)
 
 **Suggested order for what is left:** (1) Document/Window split, (2) splits +
 buffers + scrolling, (3) milestone 7, in the step order of "Agent experience:
