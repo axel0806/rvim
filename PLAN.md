@@ -53,8 +53,8 @@ this, `--help` opened a buffer named `--help`.
 **In progress** (as of 2026-11-01; maintained by the orchestrator, and an
 entry is removed when its branch lands on main):
 
-- Marks: `'[` `']` `'<` `'>` motions, mark setting per command, `:marks`, `:delmarks` (milestone 5; `normal.rs`, `document.rs`, a new Ex function)
 - Config file loader: location, format, `-u NONE`, options applied like `:set` (milestone 6, shared with agent step 4; new `config.rs`, `cli.rs`, `main.rs` startup)
+- Agent integration, step 2b: file watcher worker thread, `filewatch` option (off by default), echo suppression (milestone 7; new `watch.rs`, `event.rs`, `main.rs`)
 
 **Suggested order for what is left:** (1) Document/Window split, (2) splits +
 buffers + scrolling, (3) milestone 7, in the step order of "Agent experience:
