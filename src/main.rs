@@ -360,6 +360,11 @@ fn set_style(out: &mut impl Write, style: Style) -> io::Result<()> {
         Hl::Normal => {}
         Hl::Visual | Hl::MenuSelected => queue!(out, SetAttribute(Attribute::Reverse))?,
         Hl::NonText => queue!(out, SetForegroundColor(Color::Blue))?,
+        Hl::Search => queue!(
+            out,
+            SetForegroundColor(Color::Black),
+            SetBackgroundColor(Color::DarkYellow)
+        )?,
         Hl::IncSearch => queue!(
             out,
             SetForegroundColor(Color::Black),

@@ -406,6 +406,7 @@ impl Editor {
         } else if abbrev(n, "normal", 4) {
             self.ex_normal(range, p.arg);
         } else if abbrev(n, "nohlsearch", 3) {
+            self.no_hlsearch = true;
         } else if abbrev(n, "undo", 1) {
             self.undo_cmd(1, false);
         } else if abbrev(n, "redo", 3) {
@@ -684,6 +685,7 @@ impl Editor {
         } else {
             self.search.pat = Some(pat.to_string());
             self.last_pat = Some(pat.to_string());
+            self.no_hlsearch = false;
             crate::cmdline::push_history(&mut self.search_hist, pat);
             pat.to_string()
         };
@@ -1271,6 +1273,7 @@ impl Editor {
         } else {
             self.search.pat = Some(pat.clone());
             self.last_pat = Some(pat.clone());
+            self.no_hlsearch = false;
             crate::cmdline::push_history(&mut self.search_hist, &pat);
             pat
         };
@@ -1309,6 +1312,9 @@ impl Editor {
     fn ex_set(&mut self, arg: &str, target: Target) -> ExRes<()> {
         for item in arg.split_whitespace() {
             self.set_one(item, target)?;
+            if crate::options::is_hlsearch_arg(item) {
+                self.no_hlsearch = false;
+            }
         }
         Ok(())
     }
@@ -1535,6 +1541,7 @@ impl Editor {
     fn do_substitute(&mut self, r: Range, pattern: &str, rep: &str, flags: SubFlags) -> ExRes<()> {
         self.check_range_lines(r)?;
         self.last_pat = Some(pattern.to_string());
+        self.no_hlsearch = false;
         self.search.pat = Some(pattern.to_string());
         self.last_sub_raw = rep.to_string();
         self.sub_flags = flags.clone();

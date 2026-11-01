@@ -136,6 +136,12 @@ pub struct Editor {
     pub(crate) search: crate::search::SearchState,
     /// The last pattern used by `/` or `:s` (Vim's `RE_LAST`).
     pub(crate) last_pat: Option<String>,
+    /// Set by `:nohlsearch`: 'hlsearch' is not shown until the next search
+    /// or `:s` (Vim's `no_hlsearch`).
+    pub(crate) no_hlsearch: bool,
+    /// The view saved when a `/` or `?` prompt opened with 'incsearch' on,
+    /// and the match shown for the text typed so far (see search.rs).
+    pub(crate) incsearch: Option<crate::search::IncState>,
     /// The last substitute string, for `~` in patterns.
     pub(crate) last_sub: String,
     /// Raw replacement of the last `:s`, for `~` and `:&`.
@@ -271,6 +277,8 @@ impl Editor {
             last_find: None,
             search: Default::default(),
             last_pat: None,
+            no_hlsearch: false,
+            incsearch: None,
             last_sub: String::new(),
             cmd_search: None,
             last_sub_raw: String::new(),
@@ -582,7 +590,10 @@ impl Editor {
         match self.mode {
             Mode::Normal | Mode::Visual(_) => self.normal_key(key),
             Mode::Insert | Mode::Replace => self.insert_key(key),
-            Mode::CmdLine => self.cmdline_key(key),
+            Mode::CmdLine => {
+                self.cmdline_key(key);
+                self.incsearch_update();
+            }
             Mode::Confirm => self.confirm_key(key),
         }
         match self.mode {
@@ -643,6 +654,7 @@ impl Editor {
             Mode::CmdLine => {
                 let t: String = text.chars().filter(|c| !c.is_control()).collect();
                 self.cmd_insert(&t);
+                self.incsearch_update();
             }
             // Pasted text is data, not an answer to a `:s` prompt.
             Mode::Confirm => {}

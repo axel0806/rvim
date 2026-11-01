@@ -365,6 +365,26 @@ impl<'a> Eff<'a> {
     pub fn filewatch(&self) -> bool {
         self.bool_of("filewatch")
     }
+    pub fn hlsearch(&self) -> bool {
+        self.bool_of("hlsearch")
+    }
+    pub fn incsearch(&self) -> bool {
+        self.bool_of("incsearch")
+    }
+}
+
+/// True if one `:set` argument changes 'hlsearch' (`hls`, `nohls`, `invhls`,
+/// `hls!`, `hls?` ...). Vim turns `:nohlsearch` off again when it is set.
+pub(crate) fn is_hlsearch_arg(item: &str) -> bool {
+    let alpha: String = item
+        .chars()
+        .take_while(|c| c.is_ascii_alphabetic())
+        .collect();
+    let base = alpha
+        .strip_prefix("inv")
+        .or_else(|| alpha.strip_prefix("no"))
+        .unwrap_or(&alpha);
+    Options::find(base).is_some() && Options::find(base) == Options::find("hlsearch")
 }
 
 impl Editor {

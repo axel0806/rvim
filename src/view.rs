@@ -6,6 +6,7 @@
 //! tested without a terminal.
 
 use crate::editor::{Editor, Mode, VisualMode};
+use crate::motion::Pos;
 use crate::text::{self, char_display, char_width};
 use ropey::RopeSlice;
 use unicode_width::UnicodeWidthChar;
@@ -38,6 +39,8 @@ pub enum Hl {
     NonText,
     /// The match a `:s` `c` flag prompt asks about (Vim's IncSearch).
     IncSearch,
+    /// A match of 'hlsearch' (Vim's Search).
+    Search,
     /// The selected entry of the start menu.
     MenuSelected,
     /// A start menu entry that is not available yet.
@@ -65,6 +68,53 @@ fn confirm_cells(ed: &Editor, line: usize, lay: &Layout) -> Vec<(usize, usize)> 
         vec![(lay.starts[from], lay.starts[to])]
     } else {
         Vec::new()
+    }
+}
+
+/// Linear cell range of the part of the match `s..e` (end exclusive) that
+/// lies on `line`. An empty match covers one cell: its char, or the cell
+/// after the line's end. A match that goes on past the line's end covers that
+/// cell too, as Vim does for the line break.
+fn search_cells(s: Pos, e: Pos, line: usize, lay: &Layout) -> Option<(usize, usize)> {
+    if line < s.line || line > e.line {
+        return None;
+    }
+    // A match that ends at column 0 of a later line covers nothing here.
+    if line == e.line && line > s.line && e.col == 0 {
+        return None;
+    }
+    let len = lay.starts.len() - 1;
+    let from = if line == s.line { s.col.min(len) } else { 0 };
+    let crosses = line < e.line;
+    let to = if line == e.line { e.col.min(len) } else { len };
+    Some(if crosses {
+        (lay.starts[from], lay.starts[len] + 1)
+    } else if to > from {
+        (lay.starts[from], lay.starts[to])
+    } else if from < len {
+        (lay.starts[from], lay.starts[from + 1])
+    } else {
+        (lay.starts[len], lay.starts[len] + 1)
+    })
+}
+
+/// Sets the group of the cells `cells` (linear, within the wrapped line) of
+/// the buffer line whose first row is `base`. Only the `need` rows of the
+/// line are painted, and only inside the window.
+fn paint(
+    hl: &mut [Vec<Hl>],
+    base: usize,
+    need: usize,
+    (nw, tw): (usize, usize),
+    text_height: usize,
+    cells: (usize, usize),
+    group: Hl,
+) {
+    for c in cells.0..cells.1 {
+        let r = c / tw;
+        if r < need && base + r < text_height {
+            hl[base + r][nw + c % tw] = group;
+        }
     }
 }
 
@@ -306,6 +356,11 @@ pub fn frame(ed: &Editor) -> Frame {
     // which wraps lines); the two make up the window's width.
     let nw = ed.number_col_width();
     let tw = ed.text_width();
+    // The matches that can reach the window: those starting on the line
+    // above the top line may run into it.
+    let top = ed.win().top;
+    let hits = ed.hl_matches(top.saturating_sub(1), top + text_height);
+    let incsearch = ed.incsearch_hit();
     let mut rows = Vec::with_capacity(text_height);
     let mut hl = vec![vec![Hl::Normal; width]; text_height];
     let mut cursor = (0, 0);
@@ -330,6 +385,11 @@ pub fn frame(ed: &Editor) -> Frame {
             cursor = (nw + cell % tw, rows.len() + cell / tw);
         }
         let base = rows.len();
+        for &(s, e) in &hits {
+            if let Some(cells) = search_cells(s, e, line, &lay) {
+                paint(&mut hl, base, need, (nw, tw), text_height, cells, Hl::Search);
+            }
+        }
         for (c0, c1) in visual_cells(ed, line, &lay) {
             for c in c0..c1 {
                 if base + c / tw < text_height {
@@ -343,6 +403,19 @@ pub fn frame(ed: &Editor) -> Frame {
                     hl[base + c / tw][nw + c % tw] = Hl::IncSearch;
                 }
             }
+        }
+        if let Some(hit) = incsearch
+            && let Some(cells) = search_cells(hit.0, hit.1, line, &lay)
+        {
+            paint(
+                &mut hl,
+                base,
+                need,
+                (nw, tw),
+                text_height,
+                cells,
+                Hl::IncSearch,
+            );
         }
         let num_hl = if line == ed.cursor().line {
             Hl::CursorLineNr
@@ -493,6 +566,7 @@ mod tests {
                     .map(|h| match h {
                         Hl::Visual => 'V',
                         Hl::NonText => '~',
+                        Hl::Search => 'S',
                         Hl::IncSearch => 'I',
                         Hl::MenuSelected => 'M',
                         Hl::Dimmed => 'd',

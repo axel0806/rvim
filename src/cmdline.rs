@@ -58,6 +58,9 @@ impl Editor {
     /// Enters Command-line mode with `initial` already typed. `ret` is the
     /// mode to come back to when the prompt ends.
     pub(crate) fn cmd_start(&mut self, kind: PromptKind, ret: Mode, initial: &str) {
+        if let PromptKind::Search(_) = kind {
+            self.incsearch_begin();
+        }
         self.mode = Mode::CmdLine;
         self.cmd_kind = kind;
         self.cmd_return = ret;
@@ -126,6 +129,7 @@ impl Editor {
     /// Esc, Ctrl-C, or `<BS>` on an empty line: back to the mode the prompt
     /// was opened from (Visual mode for a search started there).
     fn cmd_cancel(&mut self) {
+        self.incsearch_end();
         self.mode = self.cmd_return;
         self.cmdline.clear();
         self.cmdpos = 0;
@@ -275,6 +279,7 @@ impl Editor {
     /// the search motion runs with the typed text, as if its keys had been
     /// typed in one go (the keys before the prompt are restored first).
     fn search_finish(&mut self, lead: char, text: &str) {
+        self.incsearch_end();
         push_history(&mut self.search_hist, text);
         self.mode = self.cmd_return;
         let mut keys = std::mem::take(&mut self.cmd_prefix);

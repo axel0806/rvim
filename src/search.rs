@@ -51,6 +51,16 @@ pub(crate) enum Start {
     Outside,
 }
 
+/// An open `/` or `?` prompt with 'incsearch' on (Vim's `incsearch_state`).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct IncState {
+    /// The cursor and top line when the prompt opened.
+    pub(crate) cursor: Pos,
+    pub(crate) top: usize,
+    /// The match of the text typed so far, shown with `IncSearch`.
+    pub(crate) hit: Option<(Pos, Pos)>,
+}
+
 pub(crate) struct SearchFlags {
     /// `SEARCH_START`: accept a match at the start position.
     pub start: bool,
@@ -341,6 +351,114 @@ impl Editor {
         self.error(text);
     }
 
+    /// The matches of 'hlsearch' that start on lines `from..to` (end
+    /// exclusive, clamped to the buffer), as (start, end) with the end
+    /// exclusive. Empty when 'hlsearch' is off, `:nohlsearch` is in effect,
+    /// no pattern was used yet or the pattern does not compile. The pattern
+    /// is the last one used (Vim's `RE_LAST`), with 'ignorecase' and
+    /// 'smartcase' as for searches. An empty match is one cell (see view.rs).
+    pub(crate) fn hl_matches(&self, from: usize, to: usize) -> Vec<(Pos, Pos)> {
+        let mut out = Vec::new();
+        if !self.eff().hlsearch() || self.no_hlsearch {
+            return out;
+        }
+        let Some(pat) = self.last_pat.as_deref() else {
+            return out;
+        };
+        let Ok(re) = Regex::new(pat, &self.re_opts()) else {
+            return out;
+        };
+        let buf = self.buf();
+        for l in from..to.min(buf.line_count()) {
+            let len = buf.line_len(l);
+            let mut col = 0;
+            while col <= len {
+                let Some(m) = re.match_line(buf, l, col) else {
+                    break;
+                };
+                if m.start.0 != l {
+                    break;
+                }
+                let (s, e) = (m.start, m.end);
+                out.push((Pos::new(l, s.1), Pos::new(e.0, e.1)));
+                col = if e.0 == l && e.1 > s.1 { e.1 } else { s.1 + 1 };
+            }
+        }
+        out
+    }
+
+    /// Opens the incsearch state for a `/` or `?` prompt, if 'incsearch' is
+    /// on: the cursor and the top line are kept to restore on exit.
+    pub(crate) fn incsearch_begin(&mut self) {
+        if self.eff().incsearch() {
+            let w = self.win();
+            self.incsearch = Some(IncState {
+                cursor: w.cursor,
+                top: w.top,
+                hit: None,
+            });
+        }
+    }
+
+    /// The match of the text typed so far in an open incsearch prompt, for
+    /// the frame (drawn with `IncSearch`).
+    pub(crate) fn incsearch_hit(&self) -> Option<(Pos, Pos)> {
+        self.incsearch.and_then(|s| s.hit)
+    }
+
+    /// Shows the match of the pattern typed so far (Vim's 'incsearch'): the
+    /// window goes back to the view the prompt opened with, then the cursor
+    /// moves to the match start and the window scrolls to show it. Nothing
+    /// changes in the buffer. No match (or an empty or invalid pattern)
+    /// leaves the view where it was.
+    pub(crate) fn incsearch_update(&mut self) {
+        let Some(st) = self.incsearch else {
+            return;
+        };
+        let crate::cmdline::PromptKind::Search(lead) = self.cmd_kind else {
+            return;
+        };
+        if self.mode != Mode::CmdLine {
+            return;
+        }
+        let chars: Vec<char> = self.cmdline.chars().collect();
+        let pat: String = chars[..skip_regexp(&chars, lead)].iter().collect();
+        let mut hit = None;
+        if !pat.is_empty()
+            && let Ok(re) = Regex::new(&pat, &self.re_opts())
+        {
+            let fl = SearchFlags {
+                start: false,
+                end: false,
+                wrapscan: self.eff().wrapscan(),
+            };
+            hit = searchit(self.buf(), &re, Start::At(st.cursor), lead == '/', 1, &fl)
+                .map(|f| (f.pos, f.other));
+        }
+        let w = self.win_mut();
+        w.cursor = st.cursor;
+        w.top = st.top;
+        if let Some((s, _)) = hit {
+            self.win_mut().cursor = s;
+            self.update_topline();
+        }
+        if let Some(state) = self.incsearch.as_mut() {
+            state.hit = hit;
+        }
+    }
+
+    /// Ends the incsearch state and puts the window back to the view the
+    /// prompt opened with. Called on cancel, and before an answered search
+    /// runs, so that the search scrolls from the same view as without
+    /// 'incsearch'.
+    pub(crate) fn incsearch_end(&mut self) {
+        if let Some(st) = self.incsearch.take() {
+            let w = self.win_mut();
+            w.cursor = st.cursor;
+            w.top = st.top;
+        }
+    }
+
     /// Vim's `do_search()` for a typed pattern (`pat` without its leading
     /// `/` or `?`, possibly followed by the delimiter and an offset), or
     /// `None` to repeat the last search. Returns `None` if nothing was
@@ -351,6 +469,9 @@ impl Editor {
         pat: Option<&str>,
         count: usize,
     ) -> Option<(Pos, bool, bool)> {
+        // Any search turns 'hlsearch' back on (Vim's searchit() without
+        // SEARCH_KEEP).
+        self.no_hlsearch = false;
         let mut pos = self.win().cursor;
         let reverse = false;
         let dirc_val = match dirc {
