@@ -40,6 +40,7 @@ restored by undo in `undo.rs`), and the scrolling commands with `scrolloff`
 entry is removed when its branch lands on main):
 
 - Indent options (`tabstop`, `softtabstop`, `smarttab`, `shiftround`): being built by a Haiku agent (branch name pending).
+- `:s` `\=` expressions and scrolling in the `c` prompt (`<C-e>`, `<C-y>`): being built by a Haiku agent (branch name pending); last open items of milestone 3.
 
 **Suggested order for what is left:** (1) Document/Window split, (2) splits +
 buffers + scrolling, (3) milestone 7, in the step order of "Agent experience:
