@@ -15,7 +15,10 @@ started with `vim -N -u NONE`. The test suite checks this against a real Vim.
   regex engine.
 - Ex commands with ranges, including `:d :y :pu :m :t :j :> :< :k :mark :s :g
   :v :normal :undo :redo :set :r :w :q :wq :x :e`. `:s` has the `c` (confirm)
-  flag, and `&` and `g&` repeat a substitution.
+  flag and `\=` expressions (a subset of Vim's expression language: numbers,
+  strings, lists, operators and about 25 common functions such as `submatch()`
+  and `printf()`; no floats, dictionaries or user functions), and `&` and `g&`
+  repeat a substitution.
 - Macros: `q`, `@`, `@@`, `@:`.
 - Lowercase marks `a`-`z`, and the jumplist with `<C-o>` and `<Tab>` and the
   context mark.
@@ -33,8 +36,8 @@ started with `vim -N -u NONE`. The test suite checks this against a real Vim.
 - No windows or splits, no tabs, and no buffer list or `:b`. There is one buffer.
 - Marks: no uppercase (file) marks, no `'[`, `']`, `'<` or `'>` motions, and no
   `:marks`.
-- `:s` has no `\=` expressions and no `\n` (NUL) replacement. `:r !cmd` and
-  `:!` shell commands do not work.
+- `:s` has no `\n` (NUL) replacement. `:r !cmd` and `:!` shell commands do not
+  work.
 - No syntax highlighting, `hlsearch`, `incsearch` or line numbers.
 - No config file (`vimrc`), no plugins, no Vimscript, no `:help`, no folds, no
   completion and no spell checking.

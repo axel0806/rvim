@@ -44,7 +44,10 @@ restored by undo in `undo.rs`), and the scrolling commands with `scrolloff`
 **In progress** (as of 2026-11-01; maintained by the orchestrator, and an
 entry is removed when its branch lands on main):
 
-(none)
+- Bare `|` inside an Ex `:s`/`:g` pattern (`:%s/\v(a|b)+/X/g`) is split as a
+  command separator; Vim parses the pattern first. Found by a verifier on
+  2026-11-01, present on main before `\=`. Being fixed by a Haiku agent
+  (branch name pending); blocks the `v0.1.0-alpha.3` tag.
 
 **Suggested order for what is left:** (1) Document/Window split, (2) splits +
 buffers + scrolling, (3) milestone 7, in the step order of "Agent experience:
