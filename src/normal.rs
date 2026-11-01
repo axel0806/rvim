@@ -299,7 +299,10 @@ pub(crate) fn parse_motion(k: &[Key]) -> Res<(Motion, usize)> {
             return match k.get(1) {
                 None => Ok(None),
                 // `''` and ``` `` ``` are the previous context mark.
-                Some(Key::Char(c)) if c.is_ascii_lowercase() || matches!(c, '\'' | '`') => {
+                Some(Key::Char(c))
+                    if c.is_ascii_lowercase()
+                        || matches!(c, '\'' | '`' | '[' | ']' | '<' | '>' | '"') =>
+                {
                     Ok(Some((
                         Motion::Mark {
                             mark: *c,
@@ -617,7 +620,10 @@ fn parse_body(k: &[Key], visual: bool) -> Res<(Body, Option<usize>, usize)> {
         Key::Char('m') => {
             return match k.get(1) {
                 None => Ok(None),
-                Some(Key::Char(c)) if c.is_ascii_lowercase() || matches!(c, '\'' | '`') => {
+                Some(Key::Char(c))
+                    if c.is_ascii_lowercase()
+                        || matches!(c, '\'' | '`' | '[' | ']' | '<' | '>') =>
+                {
                     simple(Simple::SetMark(*c), 2)
                 }
                 _ => Err(()),
@@ -1127,8 +1133,10 @@ impl Editor {
                 let target = if matches!(mark, '\'' | '`') {
                     self.sync_jumps();
                     self.win().jumps.pcmark()
-                } else {
+                } else if mark.is_ascii_lowercase() {
                     self.buf().mark(mark)
+                } else {
+                    self.special_mark(mark)
                 };
                 let Some(p) = target else {
                     self.error("E20: Mark not set");
@@ -1147,9 +1155,10 @@ impl Editor {
                     // Like Vim's nv_cursormark(): a backtick motion also
                     // uses register 1 when it deletes.
                     info.use_reg_one = true;
+                    // Vim's check_cursor(): the last character, not past it.
                     let line = p.line.min(self.buf().last_line());
-                    self.win_mut().cursor =
-                        Pos::new(line, p.col.min(self.buf_mut().line_len(line)));
+                    let last = self.buf().line_len(line).saturating_sub(1);
+                    self.win_mut().cursor = Pos::new(line, p.col.min(last));
                 }
             }
             Motion::RepeatFind { reverse } => {
@@ -1608,9 +1617,11 @@ impl Editor {
                     // the cursor does not move.
                     self.set_pcmark();
                     self.win_mut().jumps.keep_pcmark();
-                } else {
+                } else if c.is_ascii_lowercase() {
                     let cursor = self.win().cursor;
                     self.buf_mut().set_mark(c, cursor);
+                } else {
+                    self.set_special_mark(c);
                 }
             }
             Simple::JumpOlder => self.move_in_jumplist(-(count1 as isize)),
@@ -1698,9 +1709,9 @@ impl Editor {
         }
         self.buf_mut()
             .set_line(line, &chars.iter().collect::<String>());
-        self.doc_mut().op_start = self.win_mut().cursor;
+        self.doc_mut().op_start = Some(self.win_mut().cursor);
         self.win_mut().cursor.col = col + count1 - 1;
-        self.doc_mut().op_end = self.win_mut().cursor;
+        self.doc_mut().op_end = Some(self.win_mut().cursor);
     }
 
     /// `~` in Normal mode ('notildeop', Vim's `n_swapchar`).
@@ -1712,16 +1723,19 @@ impl Editor {
         }
         self.u_save_cursor();
         let start = self.win().cursor;
+        // `']` is the last character swapped (Vim's n_swapchar()).
+        let mut last = start;
         for _ in 0..count1 {
             self.swapchar(Op::Tilde, self.win().cursor);
+            last = self.win().cursor;
             let (doc, win) = self.parts_mut();
             motion::inc(&doc.buf, &mut win.cursor);
             if gchar(self.buf(), self.win().cursor).is_none() {
                 break;
             }
         }
-        self.doc_mut().op_start = start;
-        self.doc_mut().op_end = self.win_mut().cursor;
+        self.doc_mut().op_start = Some(start);
+        self.doc_mut().op_end = Some(last);
     }
 
     // ---- Visual mode ----------------------------------------------------
@@ -1789,7 +1803,7 @@ impl Editor {
         }
         if r.mode == VisualMode::Char {
             if r.line_count <= 1 {
-                let here = self.cursor_vcol();
+                let here = self.cursor_vcol_as_normal();
                 self.win_mut().curswant = here
                     .saturating_add(r.vcol.saturating_mul(count))
                     .saturating_sub(1);
@@ -1805,7 +1819,7 @@ impl Editor {
         } else if r.mode == VisualMode::Block {
             let line = self.win().cursor.line;
             self.win_mut().cursor.line = self.win_mut().vstart.line;
-            let here = self.cursor_vcol();
+            let here = self.cursor_vcol_as_normal();
             self.win_mut().curswant = here
                 .saturating_add(r.vcol.saturating_mul(count))
                 .saturating_sub(1);

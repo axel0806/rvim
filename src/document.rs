@@ -36,8 +36,9 @@ pub(crate) struct Document {
     version_base: u64,
     /// The `'[` and `']` marks: the start and end of the last change (Vim's
     /// `b_op_start` and `b_op_end`).
-    pub(crate) op_start: Pos,
-    pub(crate) op_end: Pos,
+    /// `None` until a change or yank sets them, so an unset mark is E20.
+    pub(crate) op_start: Option<Pos>,
+    pub(crate) op_end: Option<Pos>,
     /// The buffer-local option values (`'autoindent'`, `'shiftwidth'`, ...).
     /// A new document copies the global values, see `options.rs`.
     pub(crate) local: Local,
@@ -64,8 +65,8 @@ impl Document {
             uline: None,
             last_visual: None,
             version_base: 0,
-            op_start: Pos::default(),
-            op_end: Pos::default(),
+            op_start: None,
+            op_end: None,
             local,
             disk: None,
             stale: None,

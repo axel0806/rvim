@@ -366,6 +366,10 @@ impl Editor {
             self.ex_mark(range, p.arg)?;
         } else if abbrev(n, "jumps", 2) {
             self.ex_jumps();
+        } else if n == "marks" {
+            self.ex_marks(p.bang, p.arg)?;
+        } else if abbrev(n, "delmarks", 4) {
+            self.ex_delmarks(p.bang, p.arg)?;
         } else if abbrev(n, "join", 1) {
             self.ex_join(range, p.bang, p.arg)?;
         } else if n == ">" || n == "<" {
@@ -535,6 +539,11 @@ impl Editor {
                     }
                     Some(c @ 'a'..='z') => {
                         let p = self.buf().mark(c).ok_or("E20: Mark not set")?;
+                        line = Some(p.line as i64 + 1);
+                        rest = &rest[2..];
+                    }
+                    Some(c @ ('[' | ']' | '"')) => {
+                        let p = self.special_mark(c).ok_or("E20: Mark not set")?;
                         line = Some(p.line as i64 + 1);
                         rest = &rest[2..];
                     }
@@ -964,6 +973,15 @@ impl Editor {
         self.win_mut().cursor.line = at + n - 1;
         self.win_mut().cursor.col = first_non_blank(self.buf(), self.win().cursor.line, true);
         self.doc_mut().uline = None;
+        // Vim's do_put() for a linewise put: `'[` is the first new line and
+        // `']` the last character of the last one.
+        if let Some(last_text) = lines.last() {
+            self.doc_mut().op_start = Some(Pos::new(at, 0));
+            self.doc_mut().op_end = Some(Pos::new(
+                at + n - 1,
+                last_text.chars().count().saturating_sub(1),
+            ));
+        }
         if n > 2 {
             self.info(format!("{n} more lines"));
         }
@@ -1085,6 +1103,15 @@ impl Editor {
                 self.buf_mut()
                     .set_mark(mark, Pos::new(new_first + p.line - first, p.col));
             }
+            // Vim's do_move(): `'[` and `']` are the lines the moved lines
+            // land on, at column 0.
+            let (lo, hi) = if dest >= r.line2 {
+                (dest - n + 1, dest)
+            } else {
+                (dest + 1, dest + n)
+            };
+            self.doc_mut().op_start = Some(Pos::new(lo - 1, 0));
+            self.doc_mut().op_end = Some(Pos::new(hi - 1, 0));
             if n > 2 {
                 self.info(format!("{n} lines moved"));
             }
@@ -1097,6 +1124,9 @@ impl Editor {
                 self.buf_mut().insert_line(dest + i, l);
             }
             self.win_mut().cursor.line = dest + n - 1;
+            // Vim's ex_copy(): `'[` and `']` are the new lines, at column 0.
+            self.doc_mut().op_start = Some(Pos::new(dest, 0));
+            self.doc_mut().op_end = Some(Pos::new(dest + n - 1, 0));
             if n > 2 {
                 self.info(format!("{n} more lines"));
             }
@@ -1536,6 +1566,7 @@ impl Editor {
             rep_chars,
             ask: flags.confirm && !flags.count_only,
             re,
+            line1: r.line1,
             line2: r.line2,
             lnum: r.line1 - 1,
             nsubs: 0,
@@ -1849,6 +1880,10 @@ impl Editor {
         }
         if st.nsubs > 0 {
             self.doc_mut().uline = None;
+            // Vim's do_sub(): `'[` is the first line of the range and `']`
+            // the last, both at column 0.
+            self.doc_mut().op_start = Some(Pos::new(st.line1 - 1, 0));
+            self.doc_mut().op_end = Some(Pos::new(st.line2.max(1) - 1, 0));
             if self.global_busy {
                 self.global_need_beginline = true;
             }
@@ -2032,6 +2067,8 @@ pub(crate) struct SubFlags {
 pub(crate) struct SubRun {
     /// The context mark was set for this command (at its first match).
     got_match: bool,
+    /// The first line of the range (Vim's `eap->line1`), for `'[`.
+    line1: usize,
     pattern: String,
     /// The replacement after `~` expansion, as shown in the prompt.
     rep: String,
@@ -2148,6 +2185,12 @@ fn is_known_long(name: &str) -> bool {
             | "jum"
             | "jump"
             | "jumps"
+            | "marks"
+            | "delm"
+            | "delma"
+            | "delmar"
+            | "delmark"
+            | "delmarks"
             | "move"
             | "mo"
             | "mov"

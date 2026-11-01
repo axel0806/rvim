@@ -69,9 +69,10 @@ use:
   `:r file` works, but `:r !cmd` does not. Macros (`q`, `@`) work; an
   error ends a running macro as in Vim.
 - Marks: lowercase marks work (`ma`, `'a`, `` `a ``, as operator motions, `:k`,
-  `:mark`, `:'a` addresses, and they follow edits and undo). Missing: uppercase
-  marks, `m[` `m]` `m<` `m>`, `'[` `']` `` `[ `] ``, `'<` and `'>` as motions,
-  and `:marks`.
+  `:mark`, `:'a` addresses, and they follow edits and undo). `'[` `']`
+  `` `[ `] ``, `'<` `'>` and `'"` work as motions, operator targets and Ex
+  addresses; `m[` `m]` `m<` `m>` set them; `:marks` (on one message line) and
+  `:delmarks` work. Missing: uppercase (file) marks, `'.` and `'^`.
 - Scrolling: `<C-f> <C-b> <C-d> <C-u> <C-e> <C-y> zt zz zb z<CR> z. z- H M L`
   work with counts and `scrolloff`. Not there: `z+ z^ z{height}<CR>`,
   `smoothscroll`, and the `<PageUp>`/`<PageDown>`/`<S-Up>` aliases.

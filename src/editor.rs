@@ -124,6 +124,9 @@ pub struct Editor {
     ins_stack: Vec<RepItem>,
     pub(crate) ins_post: PostInsert,
     arrow_used: bool,
+    /// Where the current Insert started (Vim's `Insstart`), which `'[` is
+    /// set to when it stops.
+    ins_start: Pos,
     pub(crate) regs: Registers,
     pub(crate) last_find: Option<(char, bool, bool)>,
     pub(crate) search: crate::search::SearchState,
@@ -214,6 +217,7 @@ impl Editor {
             ins_stack: Vec::new(),
             ins_post: PostInsert::None,
             arrow_used: false,
+            ins_start: Pos::default(),
             regs: Registers::new(),
             last_find: None,
             search: Default::default(),
@@ -554,10 +558,26 @@ impl Editor {
 
     /// The cursor's virtual column as Vim shows it in the current mode.
     pub fn cursor_vcol(&self) -> usize {
+        // Vim's getvvcol(): on a TAB the cursor is at the end of the TAB in
+        // Normal mode, but at its start in Visual mode when the cursor is not
+        // after the start of the area (LTOREQ_POS in Vim).
+        let visual_start = self.is_visual() && self.win().cursor <= self.win().vstart;
         text::cursor_vcol(
             self.buf().line(self.win().cursor.line),
             self.win().cursor.col,
-            matches!(self.mode, Mode::Insert | Mode::Replace),
+            matches!(self.mode, Mode::Insert | Mode::Replace) || visual_start,
+            self.eff().tabstop(),
+        )
+    }
+
+    /// The cursor's virtual column with the Normal-mode rule for a TAB, even
+    /// in Visual mode: Vim's `nv_visual()` reselects with it before the
+    /// area's start counts (`3v` after a delete on a TAB).
+    pub(crate) fn cursor_vcol_as_normal(&self) -> usize {
+        text::cursor_vcol(
+            self.buf().line(self.win().cursor.line),
+            self.win().cursor.col,
+            false,
             self.eff().tabstop(),
         )
     }
@@ -684,8 +704,22 @@ impl Editor {
                     *slot = saved;
                 }
             }
+            // Vim's u_undoredo() sets `'[` and `']` for each step, to the
+            // first line above the change and the last line it restored, at
+            // column 0 and within the text. The last step's marks are kept.
+            let count_before = self.buf().line_count();
             self.buf_mut().restore(&step.snap);
             self.buf_mut().modified = step.modified;
+            let lines_after = self.buf().line_count();
+            let start = (step.top + 1).min(count_before).min(lines_after);
+            let end = if newsize == 0 {
+                step.top + 1
+            } else {
+                step.top + newsize
+            }
+            .min(lines_after);
+            self.doc_mut().op_start = Some(Pos::new(start - 1, 0));
+            self.doc_mut().op_end = Some(Pos::new(end - 1, 0));
             self.win_mut().cursor = self.undo_cursor(&step);
             done += 1;
         }
@@ -798,6 +832,7 @@ impl Editor {
         self.ins_post = PostInsert::None;
         self.arrow_used = false;
         self.inserted_space = false;
+        self.ins_start = self.win().cursor;
         self.message = None;
     }
 
@@ -865,8 +900,10 @@ impl Editor {
                 Key::Char(_) | Key::Tab | Key::Enter | Key::Backspace | Key::Delete
             )
         {
-            // Vim's stop_arrow: "." now repeats only what is typed from here.
+            // Vim's stop_arrow: "." now repeats only what is typed from here,
+            // and the insert starts again at the cursor.
             self.arrow_used = false;
+            self.ins_start = self.win().cursor;
             if self.replaying_visual.is_none() {
                 let c = if self.mode == Mode::Replace { 'R' } else { 'i' };
                 self.redo_building = Some(Redo {
@@ -882,7 +919,14 @@ impl Editor {
             Key::Char(_) | Key::Tab => self.inserted_space = false,
             _ => {}
         }
-        if self.insert_edit(key) {
+        let edited = self.insert_edit(key);
+        // Backspacing over a line break before the start of the insert moves
+        // the start back to the join (Vim's ins_bs() does this for the line;
+        // on one line `'[` stays where the insert started).
+        if key == Key::Backspace && self.win().cursor.line < self.ins_start.line {
+            self.ins_start = self.win().cursor;
+        }
+        if edited {
             self.ins_keys.push(key);
             if let Some(r) = &mut self.redo_building {
                 r.keys.push(key);
@@ -1212,6 +1256,13 @@ impl Editor {
                 }
                 self.win_mut().cursor.col = len;
             }
+        }
+        // Vim's stop_insert(): `'[` is where the insert started and `']` is
+        // the cursor before it moves back. Not set when the arrow keys moved
+        // the cursor in the insert.
+        if !self.arrow_used {
+            self.doc_mut().op_start = Some(self.ins_start);
+            self.doc_mut().op_end = Some(self.win().cursor);
         }
         self.mode = Mode::Normal;
         if self.win().cursor.col > 0 {

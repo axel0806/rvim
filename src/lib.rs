@@ -13,6 +13,7 @@ pub mod expr;
 mod jumplist;
 pub mod key;
 mod macros;
+mod marks;
 pub mod motion;
 mod normal;
 mod ops;

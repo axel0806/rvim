@@ -7,7 +7,7 @@ a real Vim by the differential harness in `tests/common/mod.rs`.
 
 ## Status: read this first
 
-Last updated 2026-11-01 (milestone 7 step 2a: undo steps record their source, the disk state per document with a hash, `:checktime`, and the reload of an unmodified buffer as one undo step with cursor and scroll mapping; milestone 4 option scopes: `:setlocal` and `:setglobal`, buffer-local, window-local and global-local values, see "Options registry"; Document/Window/Editor split steps 1 to 3 of milestone 4 (ids, collections, accessors, version counter, marks, `buf_mut()`, window size); CI first ran on GitHub; Linux builds Vim 9.1.1914 from source, and all three OS jobs require Vim; cell-level diff redraw in `redraw.rs`, with its escape sequences tested in `main.rs`; kitty keyboard protocol, with `RVIM_NO_KITTY=1` to turn it off and no support query when `TERM` is unset, empty or `dumb`; SIGHUP/SIGTERM recovery on Unix, milestone 4; Makefile packaging targets `install` with `PREFIX`/`DESTDIR`, `uninstall` and `dist`). **rvim is an alpha, roughly 25-30% of this plan.**
+Last updated 2026-11-01 (the non-file marks: `'[` `']` `'<` `'>` `'"` as motions, operator targets and Ex addresses, `m[ m] m< m>`, the `'[`/`']` marks set by each command, `:marks` and `:delmarks`; milestone 7 step 2a: undo steps record their source, the disk state per document with a hash, `:checktime`, and the reload of an unmodified buffer as one undo step with cursor and scroll mapping; milestone 4 option scopes: `:setlocal` and `:setglobal`, buffer-local, window-local and global-local values, see "Options registry"; Document/Window/Editor split steps 1 to 3 of milestone 4 (ids, collections, accessors, version counter, marks, `buf_mut()`, window size); CI first ran on GitHub; Linux builds Vim 9.1.1914 from source, and all three OS jobs require Vim; cell-level diff redraw in `redraw.rs`, with its escape sequences tested in `main.rs`; kitty keyboard protocol, with `RVIM_NO_KITTY=1` to turn it off and no support query when `TERM` is unset, empty or `dumb`; SIGHUP/SIGTERM recovery on Unix, milestone 4; Makefile packaging targets `install` with `PREFIX`/`DESTDIR`, `uninstall` and `dist`). **rvim is an alpha, roughly 25-30% of this plan.**
 As of 2026-11-01 milestones 1-3 are done; 4 and 5 are partly done; 6 has the start menu only; 7 has its first step (file reload, 2a), 8-9 are plans.
 Released as `v0.1.0-alpha.1`, `v0.1.0-alpha.2` and `v0.1.0-alpha.3`. The next release is `v0.1.0-alpha.4`, not yet tagged. All tests pass against Vim 9.1 and clippy/fmt are
 clean at the last commit.
@@ -17,7 +17,7 @@ clean at the last commit.
 | 1 Core, 2 Vim grammar | Done |
 | 3 Search and Ex | 100%. `:s` `\=` expressions done as the subset in `src/expr.rs` (see Known differences) |
 | 4 Foundation | 100%. The Document/Window/Editor split: steps 1 to 3 done (one document and one window, with `DocId`/`WinId` collections and window size from the screen; see "Foundation"). Option scopes done: `:setlocal`, `:setglobal`, buffer-, window- and global-local values (see "Options registry"). Foundation is complete; the rest is milestone 5 (layout and splits, several documents and windows in use) |
-| 5 Windows and buffers | ~30%. Done: macros (`q`, `@`, `@@`, `@:`), lowercase marks (`m{a-z}`, `'a`, `` `a ``, `:k`, `:mark`, `'a` addresses), the jumplist (`<C-o>`, `<Tab>` with counts, `:jumps`) and the context mark (`''`, `` `` ``, `m'`, `` m` ``), scrolling (`<C-e> <C-y> <C-f> <C-b> <C-d> <C-u> zt zz zb z<CR> z. z- H M L`, counts, `scrolloff`, wrapped lines). Left: splits, buffer list, the other marks (uppercase, `'[`/`']`, `'<`/`'>` motions), swap files |
+| 5 Windows and buffers | ~30%. Done: macros (`q`, `@`, `@@`, `@:`), lowercase marks (`m{a-z}`, `'a`, `` `a ``, `:k`, `:mark`, `'a` addresses), the other marks (`'[` `']` `` `[ `] `` as motions, operator targets and Ex addresses, set by yank, delete, change, insert, put, shifts, `J`, `~` `g~` `gu` `gU`, `:s`, `:d`, `:m`, `:t`, `:pu`, undo and redo; `'<` `'>` and `'"`; `m[ m] m< m>`; `:marks`, `:delmarks`; `src/marks.rs`), the jumplist (`<C-o>`, `<Tab>` with counts, `:jumps`) and the context mark (`''`, `` `` ``, `m'`, `` m` ``), scrolling (`<C-e> <C-y> <C-f> <C-b> <C-d> <C-u> zt zz zb z<CR> z. z- H M L`, counts, `scrolloff`, wrapped lines). Left: splits, buffer list, uppercase (file) marks, swap files |
 | 6 Modern editing experience | Started, not near done. Landed: the start menu (opt-in `--start-menu`, `startmenu` option). Left: hlsearch, incsearch, syntax, line numbers, config file, palette, mouse, `:Start`, the start menu's recent files, Config and agent entries, and its modern-profile default (see "Start menu") |
 | 7 Agent integration | ~5%. Step 2a done (2026-11-01): undo steps record their source (`UndoSource`), the disk state per document (`DiskState`, FNV-1a hash, mtime and size, taken by `:e`, `:w` and `:checktime`), `:checktime` with W11, W12, W13 and E211, and a changed file reloaded when unmodified and `autoread` is on, as one undo step tagged `external` with the cursor and scroll mapped (`src/reload.rs`, `Editor::apply_external_change`). Left of step 2: the file watcher thread (2b) and echo suppression with it; the conflict prompt is step 3. Not started: the diff view, ACP connector, agent detection (research is in "Detecting and connecting to agents") |
 | 8 Prediction | 0%. Not started |
@@ -183,6 +183,7 @@ pattern, but the Vim contract still decides what happens without an opt-in.
 | `text.rs` | Display widths and virtual columns (every function takes the tabstop; `^X` control chars, wide chars) |
 | `motion.rs` | Positions and motions; word motions are ports of Vim's `fwd_word`/`bck_word`/`end_word` with its `inc`/`dec` cursor walk and `utf_class` table |
 | `editor.rs` | Mode state machine (Normal, Insert, Command-line), counts, desired column (`curswant`) |
+| `marks.rs` | The non-lowercase marks (`'[ ']` in `Document::op_start`/`op_end`, `'< '>` in `Document::last_visual`, `'"`), `:marks` and `:delmarks`; ports of Vim's `getmark`, `setmark_pos`, `clrallmarks`, `show_one_mark` and `ex_delmarks` in mark.c |
 | `jumplist.rs` | The jumplist and the context mark (ports of Vim's `setpcmark`, `checkpcmark`, `movemark`). Window state, so it moves to `Window` with the split; the buffer logs its line edits (`PosEdit`) and the editor applies them in order |
 | `ex.rs` | Ex commands: ranges (`%`, `.`, `$`, marks `'<` `'>` and `'a`, `/pat/`, `;`), file commands, `:k`/`:mark`, `:d :y :pu :m :t :j :> :<`, `:s` (port of `do_sub`; the `c` prompt keeps the loop state in `SubRun` between keys), `:g`/`:v` and command lines as queued `ExTask`s, `:normal`, `:set` |
 | `normal.rs`, `ops.rs`, `textobject.rs`, `register.rs`, `undo.rs` | Normal/Visual parsing and motions, operators, text objects, registers, undo tree |
@@ -259,8 +260,9 @@ What the revised milestones fix, as the code stands today:
    registry, (g) emergency recovery files. Details in "Foundation".
 5. **Windows and buffers.** (Macros `q`/`@`, lowercase marks, the jumplist, the
    context mark and scrolling are done: `<C-e> <C-y> <C-f> <C-b> <C-d> <C-u> zt
-   zz zb z<CR> z. z- H M L` with counts, 'scrolloff'.) Left: splits, buffer
-   list, the remaining marks (uppercase, `'[`/`']`, `'<`/`'>` as motions); then
+   zz zb z<CR> z. z- H M L` with counts, 'scrolloff'; the non-file marks
+   `'[ ']`, `'< '>`, `'"`, `m[ m] m< m>`, `:marks` and `:delmarks`, in
+   `marks.rs`.) Left: splits, buffer list, uppercase (file) marks; then
    swap files (see "Recovery"). Any jump command added later (`[[`, `]]`) must
    set the context mark.
 6. **Modern editing experience.** hlsearch, incsearch, matching parens,
@@ -1776,12 +1778,13 @@ Apache-2.0):
 | Regex (Vim's backtracking semantics) | `src/regex.rs` | Vim (conservative) |
 | Scrolling (`halfpage`, `nv_scroll` logic) | `src/scroll.rs` | Vim (conservative) |
 | Lowercase marks (`mark_adjust` model) | `src/buffer.rs` | Vim (conservative) |
+| Non-lowercase marks, `:marks`, `:delmarks` (mark.c) | `src/marks.rs` | Vim (conservative) |
 | Event loop, keys, options, macros, recovery, text widths, view, lib, main | `src/event.rs`, `src/key.rs`, `src/options.rs`, `src/macros.rs`, `src/recovery.rs`, `src/text.rs`, `src/view.rs`, `src/lib.rs`, `src/main.rs` | Apache-2.0 |
 | Tests (rvim's own differential cases and harness) | `tests/*.rs`, `tests/common/mod.rs`, `tests/license_headers.rs` | Apache-2.0 |
 | Example | `examples/try.rs` | Apache-2.0 |
 
 "Conservative" means the file's comments name a Vim function or model but the
-owner has not checked it line by line against Vim's source. These seven files
+owner has not checked it line by line against Vim's source. These eight files
 need owner review, and they stay Vim until it is done. Their status is not an
 assertion that each line is a copy of Vim's code.
 
@@ -2152,10 +2155,24 @@ plan, kept for the record; the files are the source of truth.
   checked against Vim.
 - `[[ ]]` are not in rvim yet. When they land they must call `set_pcmark()`
   when they move, as `G` and `%` do. `H M L` already do (scrolling landed).
-- Marks: only lowercase marks exist. Missing: `mA`-`mZ` (file marks),
-  `m[ m] m< m>`, `'[ ']` and `` `[ `] `` as motions, `'<` and `'>` as
-  Normal-mode motions, `:marks` and `:delmarks`. The
-  Visual marks stay in `Document::last_visual` and do not follow edits.
+- Marks: uppercase marks `mA`-`mZ` (file marks) do not exist yet; they need
+  several buffers. `'.` and `'^` (the last change and the last insert) do not
+  exist either, so `:marks` does not list them (Vim lists them, and `0`-`9`
+  and `A`-`Z` from viminfo). `:marks` prints one message line: the rows of
+  Vim's table (`' a " [ ] < >`, in Vim's format) separated by ` | `, not one
+  row per line. `:delmarks` treats `<` and `>` as one Visual area (deleting
+  either drops both), and `m<`/`m>` with no area yet set both ends to the
+  cursor, where Vim leaves the other end unset. `'"` is always line 1, column
+  0, since rvim has one buffer. The Visual area does not follow line edits
+  (Vim moves its ends with `mark_adjust()`; the ignored test
+  `visual_marks_after_a_line_edit` in `compat_marks2.rs` shows it). After
+  `<C-r>` of a linewise `p`, `']` is one line short of Vim's (the ignored
+  test `redo_of_a_linewise_put_sets_end_mark`). The undo tree keeps one
+  changed region per change, so `'[`/`']` after undoing a change made in
+  several places (`:g`, `:s` on lines that are not next to each other) may
+  differ from Vim's per-entry marks; this is not checked. The marks after
+  `r`, `s`, `D`, `C`, block `I`/`A`, Visual `p` and `<C-a>`/`<C-x>` are not
+  in the differential cases.
 - Marks have no column adjustment for single-line edits, as in Vim (`x`, `D`,
   `r`, insert-mode typing do not move them). Joins (`J`, `gJ`, `:j`, `<BS>`
   and `<Del>` at a line end) and `:s` with a line break in the pattern keep

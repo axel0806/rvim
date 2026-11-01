@@ -180,6 +180,18 @@ impl Buffer {
         }
     }
 
+    /// Unsets lowercase mark `c` (`:delmarks`).
+    pub(crate) fn set_mark_unset(&mut self, c: char) {
+        if let Some(i) = mark_index(c) {
+            self.marks[i] = None;
+        }
+    }
+
+    /// Unsets all lowercase marks (`:delmarks!`).
+    pub(crate) fn clear_marks(&mut self) {
+        self.marks = [None; 26];
+    }
+
     /// Vim's `mark_adjust()` for the lowercase marks: lines `first..first +
     /// old` were replaced by `new` lines. Marks on the replaced lines are
     /// deleted, marks below them move by the difference, marks above stay.
