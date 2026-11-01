@@ -1923,6 +1923,15 @@ plan, kept for the record; the files are the source of truth.
   width. Error numbers of the cases that were not probed in Vim (unknown
   `str2nr()` base, `printf()` odd conversions) are not checked. Errors inside
   built-in functions give Vim's default value (0, "" or []) and go on.
+  Limits, which Vim does not have in this form: nesting of expressions is 100
+  levels and also 512 KB of parser stack (`MAX_DEPTH`, `STACK_LIMIT`; Vim
+  accepts 200 and fails at 1000 with E1169, which rvim also reports); a list,
+  a range, or a split above 1,000,000 items, and a string above 64 MiB (from
+  `repeat()`, `join()`, `.`, `substitute()`), give E342 "Out of memory!" and
+  the match is replaced by nothing (Vim may return "" for some of these instead, for
+  example `repeat('x', 9223372036854775807)`); a `printf()` width above
+  1,000,000 gives E1510. The `c` flag with `\=` evaluates the expression when
+  the match is answered, as the plain replacement is asked about.
 - The `\n` (NUL) replacement is not implemented. `:p`, `:nu`, `:=` only set a
   message.
 - The `c` flag of `:s` (`ex.rs`, `SubRun`): `<C-e>` and `<C-y>` only ask

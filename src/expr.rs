@@ -10,12 +10,33 @@
 //! reported in the list returned with the value, and the function returns a
 //! default value (0, "" or []); the evaluation goes on.
 //!
+//! Limits, so that typed input cannot exhaust the stack or the memory: the
+//! nesting of expressions ([`MAX_DEPTH`], E1169 as in Vim), the number of
+//! items of a list or range ([`MAX_ITEMS`]), the size of a built string
+//! ([`MAX_BYTES`]) and the width of a `printf()` field ([`MAX_WIDTH`]). Going
+//! over one is an error (E342 or E1510).
+//!
 //! Not supported: floats, dictionaries, funcrefs, lambdas, `v:`/`g:` and other
 //! scoped variables, user functions and Vim9 syntax. Strings are byte-indexed
 //! as in Vim; a cut inside a multi-byte character gives U+FFFD.
 
 use crate::regex::{Lines, Match, Opts, Regex};
 use std::cmp::Ordering;
+
+/// Nesting of expressions (parentheses, lists, arguments). Vim accepts 200
+/// levels and fails at 1000. Here the count is 100, and the stack used by
+/// the parser is limited to [`STACK_LIMIT`] as well: one level of nesting
+/// takes many kilobytes in a debug build.
+pub const MAX_DEPTH: usize = 100;
+/// Stack bytes the parser may use, measured from the start of `eval()`. It
+/// leaves most of a 1 MB stack to the editor.
+pub const STACK_LIMIT: usize = 512 << 10;
+/// Items of a list, of a range or of a split. Above it the result is E342.
+pub const MAX_ITEMS: usize = 1_000_000;
+/// Bytes of a string built by repeat(), join(), `.` or substitute().
+pub const MAX_BYTES: usize = 64 << 20;
+/// Width of a printf() field.
+pub const MAX_WIDTH: usize = 1_000_000;
 
 /// A value of the expression language.
 #[derive(Clone, Debug, PartialEq)]
@@ -51,8 +72,20 @@ pub struct ExprError {
 
 type R<T> = Result<T, ExprError>;
 
+/// A failure inside a helper: a regex error, which the function reports and
+/// answers with its default value, or a size limit, which fails the expression.
+enum Fail {
+    Regex(String),
+    Limit,
+}
+
 fn err<T>(msg: impl Into<String>) -> R<T> {
     Err(ExprError { msg: msg.into() })
+}
+
+/// Vim's message when a result would need too much memory.
+fn too_big<T>() -> R<T> {
+    err("E342: Out of memory!")
 }
 
 fn syntax_error(src: &str) -> ExprError {
@@ -71,12 +104,15 @@ fn soft(errs: &mut Vec<String>, msg: impl Into<String>, default: Value) -> R<Val
 /// of errors inside built-in functions, which did not stop the evaluation.
 pub fn eval(src: &str, env: &Env) -> R<(Value, Vec<String>)> {
     let toks = lex(src)?;
+    let marker = 0u8;
     let mut p = Parser {
         src,
         toks,
         i: 0,
         env,
         errs: Vec::new(),
+        depth: 0,
+        stack_base: stack_address(&marker),
     };
     let v = p.expr1(true)?;
     if !matches!(p.tok(), Tok::End) {
@@ -101,6 +137,9 @@ pub fn eval_text(src: &str, env: &Env) -> R<(String, Vec<String>)> {
         }
         v => item_text(&v),
     };
+    if text.len() > MAX_BYTES {
+        return too_big();
+    }
     Ok((text, errs))
 }
 
@@ -322,6 +361,15 @@ struct Parser<'a> {
     env: &'a Env,
     /// Messages of errors in built-in functions.
     errs: Vec<String>,
+    /// Levels of nesting of `expr1()` now active.
+    depth: usize,
+    /// Address of a local in `eval()`: the stack used is measured from it.
+    stack_base: usize,
+}
+
+/// The address of `marker`, as a number (a local of the caller).
+fn stack_address(marker: &u8) -> usize {
+    marker as *const u8 as usize
 }
 
 /// A comparison: the relation.
@@ -398,8 +446,25 @@ impl Parser<'_> {
         }
     }
 
-    /// `a ? b : c`
+    /// One level of nesting: every parenthesis, list and argument comes
+    /// through here, so the depth is counted here.
     fn expr1(&mut self, ev: bool) -> R<Value> {
+        let marker = 0u8;
+        let stack_used = stack_address(&marker).abs_diff(self.stack_base);
+        if self.depth >= MAX_DEPTH || stack_used > STACK_LIMIT {
+            return err(format!(
+                "E1169: Expression too recursive: {}",
+                &self.src[self.pos()..]
+            ));
+        }
+        self.depth += 1;
+        let v = self.ternary(ev);
+        self.depth -= 1;
+        v
+    }
+
+    /// `a ? b : c`
+    fn ternary(&mut self, ev: bool) -> R<Value> {
         let cond = self.expr2(ev)?;
         if !self.is_op("?") {
             return Ok(cond);
@@ -503,7 +568,7 @@ impl Parser<'_> {
         Ok(left)
     }
 
-    /// Prefix `!`, `-` and `+`.
+    /// Prefix `!`, `-` and `+`. A chain of them is a loop, not recursion.
     fn expr7(&mut self, ev: bool) -> R<Value> {
         let mut ops = Vec::new();
         while let Some(op) = self.op()
@@ -732,7 +797,13 @@ fn divide(x: i64, y: i64) -> i64 {
 
 fn arith(op: &str, a: &Value, b: &Value) -> R<Value> {
     match op {
-        "." | ".." => Ok(Value::Str(to_str(a)? + &to_str(b)?)),
+        "." | ".." => {
+            let s = to_str(a)? + &to_str(b)?;
+            if s.len() > MAX_BYTES {
+                return too_big();
+            }
+            Ok(Value::Str(s))
+        }
         _ => {
             let (x, y) = (to_num(a)?, to_num(b)?);
             Ok(Value::Num(match op {
@@ -767,7 +838,7 @@ fn index(v: &Value, i: &Value) -> R<Value> {
         Value::List(items) => {
             let n = to_num(i)?;
             let len = items.len() as i64;
-            let at = if n < 0 { n + len } else { n };
+            let at = if n < 0 { n.saturating_add(len) } else { n };
             if at < 0 || at >= len {
                 return err(format!("E684: List index out of range: {n}"));
             }
@@ -803,8 +874,8 @@ fn slice(v: &Value, lo: Option<&Value>, hi: Option<&Value>) -> R<Value> {
         Some(x) => to_num(x)?,
         None => len - 1,
     };
-    let a = (if lo < 0 { lo + len } else { lo }).max(0);
-    let b = (if hi < 0 { hi + len } else { hi }).min(len - 1);
+    let a = (if lo < 0 { lo.saturating_add(len) } else { lo }).max(0);
+    let b = (if hi < 0 { hi.saturating_add(len) } else { hi }).min(len - 1);
     Ok(match v {
         Value::List(items) => Value::List(if a > b {
             Vec::new()
@@ -861,14 +932,8 @@ fn regex_matches(s: &str, pat: &str, ic: bool) -> Result<bool, String> {
 /// `substitute()`: the replacement expands `&`, `\&`, `\0` to `\9` and
 /// `\t`, `\n`, `\r`, `\\`. The case escapes (`\u`, `\U` and so on) and `~`
 /// are not supported here.
-fn substitute_text(
-    s: &str,
-    pat: &str,
-    rep: &str,
-    global: bool,
-    ic: bool,
-) -> Result<String, String> {
-    let re = compile(pat, ic)?;
+fn substitute_text(s: &str, pat: &str, rep: &str, global: bool, ic: bool) -> Result<String, Fail> {
+    let re = compile(pat, ic).map_err(Fail::Regex)?;
     let chars: Vec<char> = s.chars().collect();
     let text = Text(chars.clone());
     let mut out = String::new();
@@ -881,6 +946,9 @@ fn substitute_text(
         let (ms, me) = (m.start.1, m.end.1);
         out.extend(&chars[copy.min(ms)..ms]);
         out.push_str(&expand_sub(rep, &m, &chars));
+        if out.len() > MAX_BYTES {
+            return Err(Fail::Limit);
+        }
         copy = me;
         if !global {
             break;
@@ -888,6 +956,9 @@ fn substitute_text(
         col = if me == ms { me + 1 } else { me };
     }
     out.extend(&chars[copy.min(chars.len())..]);
+    if out.len() > MAX_BYTES {
+        return Err(Fail::Limit);
+    }
     Ok(out)
 }
 
@@ -935,10 +1006,22 @@ fn expand_sub(rep: &str, m: &Match, chars: &[char]) -> String {
     out
 }
 
+/// `split()` on white space: runs of spaces and tabs separate the items.
+fn split_white(s: &str) -> Result<Vec<String>, Fail> {
+    let mut items = Vec::new();
+    for w in s.split([' ', '\t']).filter(|w| !w.is_empty()) {
+        if items.len() >= MAX_ITEMS {
+            return Err(Fail::Limit);
+        }
+        items.push(w.to_string());
+    }
+    Ok(items)
+}
+
 /// `split()` with a pattern. Empty items are dropped at the start and at the
 /// end (unless `keep`); a match of nothing does not split.
-fn split_pattern(s: &str, pat: &str, ic: bool, keep: bool) -> Result<Vec<String>, String> {
-    let re = compile(pat, ic)?;
+fn split_pattern(s: &str, pat: &str, ic: bool, keep: bool) -> Result<Vec<String>, Fail> {
+    let re = compile(pat, ic).map_err(Fail::Regex)?;
     let chars: Vec<char> = s.chars().collect();
     let text = Text(chars.clone());
     let mut items = Vec::new();
@@ -951,6 +1034,9 @@ fn split_pattern(s: &str, pat: &str, ic: bool, keep: bool) -> Result<Vec<String>
         if me == ms {
             col = ms + 1;
             continue;
+        }
+        if items.len() >= MAX_ITEMS {
+            return Err(Fail::Limit);
         }
         items.push(chars[start..ms].iter().collect::<String>());
         start = me;
@@ -1031,6 +1117,10 @@ fn call(name: &str, args: &[Value], env: &Env, errs: &mut Vec<String>) -> R<Valu
                 None => " ".to_string(),
             };
             let parts: Vec<String> = items.iter().map(to_str).collect::<R<_>>()?;
+            let total: usize = parts.iter().map(|p| p.len() + sep.len()).sum();
+            if total > MAX_BYTES {
+                return too_big();
+            }
             Ok(Value::Str(parts.join(sep.as_str())))
         }
         "len" => Ok(Value::Num(match &args[0] {
@@ -1068,18 +1158,32 @@ fn call(name: &str, args: &[Value], env: &Env, errs: &mut Vec<String>) -> R<Valu
         }
         "printf" => printf(args, errs),
         "range" => range(args, errs),
-        "repeat" => match &args[0] {
-            Value::List(items) => {
-                let n = to_num(&args[1])?.max(0) as usize;
-                Ok(Value::List(
-                    (0..n).flat_map(|_| items.iter().cloned()).collect(),
-                ))
+        "repeat" => {
+            let n = to_num(&args[1])?.max(0) as usize;
+            match &args[0] {
+                Value::List(items) => {
+                    if items.is_empty() || n == 0 {
+                        return Ok(Value::List(Vec::new()));
+                    }
+                    if items.len().saturating_mul(n) > MAX_ITEMS {
+                        return too_big();
+                    }
+                    Ok(Value::List(
+                        (0..n).flat_map(|_| items.iter().cloned()).collect(),
+                    ))
+                }
+                v => {
+                    let s = to_str(v)?;
+                    if s.is_empty() || n == 0 {
+                        return Ok(Value::Str(String::new()));
+                    }
+                    if s.len().saturating_mul(n) > MAX_BYTES {
+                        return too_big();
+                    }
+                    Ok(Value::Str(s.repeat(n)))
+                }
             }
-            v => {
-                let n = to_num(&args[1])?.max(0) as usize;
-                Ok(Value::Str(to_str(v)?.repeat(n)))
-            }
-        },
+        }
         "reverse" => match &args[0] {
             Value::List(items) => Ok(Value::List(items.iter().rev().cloned().collect())),
             Value::Str(s) => Ok(Value::Str(s.chars().rev().collect())),
@@ -1096,16 +1200,13 @@ fn call(name: &str, args: &[Value], env: &Env, errs: &mut Vec<String>) -> R<Valu
                 None => false,
             };
             let found = match args.get(1) {
-                None => Ok(s
-                    .split([' ', '\t'])
-                    .filter(|w| !w.is_empty())
-                    .map(String::from)
-                    .collect()),
+                None => split_white(&s),
                 Some(p) => split_pattern(&s, &to_str(p)?, env.ignorecase, keep),
             };
             match found {
                 Ok(items) => Ok(Value::List(items.into_iter().map(Value::Str).collect())),
-                Err(msg) => soft(errs, msg, Value::List(Vec::new())),
+                Err(Fail::Regex(msg)) => soft(errs, msg, Value::List(Vec::new())),
+                Err(Fail::Limit) => too_big(),
             }
         }
         "str2nr" => {
@@ -1153,7 +1254,7 @@ fn call(name: &str, args: &[Value], env: &Env, errs: &mut Vec<String>) -> R<Valu
                 None => b.len() as i64,
             };
             if start < 0 {
-                len += start;
+                len = len.saturating_add(start);
                 start = 0;
             }
             if len <= 0 || start >= b.len() as i64 {
@@ -1180,7 +1281,8 @@ fn call(name: &str, args: &[Value], env: &Env, errs: &mut Vec<String>) -> R<Valu
             let flags = to_str(&args[3])?;
             match substitute_text(&s, &pat, &rep, flags.contains('g'), env.ignorecase) {
                 Ok(text) => Ok(Value::Str(text)),
-                Err(msg) => soft(errs, msg, Value::Str(String::new())),
+                Err(Fail::Regex(msg)) => soft(errs, msg, Value::Str(String::new())),
+                Err(Fail::Limit) => too_big(),
             }
         }
         "tolower" | "toupper" => {
@@ -1217,26 +1319,37 @@ fn one_char_case(c: char, upper: bool) -> char {
     if it.len() == 1 { it.remove(0) } else { c }
 }
 
-/// `range(end)`, `range(start, end)` or `range(start, end, step)`.
+/// `range(end)`, `range(start, end)` or `range(start, end, step)`. The
+/// arithmetic is done in 128 bits, so no argument can overflow.
 fn range(args: &[Value], errs: &mut Vec<String>) -> R<Value> {
-    let (start, end, step) = match args.len() {
-        1 => (0, to_num(&args[0])? - 1, 1),
-        2 => (to_num(&args[0])?, to_num(&args[1])?, 1),
-        _ => (to_num(&args[0])?, to_num(&args[1])?, to_num(&args[2])?),
+    let (start, end, step): (i128, i128, i128) = match args.len() {
+        1 => (0, to_num(&args[0])? as i128 - 1, 1),
+        2 => (to_num(&args[0])? as i128, to_num(&args[1])? as i128, 1),
+        _ => (
+            to_num(&args[0])? as i128,
+            to_num(&args[1])? as i128,
+            to_num(&args[2])? as i128,
+        ),
     };
     if step == 0 {
         return soft(errs, "E726: Stride is zero", Value::List(Vec::new()));
     }
-    if (step > 0 && end.saturating_add(1) < start) || (step < 0 && end.saturating_sub(1) > start) {
+    if (step > 0 && end + 1 < start) || (step < 0 && end - 1 > start) {
         return soft(errs, "E727: Start past end", Value::List(Vec::new()));
     }
-    let mut out = Vec::new();
-    let mut i = start;
-    while (step > 0 && i <= end) || (step < 0 && i >= end) {
-        out.push(Value::Num(i));
-        i = i.wrapping_add(step);
+    let count = if (step > 0 && start <= end) || (step < 0 && start >= end) {
+        (end - start) / step + 1
+    } else {
+        0
+    };
+    if count > MAX_ITEMS as i128 {
+        return too_big();
     }
-    Ok(Value::List(out))
+    Ok(Value::List(
+        (0..count)
+            .map(|k| Value::Num((start + k * step) as i64))
+            .collect(),
+    ))
 }
 
 /// `printf()` with `%d`, `%x`, `%X`, `%s` and `%%`, with the flags `-` and `0`
@@ -1263,10 +1376,15 @@ fn printf(args: &[Value], errs: &mut Vec<String>) -> R<Value> {
             }
             i += 1;
         }
+        let digits_at = i;
         let mut width = 0usize;
         while let Some(d) = fmt.get(i).and_then(|c| c.to_digit(10)) {
-            width = width * 10 + d as usize;
+            width = width.saturating_mul(10).saturating_add(d as usize);
             i += 1;
+        }
+        if width > MAX_WIDTH {
+            let digits: String = fmt[digits_at..i].iter().collect();
+            return err(format!("E1510: Value too large: {digits}"));
         }
         let Some(&conv) = fmt.get(i) else {
             return err("E15: Invalid format string");
@@ -1311,6 +1429,9 @@ fn printf(args: &[Value], errs: &mut Vec<String>) -> R<Value> {
             out.push_str(sign);
             out.push_str(&body);
         }
+        if out.len() > MAX_BYTES {
+            return too_big();
+        }
     }
     if next < args.len() {
         return soft(
@@ -1331,6 +1452,21 @@ mod tests {
             Ok((Value::Num(n), errs)) if errs.is_empty() => n,
             other => panic!("{src}: {other:?}"),
         }
+    }
+
+    /// Runs `f` on a thread with a 1 MB stack, the size of the main thread's
+    /// stack in the editor, so that stack use is checked in a debug build.
+    fn on_small_stack(f: impl FnOnce() + Send + 'static) {
+        std::thread::Builder::new()
+            .stack_size(1 << 20)
+            .spawn(f)
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    fn fails_with(src: &str, prefix: &str) -> bool {
+        matches!(eval(src, &Env::default()), Err(e) if e.msg.starts_with(prefix))
     }
 
     #[test]
@@ -1356,5 +1492,95 @@ mod tests {
         let (v, errs) = eval("range(2,0)", &Env::default()).unwrap();
         assert_eq!(v, Value::List(Vec::new()));
         assert_eq!(errs, ["E727: Start past end"]);
+    }
+
+    #[test]
+    fn nesting_is_limited_and_fits_a_small_stack() {
+        on_small_stack(|| {
+            let ok = format!("{}1{}", "(".repeat(10), ")".repeat(10));
+            assert_eq!(num(&ok), 1);
+            let deep = format!("{}1{}", "(".repeat(10_000), ")".repeat(10_000));
+            assert!(fails_with(&deep, "E1169"));
+            let lists = format!("{}{}", "[".repeat(10_000), "]".repeat(10_000));
+            assert!(fails_with(&lists, "E1169"));
+            let calls = format!("{}''{}", "strlen(".repeat(10_000), ")".repeat(10_000));
+            assert!(fails_with(&calls, "E1169"));
+            let negs = format!("{}1{}", "-(".repeat(10_000), ")".repeat(10_000));
+            assert!(fails_with(&negs, "E1169"));
+            // Chains of prefix operators are loops, not recursion.
+            assert_eq!(num(&format!("{}1", "!".repeat(100_000))), 1);
+            assert_eq!(num(&format!("{}1", "-".repeat(100_000))), 1);
+        });
+    }
+
+    #[test]
+    fn printf_width_is_checked() {
+        assert!(fails_with("printf('%99999999999999999999d', 1)", "E1510"));
+        assert!(fails_with("printf('%1000001d', 1)", "E1510"));
+        assert_eq!(
+            eval("len(printf('%20000d', 1))", &Env::default())
+                .unwrap()
+                .0,
+            Value::Num(20000)
+        );
+    }
+
+    #[test]
+    fn ranges_and_repeats_are_limited() {
+        // The extremes of the integer arguments: no overflow, no hang.
+        let (v, errs) = eval("range(-9223372036854775807-1)", &Env::default()).unwrap();
+        assert_eq!(v, Value::List(Vec::new()));
+        assert_eq!(errs, ["E727: Start past end"]);
+        assert!(fails_with("range(0, 9223372036854775807)", "E342"));
+        assert!(fails_with("range(1000000000)", "E342"));
+        assert_eq!(num("len(range(0, 3))"), 4);
+        assert!(fails_with("repeat('x', 9223372036854775807)", "E342"));
+        assert!(fails_with("repeat(['a'], 1000000000)", "E342"));
+        assert_eq!(
+            eval("repeat('', 9223372036854775807)", &Env::default())
+                .unwrap()
+                .0,
+            Value::Str(String::new())
+        );
+        assert_eq!(
+            eval("repeat([], 9223372036854775807)", &Env::default())
+                .unwrap()
+                .0,
+            Value::List(Vec::new())
+        );
+        // Each repeat is under the limit, the concatenation is over it.
+        assert!(fails_with(
+            "repeat('x', 33554433) . repeat('x', 33554433)",
+            "E342"
+        ));
+        assert_eq!(
+            eval("strpart('x', -5, -9223372036854775807)", &Env::default())
+                .unwrap()
+                .0,
+            Value::Str(String::new())
+        );
+        assert_eq!(num("len(join(repeat(['ab'], 100000), ','))"), 299_999);
+    }
+
+    #[test]
+    fn long_values_do_not_panic() {
+        on_small_stack(|| {
+            assert!(fails_with("[1][-9223372036854775807-1]", "E684"));
+            assert_eq!(
+                eval("[1,2,3][-9223372036854775807-1:]", &Env::default())
+                    .unwrap()
+                    .0,
+                Value::List(vec![Value::Num(1), Value::Num(2), Value::Num(3)])
+            );
+            assert_eq!(
+                eval(
+                    "'abc'[-9223372036854775807-1:-9223372036854775807-1]",
+                    &Env::default()
+                )
+                .unwrap()
+                .0,
+                Value::Str(String::new())
+            );
+        });
     }
 }

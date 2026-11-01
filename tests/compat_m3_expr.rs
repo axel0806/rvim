@@ -277,6 +277,38 @@ fn texts_and_flags_combined() {
 }
 
 #[test]
+fn limits_and_extreme_arguments() {
+    // Vim accepts 200 levels of nesting and fails at 1000 (E1169, empty
+    // result). rvim fails from 100 levels on, so only 10 and 1000 are compared.
+    let parens = |n: usize| format!("{}1{}", "(".repeat(n), ")".repeat(n));
+    let sub = |expr: &str| format!(":s@x@\\={expr}@<CR>");
+    let p10 = sub(&parens(10));
+    let p1000 = sub(&parens(1000));
+    check(&[
+        ("x", p10.as_str()),
+        ("x", p1000.as_str()),
+        ("x", r#":s@x@\=range(-9223372036854775807-1)@<CR>"#),
+        ("x", r#":s@x@\=strpart('x', -5, -9223372036854775807)@<CR>"#),
+        ("x", r#":s@x@\=repeat('x', 9223372036854775807)@<CR>"#),
+        ("x", r#":s@x@\=len(printf('%20000d', 1))@<CR>"#),
+        ("x", r#":s@x@\=len(join(repeat(['ab'], 100000), ','))@<CR>"#),
+        ("x", r#":s@x@\=printf('%d', -9223372036854775807-1)@<CR>"#),
+    ]);
+}
+
+#[test]
+fn confirm_evaluates_per_answered_match() {
+    // One answer per case: in Vim's silent mode, the answers typed after the
+    // first one are dropped (the same for a plain replacement).
+    check(&[
+        ("x\nx\nx", r#":%s@x@\=line('.')@c<CR>a"#),
+        ("x\nx\nx", r#":%s@x@\=line('.')@c<CR>y"#),
+        ("x x x", r#":s@x@\=col('.')@gc<CR>a"#),
+        ("x x x", r#":s@x@\=col('.')@gc<CR>y"#),
+    ]);
+}
+
+#[test]
 fn replacement_with_other_commands() {
     check(&[
         // A `~` in the expression is not the previous replacement.
