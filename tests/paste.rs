@@ -5,7 +5,7 @@
 use rvim::Editor;
 
 fn text(ed: &Editor) -> String {
-    ed.buf.text()
+    ed.buf().text()
 }
 
 #[test]

@@ -5,6 +5,7 @@
 pub mod buffer;
 pub mod cli;
 mod cmdline;
+pub(crate) mod document;
 pub mod editor;
 pub mod event;
 pub(crate) mod ex;

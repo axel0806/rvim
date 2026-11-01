@@ -117,7 +117,7 @@ fn enable_kitty_keys() {
 /// Writes to stderr are ignored on failure: the terminal may be gone.
 fn save_recovery(ed: &Editor, why: &str) {
     let mut stderr = io::stderr();
-    for result in rvim::recovery::write_modified(&[&ed.buf], &rvim::recovery::recovery_dir()) {
+    for result in rvim::recovery::write_modified(&[&ed.buf()], &rvim::recovery::recovery_dir()) {
         let _ = match result {
             Ok(saved) => {
                 if let Some(dir) = &saved.refused_dir {

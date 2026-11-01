@@ -852,7 +852,7 @@ impl Editor {
     pub(crate) fn coladvance(&mut self, want: usize) {
         let allow_end = matches!(self.mode, Mode::Insert | Mode::Replace | Mode::Visual(_));
         self.cursor.col = text::col_for_vcol(
-            self.buf.line(self.cursor.line),
+            self.doc.buf.line(self.cursor.line),
             want,
             allow_end,
             self.opts.tabstop(),
@@ -860,17 +860,17 @@ impl Editor {
     }
 
     fn fnb(&mut self) {
-        self.cursor.col = first_non_blank(&self.buf, self.cursor.line, true);
+        self.cursor.col = first_non_blank(&self.doc.buf, self.cursor.line, true);
     }
 
     pub(crate) fn cursor_down_n(&mut self, n: usize) -> bool {
         if n == 0 {
             return true;
         }
-        if self.cursor.line >= self.buf.last_line() {
+        if self.cursor.line >= self.doc.buf.last_line() {
             return false;
         }
-        self.cursor.line = (self.cursor.line + n).min(self.buf.last_line());
+        self.cursor.line = (self.cursor.line + n).min(self.doc.buf.last_line());
         true
     }
 
@@ -888,7 +888,7 @@ impl Editor {
     /// Applies the line edits made since the last call to the jumplist and
     /// the context mark (see `PosEdit`).
     pub(crate) fn sync_jumps(&mut self) {
-        for edit in self.buf.take_pos_edits() {
+        for edit in self.doc.buf.take_pos_edits() {
             self.jumps.apply(&edit);
         }
     }
@@ -917,7 +917,7 @@ impl Editor {
             self.beep();
             return;
         };
-        if p.line >= self.buf.line_count() {
+        if p.line >= self.doc.buf.line_count() {
             self.keep_curswant = true;
             self.error("E19: Mark has invalid line number");
             return;
@@ -945,9 +945,9 @@ impl Editor {
                             self.cursor.line -= 1;
                             self.coladvance(usize::MAX);
                             if matches!(op, Some(Op::Delete | Op::Change))
-                                && self.buf.line_len(self.cursor.line) > 0
+                                && self.doc.buf.line_len(self.cursor.line) > 0
                             {
-                                if gchar(&self.buf, self.cursor).is_some() {
+                                if gchar(&self.doc.buf, self.cursor).is_some() {
                                     self.cursor.col += 1;
                                 }
                                 info.no_adj = true;
@@ -968,14 +968,14 @@ impl Editor {
             Motion::Right { space } => {
                 let mut n = count1;
                 while n > 0 {
-                    let len = self.buf.line_len(self.cursor.line);
+                    let len = self.doc.buf.line_len(self.cursor.line);
                     let fail = if visual {
                         self.cursor.col >= len
                     } else {
                         self.cursor.col + 1 >= len
                     };
                     if fail {
-                        if space && self.cursor.line < self.buf.last_line() {
+                        if space && self.cursor.line < self.doc.buf.last_line() {
                             if op.is_some() && !info.inclusive && len > 0 {
                                 info.inclusive = true;
                             } else {
@@ -1049,7 +1049,7 @@ impl Editor {
                     return None;
                 }
                 self.coladvance(usize::MAX);
-                let line = self.buf.line(self.cursor.line);
+                let line = self.doc.buf.line(self.cursor.line);
                 let len = line.len_chars();
                 if self.cursor.col > 0 && self.cursor.col >= len {
                     self.cursor.col -= 1;
@@ -1073,9 +1073,9 @@ impl Editor {
                 let line = match count0 {
                     Some(c) => c.saturating_sub(1),
                     None if first => 0,
-                    None => self.buf.last_line(),
+                    None => self.doc.buf.last_line(),
                 };
-                self.cursor.line = line.min(self.buf.last_line());
+                self.cursor.line = line.min(self.doc.buf.last_line());
                 self.fnb();
             }
             Motion::Percent => {
@@ -1086,13 +1086,13 @@ impl Editor {
                     }
                     info.linewise = true;
                     self.set_pcmark();
-                    let n = self.buf.line_count();
+                    let n = self.doc.buf.line_count();
                     let line = (n * c).div_ceil(100).clamp(1, n);
                     self.cursor.line = line - 1;
                     self.fnb();
                 } else {
                     info.use_reg_one = true;
-                    let r = findmatchlimit(&self.buf, self.cursor, None, None, false)?;
+                    let r = findmatchlimit(&self.doc.buf, self.cursor, None, None, false)?;
                     self.set_pcmark();
                     self.cursor = r.pos;
                     info.linewise = r.linewise;
@@ -1100,14 +1100,14 @@ impl Editor {
             }
             Motion::Para { fwd } => {
                 info.use_reg_one = true;
-                let (p, incl) = findpar(&self.buf, self.cursor, fwd, count1, '\0', false)?;
+                let (p, incl) = findpar(&self.doc.buf, self.cursor, fwd, count1, '\0', false)?;
                 self.set_pcmark();
                 self.cursor = p;
                 info.inclusive = incl;
             }
             Motion::Sent { fwd } => {
                 info.use_reg_one = true;
-                let p = findsent(&self.buf, self.cursor, fwd, count1)?;
+                let p = findsent(&self.doc.buf, self.cursor, fwd, count1)?;
                 self.set_pcmark();
                 self.cursor = p;
                 self.adjust_cursor(&mut info);
@@ -1115,14 +1115,14 @@ impl Editor {
             Motion::Find { c, fwd, till } => {
                 self.last_find = Some((c, fwd, till));
                 info.inclusive = fwd;
-                self.cursor.col = searchc(&self.buf, self.cursor, c, fwd, till, count1, true)?;
+                self.cursor.col = searchc(&self.doc.buf, self.cursor, c, fwd, till, count1, true)?;
             }
             Motion::Mark { mark, linewise } => {
                 let target = if matches!(mark, '\'' | '`') {
                     self.sync_jumps();
                     self.jumps.pcmark()
                 } else {
-                    self.buf.mark(mark)
+                    self.doc.buf.mark(mark)
                 };
                 let Some(p) = target else {
                     self.error("E20: Mark not set");
@@ -1135,14 +1135,14 @@ impl Editor {
                 // command, an operator may take the end of the line.
                 if linewise {
                     info.linewise = true;
-                    self.cursor.line = p.line.min(self.buf.last_line());
+                    self.cursor.line = p.line.min(self.doc.buf.last_line());
                     self.fnb();
                 } else {
                     // Like Vim's nv_cursormark(): a backtick motion also
                     // uses register 1 when it deletes.
                     info.use_reg_one = true;
-                    let line = p.line.min(self.buf.last_line());
-                    self.cursor = Pos::new(line, p.col.min(self.buf.line_len(line)));
+                    let line = p.line.min(self.doc.buf.last_line());
+                    self.cursor = Pos::new(line, p.col.min(self.doc.buf.line_len(line)));
                 }
             }
             Motion::RepeatFind { reverse } => {
@@ -1150,7 +1150,7 @@ impl Editor {
                 let dir = if reverse { !fwd } else { fwd };
                 let stop = !(count1 == 1 && till);
                 info.inclusive = dir;
-                self.cursor.col = searchc(&self.buf, self.cursor, c, dir, till, count1, stop)?;
+                self.cursor.col = searchc(&self.doc.buf, self.cursor, c, dir, till, count1, stop)?;
             }
             Motion::Search { fwd, .. } => {
                 let pat = self.cmd_search.take().unwrap_or_default();
@@ -1210,7 +1210,7 @@ impl Editor {
         self.cursor = pos;
         // "/$" can end after the last char.
         if !self.is_visual() {
-            let len = self.buf.line_len(self.cursor.line);
+            let len = self.doc.buf.line_len(self.cursor.line);
             if self.cursor.col >= len {
                 self.cursor.col = len.saturating_sub(1);
             }
@@ -1226,7 +1226,7 @@ impl Editor {
     /// Vim's `adjust_cursor()`: leave the end-of-line position (not in
     /// Visual mode), making the motion inclusive.
     fn adjust_cursor(&mut self, info: &mut MInfo) {
-        if self.cursor.col > 0 && gchar(&self.buf, self.cursor).is_none() && !self.is_visual() {
+        if self.cursor.col > 0 && gchar(&self.doc.buf, self.cursor).is_none() && !self.is_visual() {
             self.cursor.col -= 1;
             info.inclusive = true;
         }
@@ -1252,7 +1252,7 @@ impl Editor {
         let big = c.is_ascii_uppercase();
         match c.to_ascii_lowercase() {
             'b' => {
-                let mut cur = Cur::new(&self.buf, self.cursor, big);
+                let mut cur = Cur::new(&self.doc.buf, self.cursor, big);
                 let ok = cur.bck_word(count1, false);
                 self.cursor = cur.p;
                 if !ok {
@@ -1261,7 +1261,7 @@ impl Editor {
             }
             'g' => {
                 info.inclusive = true;
-                let mut cur = Cur::new(&self.buf, self.cursor, big);
+                let mut cur = Cur::new(&self.doc.buf, self.cursor, big);
                 let ok = cur.bckend_word(count1, false);
                 self.cursor = cur.p;
                 if !ok {
@@ -1274,7 +1274,7 @@ impl Editor {
                 let mut flag = false;
                 if !word_end
                     && op == Some(Op::Change)
-                    && let Some(ch) = gchar(&self.buf, self.cursor)
+                    && let Some(ch) = gchar(&self.doc.buf, self.cursor)
                     && ch != ' '
                     && ch != '\t'
                 {
@@ -1284,7 +1284,7 @@ impl Editor {
                     flag = true;
                 }
                 let start = self.cursor;
-                let mut cur = Cur::new(&self.buf, self.cursor, big);
+                let mut cur = Cur::new(&self.doc.buf, self.cursor, big);
                 let ok = if word_end {
                     cur.end_word(count1, flag, false)
                 } else {
@@ -1309,7 +1309,7 @@ impl Editor {
             start: self.vstart,
             linewise: m == VisualMode::Line,
         });
-        let buf = &self.buf;
+        let buf = &self.doc.buf;
         let cur = self.cursor;
         let include = !o.inner;
         let out: ObjOut = match o.kind {
@@ -1515,13 +1515,13 @@ impl Editor {
             }
             Simple::Join { spaces } => {
                 let mut n = count.unwrap_or(0).max(2);
-                if self.cursor.line + n - 1 > self.buf.last_line() {
+                if self.cursor.line + n - 1 > self.doc.buf.last_line() {
                     if n <= 2 {
                         self.beep();
                         self.redo_building = None;
                         return;
                     }
-                    n = self.buf.line_count() - self.cursor.line;
+                    n = self.doc.buf.line_count() - self.cursor.line;
                 }
                 if let Some(r) = &mut self.redo_building {
                     r.count = Some(n);
@@ -1598,7 +1598,7 @@ impl Editor {
                     self.set_pcmark();
                     self.jumps.keep_pcmark();
                 } else {
-                    self.buf.set_mark(c, self.cursor);
+                    self.doc.buf.set_mark(c, self.cursor);
                 }
             }
             Simple::JumpOlder => self.move_in_jumplist(-(count1 as isize)),
@@ -1637,19 +1637,19 @@ impl Editor {
         match c {
             'i' => {}
             'a' => {
-                if gchar(&self.buf, self.cursor).is_some() {
+                if gchar(&self.doc.buf, self.cursor).is_some() {
                     self.cursor.col += 1;
                 }
             }
-            'I' => self.cursor.col = first_non_blank(&self.buf, self.cursor.line, false),
+            'I' => self.cursor.col = first_non_blank(&self.doc.buf, self.cursor.line, false),
             'g' => self.cursor.col = 0,
-            'A' => self.cursor.col = self.buf.line_len(self.cursor.line),
+            'A' => self.cursor.col = self.doc.buf.line_len(self.cursor.line),
             'o' | 'O' => {
                 let below = c == 'o';
                 let at = self.cursor.line + usize::from(below);
                 self.u_save(at, 0, false);
-                self.uline = None;
-                self.buf.insert_line(at, "");
+                self.doc.uline = None;
+                self.doc.buf.insert_line(at, "");
                 self.cursor = Pos::new(at, 0);
                 self.auto_indent(at, if below { at - 1 } else { at + 1 });
                 self.start_insert(count1, InsertKind::OpenLine, false);
@@ -1662,7 +1662,7 @@ impl Editor {
 
     /// `r{char}` (Vim's `nv_replace`).
     fn replace_char(&mut self, c: char, count1: usize) {
-        let len = self.buf.line_len(self.cursor.line);
+        let len = self.doc.buf.line_len(self.cursor.line);
         if len - self.cursor.col.min(len) < count1 {
             self.beep();
             self.redo_building = None;
@@ -1671,17 +1671,19 @@ impl Editor {
         self.u_save_cursor();
         let Pos { line, col } = self.cursor;
         if c == '\n' {
-            self.buf.remove(line, col, count1);
-            self.uline = None;
-            self.buf.insert(line, col, "\n");
+            self.doc.buf.remove(line, col, count1);
+            self.doc.uline = None;
+            self.doc.buf.insert(line, col, "\n");
             self.cursor = Pos::new(line + 1, 0);
             return;
         }
-        let mut chars: Vec<char> = self.buf.line(line).chars().collect();
+        let mut chars: Vec<char> = self.doc.buf.line(line).chars().collect();
         for ch in &mut chars[col..col + count1] {
             *ch = c;
         }
-        self.buf.set_line(line, &chars.iter().collect::<String>());
+        self.doc
+            .buf
+            .set_line(line, &chars.iter().collect::<String>());
         self.op_start = self.cursor;
         self.cursor.col = col + count1 - 1;
         self.op_end = self.cursor;
@@ -1689,7 +1691,7 @@ impl Editor {
 
     /// `~` in Normal mode ('notildeop', Vim's `n_swapchar`).
     fn swap_case_cmd(&mut self, count1: usize) {
-        if self.buf.line_len(self.cursor.line) == 0 {
+        if self.doc.buf.line_len(self.cursor.line) == 0 {
             self.beep();
             self.redo_building = None;
             return;
@@ -1698,8 +1700,8 @@ impl Editor {
         let start = self.cursor;
         for _ in 0..count1 {
             self.swapchar(Op::Tilde, self.cursor);
-            motion::inc(&self.buf, &mut self.cursor);
-            if gchar(&self.buf, self.cursor).is_none() {
+            motion::inc(&self.doc.buf, &mut self.cursor);
+            if gchar(&self.doc.buf, self.cursor).is_none() {
                 break;
             }
         }
@@ -1752,7 +1754,7 @@ impl Editor {
     /// Leaves Visual mode, remembering the area for `gv`.
     pub(crate) fn end_visual(&mut self) {
         if let Some(m) = self.visual_mode() {
-            self.last_visual = Some(crate::editor::LastVisual {
+            self.doc.last_visual = Some(crate::editor::LastVisual {
                 start: self.vstart,
                 end: self.cursor,
                 mode: m,
@@ -1768,7 +1770,7 @@ impl Editor {
         self.mode = Mode::Visual(r.mode);
         if r.mode != VisualMode::Char || r.line_count > 1 {
             self.cursor.line =
-                (self.cursor.line + r.line_count * count - 1).min(self.buf.last_line());
+                (self.cursor.line + r.line_count * count - 1).min(self.doc.buf.last_line());
         }
         if r.mode == VisualMode::Char {
             if r.line_count <= 1 {
@@ -1801,12 +1803,12 @@ impl Editor {
 
     /// `gv`.
     fn reselect(&mut self) {
-        let Some(lv) = self.last_visual else {
+        let Some(lv) = self.doc.last_visual else {
             self.beep();
             return;
         };
         if let Some(m) = self.visual_mode() {
-            self.last_visual = Some(crate::editor::LastVisual {
+            self.doc.last_visual = Some(crate::editor::LastVisual {
                 start: self.vstart,
                 end: self.cursor,
                 mode: m,
@@ -1819,8 +1821,8 @@ impl Editor {
             p.col = p.col.min(b.line_len(p.line));
             p
         };
-        self.vstart = clamp(&self.buf, lv.start);
-        self.cursor = clamp(&self.buf, lv.end);
+        self.vstart = clamp(&self.doc.buf, lv.start);
+        self.cursor = clamp(&self.doc.buf, lv.end);
         self.curswant = lv.curswant;
         self.keep_curswant = true;
         if lv.curswant == usize::MAX {
@@ -1856,8 +1858,8 @@ impl Editor {
     /// Leftmost and rightmost virtual columns of two positions (`getvcols`).
     pub(crate) fn vcols_of(&self, a: Pos, b: Pos) -> (usize, usize) {
         let ts = self.opts.tabstop();
-        let (s1, e1) = text::vcol_range(self.buf.line(a.line), a.col, ts);
-        let (s2, e2) = text::vcol_range(self.buf.line(b.line), b.col, ts);
+        let (s1, e1) = text::vcol_range(self.doc.buf.line(a.line), a.col, ts);
+        let (s2, e2) = text::vcol_range(self.doc.buf.line(b.line), b.col, ts);
         (s1.min(s2), e1.max(e2))
     }
 
@@ -1902,7 +1904,7 @@ impl Editor {
     fn dot_visual(&mut self, r: &Redo, vr: VisualRedo) {
         let start = self.cursor;
         let vcol_here = self.cursor_vcol();
-        self.cursor.line = (self.cursor.line + vr.line_count - 1).min(self.buf.last_line());
+        self.cursor.line = (self.cursor.line + vr.line_count - 1).min(self.doc.buf.last_line());
         self.mode = Mode::Visual(vr.mode);
         self.vstart = start;
         if vr.vcol == usize::MAX || vr.mode == VisualMode::Char {

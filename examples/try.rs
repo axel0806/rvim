@@ -13,7 +13,7 @@ fn main() {
     let c = ed.cursor();
     println!(
         "{:?} cursor=({}, {})",
-        ed.buf.lines(),
+        ed.buf().lines(),
         c.line + 1,
         c.col + 1
     );

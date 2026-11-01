@@ -13,7 +13,7 @@ const TEXT: &str = "foo bar\nqux foo";
 fn backspace_on_an_empty_pattern_cancels() {
     let mut ed = Editor::from_text(TEXT);
     ed.feed("/<BS>x");
-    assert_eq!(ed.buf.text(), "oo bar\nqux foo");
+    assert_eq!(ed.buf().text(), "oo bar\nqux foo");
     assert_eq!(ed.mode(), Mode::Normal);
 }
 
@@ -23,13 +23,13 @@ fn escape_and_ctrl_c_cancel_the_search_and_its_operator() {
     ed.feed("d/qux<Esc>");
     assert_eq!(ed.mode(), Mode::Normal);
     assert!(ed.pending_keys().is_empty());
-    assert_eq!(ed.buf.text(), TEXT);
+    assert_eq!(ed.buf().text(), TEXT);
     ed.feed("x");
-    assert_eq!(ed.buf.text(), "oo bar\nqux foo");
+    assert_eq!(ed.buf().text(), "oo bar\nqux foo");
 
     let mut ed = Editor::from_text(TEXT);
     ed.feed("/qux<C-c>x");
-    assert_eq!(ed.buf.text(), "oo bar\nqux foo");
+    assert_eq!(ed.buf().text(), "oo bar\nqux foo");
     assert_eq!(ed.cursor().line, 0);
 }
 
@@ -40,7 +40,7 @@ fn escape_returns_to_visual_mode() {
     assert_eq!(ed.mode(), Mode::Visual(VisualMode::Char));
     assert_eq!(ed.visual_start().map(|p| p.col), Some(1));
     ed.feed("d");
-    assert_eq!(ed.buf.text(), "fo bar\nqux foo");
+    assert_eq!(ed.buf().text(), "fo bar\nqux foo");
 }
 
 #[test]
@@ -92,10 +92,10 @@ fn history_keeps_200_patterns_like_vims_default() {
 fn a_recorded_search_replays_from_a_register() {
     let mut ed = Editor::from_text("a\nqux\nb\nqux");
     ed.feed("qa/qux<CR>xq");
-    assert_eq!(ed.buf.text(), "a\nux\nb\nqux");
+    assert_eq!(ed.buf().text(), "a\nux\nb\nqux");
     // The `/` prompt was recorded as typed, so the replay searches again.
     ed.feed("@a");
-    assert_eq!(ed.buf.text(), "a\nux\nb\nux");
+    assert_eq!(ed.buf().text(), "a\nux\nb\nux");
 }
 
 #[test]

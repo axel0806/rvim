@@ -288,7 +288,7 @@ fn jumps_lists_the_entries() {
     // The position <C-o> came from is recorded at the end (line 5).
     assert_eq!(msg.as_deref(), Some("jumps: 1:1 >3:1 5:1"));
     assert_eq!(ed.cursor().line, 2);
-    assert_eq!(ed.buf.lines(), ["a", "b", "c", "d", "e"]);
+    assert_eq!(ed.buf().lines(), ["a", "b", "c", "d", "e"]);
 }
 
 /// `H`, `M` and `L` are jumps. Where they land depends on the window height,
@@ -366,7 +366,7 @@ fn jumps_message_and_cursor_are_unchanged() {
         "{msg:?}"
     );
     assert_eq!(ed.cursor(), before);
-    assert_eq!(ed.buf.lines(), ["a", "b", "c", "d", "e"]);
+    assert_eq!(ed.buf().lines(), ["a", "b", "c", "d", "e"]);
 }
 
 #[test]

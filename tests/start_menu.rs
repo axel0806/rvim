@@ -56,8 +56,8 @@ fn joined(f: &Frame) -> String {
 }
 
 fn text(ed: &Editor) -> String {
-    (0..ed.buf.line_count())
-        .map(|i| ed.buf.line(i).chars().collect::<String>())
+    (0..ed.buf().line_count())
+        .map(|i| ed.buf().line(i).chars().collect::<String>())
         .collect::<Vec<_>>()
         .join("\n")
 }

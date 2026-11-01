@@ -46,9 +46,9 @@ pub fn run_rvim(text: &str, keys: &str) -> Outcome {
     }
     let c = ed.cursor();
     Outcome {
-        lines: ed.buf.lines(),
+        lines: ed.buf().lines(),
         cursor: (c.line + 1, c.col + 1),
-        modified: ed.buf.modified,
+        modified: ed.buf().modified,
         regs: REGISTERS
             .iter()
             .map(|&r| ed.register(r).filter(|(_, l)| !l.is_empty()))

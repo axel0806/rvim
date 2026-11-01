@@ -196,8 +196,8 @@ mod tests {
     fn writes_text_and_avoids_overwriting() {
         let dir = tempfile::tempdir().unwrap();
         let ed = sample();
-        let a = write_recovery(&ed.buf, dir.path()).unwrap().path;
-        let b = write_recovery(&ed.buf, dir.path()).unwrap().path;
+        let a = write_recovery(&ed.doc.buf, dir.path()).unwrap().path;
+        let b = write_recovery(&ed.doc.buf, dir.path()).unwrap().path;
         assert_ne!(a, b);
         assert_eq!(std::fs::read_to_string(a).unwrap(), "ne\ntwo\n");
     }
@@ -207,7 +207,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let clean = crate::Editor::from_text("kept\n");
         let dirty = sample();
-        let results = write_modified(&[&clean.buf, &dirty.buf], dir.path());
+        let results = write_modified(&[clean.buf(), dirty.buf()], dir.path());
         assert_eq!(results.len(), 1);
         let saved = results.into_iter().next().unwrap().unwrap();
         assert_eq!(std::fs::read_to_string(&saved.path).unwrap(), "ne\ntwo\n");
@@ -218,7 +218,7 @@ mod tests {
     fn no_modified_documents_writes_nothing() {
         let dir = tempfile::tempdir().unwrap();
         let clean = crate::Editor::from_text("kept\n");
-        assert!(write_modified(&[&clean.buf], dir.path()).is_empty());
+        assert!(write_modified(&[clean.buf()], dir.path()).is_empty());
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
     }
 
@@ -243,7 +243,7 @@ mod tests {
     fn new_directory_and_file_are_owner_only() {
         let base = tempfile::tempdir().unwrap();
         let dir = base.path().join("state").join("recovery");
-        let saved = write_recovery(&sample().buf, &dir).unwrap();
+        let saved = write_recovery(sample().buf(), &dir).unwrap();
         assert!(saved.refused_dir.is_none());
         assert_eq!(saved.path.parent(), Some(dir.as_path()));
         assert_eq!(mode_of(&saved.path), 0o600);
@@ -258,7 +258,7 @@ mod tests {
         let dir = base.path().join("recovery");
         std::fs::create_dir(&dir).unwrap();
         std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let saved = write_recovery(&sample().buf, &dir).unwrap();
+        let saved = write_recovery(sample().buf(), &dir).unwrap();
         assert!(saved.refused_dir.is_none());
         assert_eq!(mode_of(&dir), 0o700);
     }
@@ -271,7 +271,7 @@ mod tests {
         std::fs::create_dir(&target).unwrap();
         let link = base.path().join("link");
         std::os::unix::fs::symlink(&target, &link).unwrap();
-        let saved = write_recovery(&sample().buf, &link).unwrap();
+        let saved = write_recovery(sample().buf(), &link).unwrap();
         assert_eq!(saved.refused_dir.as_deref(), Some(link.as_path()));
         assert!(!saved.path.starts_with(&link));
         assert_eq!(std::fs::read_dir(&target).unwrap().count(), 0);

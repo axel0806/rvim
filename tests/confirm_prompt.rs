@@ -14,7 +14,11 @@ fn the_prompt_is_shown_on_the_match_it_asks_about() {
     let mut ed = Editor::from_text(TEXT);
     ed.feed(":%s/foo/X/gc<CR>");
     assert_eq!(ed.mode(), Mode::Confirm);
-    assert_eq!(ed.buf.text(), TEXT, "nothing is replaced before the answer");
+    assert_eq!(
+        ed.buf().text(),
+        TEXT,
+        "nothing is replaced before the answer"
+    );
     assert_eq!((ed.cursor().line, ed.cursor().col), (0, 0));
     // Wide enough that the ruler does not cut the prompt short.
     ed.set_screen_size(80, 4);
@@ -49,9 +53,9 @@ fn ctrl_e_and_ctrl_y_keep_the_prompt() {
     ed.feed(":%s/foo/X/gc<CR>");
     ed.feed("<C-e><C-y>");
     assert_eq!(ed.mode(), Mode::Confirm);
-    assert_eq!(ed.buf.text(), TEXT);
+    assert_eq!(ed.buf().text(), TEXT);
     ed.feed("y");
-    assert_eq!(ed.buf.text(), "X bar\nqux foo\nfoo");
+    assert_eq!(ed.buf().text(), "X bar\nqux foo\nfoo");
 }
 
 #[test]
@@ -60,9 +64,9 @@ fn keys_that_are_not_answers_ask_again() {
     ed.feed(":%s/foo/X/gc<CR>");
     ed.feed("jx<CR><Space>");
     assert_eq!(ed.mode(), Mode::Confirm);
-    assert_eq!(ed.buf.text(), TEXT);
+    assert_eq!(ed.buf().text(), TEXT);
     ed.feed("y");
-    assert_eq!(ed.buf.text(), "X bar\nqux foo\nfoo");
+    assert_eq!(ed.buf().text(), "X bar\nqux foo\nfoo");
 }
 
 #[test]
@@ -71,12 +75,12 @@ fn escape_quits_the_prompt_and_keeps_the_cursor_on_the_match() {
     ed.feed(":%s/foo/X/gc<CR>y");
     ed.feed("<Esc>");
     assert_eq!(ed.mode(), Mode::Normal);
-    assert_eq!(ed.buf.text(), "X bar\nqux foo\nfoo");
+    assert_eq!(ed.buf().text(), "X bar\nqux foo\nfoo");
     // The last prompt was for the match on line 2: quitting leaves the
     // cursor there, not at the first non-blank, as in Vim.
     assert_eq!((ed.cursor().line, ed.cursor().col), (1, 4));
     ed.feed("u");
-    assert_eq!(ed.buf.text(), TEXT);
+    assert_eq!(ed.buf().text(), TEXT);
 }
 
 #[test]
@@ -84,28 +88,28 @@ fn ctrl_c_quits_like_q() {
     let mut ed = Editor::from_text(TEXT);
     ed.feed(":%s/foo/X/gc<CR>y<C-c>");
     assert_eq!(ed.mode(), Mode::Normal);
-    assert_eq!(ed.buf.text(), "X bar\nqux foo\nfoo");
+    assert_eq!(ed.buf().text(), "X bar\nqux foo\nfoo");
 }
 
 #[test]
 fn all_the_answers_make_one_undo_step() {
     let mut ed = Editor::from_text(TEXT);
     ed.feed(":%s/foo/X/gc<CR>yyy");
-    assert_eq!(ed.buf.text(), "X bar\nqux X\nX");
+    assert_eq!(ed.buf().text(), "X bar\nqux X\nX");
     assert_eq!(ed.mode(), Mode::Normal);
     ed.feed("u");
-    assert_eq!(ed.buf.text(), TEXT);
+    assert_eq!(ed.buf().text(), TEXT);
     ed.feed("<C-r>");
-    assert_eq!(ed.buf.text(), "X bar\nqux X\nX");
+    assert_eq!(ed.buf().text(), "X bar\nqux X\nX");
 }
 
 #[test]
 fn an_undo_step_spans_the_prompts_with_other_keys_between() {
     let mut ed = Editor::from_text(TEXT);
     ed.feed(":%s/foo/X/gc<CR>nyx!a");
-    assert_eq!(ed.buf.text(), "foo bar\nqux X\nX");
+    assert_eq!(ed.buf().text(), "foo bar\nqux X\nX");
     ed.feed("u");
-    assert_eq!(ed.buf.text(), TEXT);
+    assert_eq!(ed.buf().text(), TEXT);
 }
 
 #[test]
@@ -114,9 +118,9 @@ fn pasted_text_is_not_an_answer() {
     ed.feed(":%s/foo/X/gc<CR>");
     ed.paste("yyy");
     assert_eq!(ed.mode(), Mode::Confirm);
-    assert_eq!(ed.buf.text(), TEXT);
+    assert_eq!(ed.buf().text(), TEXT);
     ed.feed("<Esc>");
-    assert_eq!(ed.buf.text(), TEXT);
+    assert_eq!(ed.buf().text(), TEXT);
 }
 
 #[test]
@@ -124,15 +128,15 @@ fn a_bar_chain_runs_after_the_prompt_is_answered() {
     let mut ed = Editor::from_text("foo\nfoo bar");
     ed.feed(":%s/foo/X/gc|%s/bar/Y/<CR>");
     assert_eq!(ed.mode(), Mode::Confirm);
-    assert_eq!(ed.buf.text(), "foo\nfoo bar");
+    assert_eq!(ed.buf().text(), "foo\nfoo bar");
     // Declining the first match still leaves a prompt for the second.
     ed.feed("n");
     assert_eq!(ed.mode(), Mode::Confirm);
-    assert_eq!(ed.buf.text(), "foo\nfoo bar");
+    assert_eq!(ed.buf().text(), "foo\nfoo bar");
     ed.feed("a");
     assert_eq!(ed.mode(), Mode::Normal);
     // The first `:s` ends with the second line; then `%s/bar/Y/` runs.
-    assert_eq!(ed.buf.text(), "foo\nX Y");
+    assert_eq!(ed.buf().text(), "foo\nX Y");
 }
 
 #[test]
@@ -143,9 +147,9 @@ fn global_with_confirm_visits_every_line_and_then_finishes() {
     ed.feed("y");
     // The last marked line was asked about and the `:g` is over.
     assert_eq!(ed.mode(), Mode::Normal);
-    assert_eq!(ed.buf.text(), "a\nfoo\nX\nb");
+    assert_eq!(ed.buf().text(), "a\nfoo\nX\nb");
     ed.feed("u");
-    assert_eq!(ed.buf.text(), "a\nfoo\nfoo\nb");
+    assert_eq!(ed.buf().text(), "a\nfoo\nfoo\nb");
 }
 
 #[test]
@@ -158,7 +162,7 @@ fn each_line_of_a_global_asks_again_after_a() {
     assert_eq!(ed.mode(), Mode::Confirm);
     ed.feed("a");
     assert_eq!(ed.mode(), Mode::Normal);
-    assert_eq!(ed.buf.text(), "X\nX\nX");
+    assert_eq!(ed.buf().text(), "X\nX\nX");
 }
 
 /// `n` lines, each with a match: `foo 0` ... `foo {n-1}`.
@@ -194,11 +198,11 @@ fn ctrl_e_and_ctrl_y_scroll_the_window_and_keep_the_match() {
     ed.feed("<C-y><C-y><C-y><C-y>");
     assert_eq!(ed.top_line(), 0, "CTRL-Y stops at the first line");
     assert_eq!(ed.mode(), Mode::Confirm);
-    assert_eq!(ed.buf.text(), numbered(30));
+    assert_eq!(ed.buf().text(), numbered(30));
     // The prompt still answers the match it was showing.
     ed.feed("y");
-    assert_eq!(ed.buf.text().lines().nth(4), Some("X 4"));
-    assert_eq!(ed.buf.text().lines().nth(3), Some("foo 3"));
+    assert_eq!(ed.buf().text().lines().nth(4), Some("X 4"));
+    assert_eq!(ed.buf().text().lines().nth(3), Some("foo 3"));
 }
 
 #[test]
