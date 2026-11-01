@@ -297,7 +297,7 @@ impl Editor {
     /// asks for), unless a message such as file info is already shown.
     pub fn show_intro(&mut self) {
         if self.message.is_none() {
-            self.info(crate::VERSION_MESSAGE);
+            self.info(crate::NOTICE_SHORT);
         }
     }
 

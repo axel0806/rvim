@@ -37,9 +37,22 @@ pub(crate) mod window;
 pub use editor::{Editor, Mode, VisualMode};
 pub use event::Event;
 
-/// Shown by `:version` and at startup. rvim contains code derived from Vim,
-/// and the Vim license (condition II.3) requires telling users that this is
-/// a modified version.
+/// Short modified-version notice for the message line: the intro message and
+/// `:version`. The message line shows at most `width - 19` cells (the ruler
+/// starts at `width - 18`), so 80 columns show 61 characters. At most 40
+/// characters, so that a config note (`[N config warnings]`, up to 21
+/// characters) still fits. Vim license condition II.3; the owner should
+/// confirm the wording (PLAN.md, "Licensing").
+pub const NOTICE_SHORT: &str = concat!(
+    "rvim ",
+    env!("CARGO_PKG_VERSION"),
+    ": modified Vim (not official)"
+);
+
+/// The full modified-version notice: `--version` (stdout) and the start menu
+/// body, where it is not cut. rvim contains code derived from Vim, and the
+/// Vim license (condition II.3) requires telling users that this is a
+/// modified version.
 pub const VERSION_MESSAGE: &str = concat!(
     "rvim ",
     env!("CARGO_PKG_VERSION"),

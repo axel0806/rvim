@@ -349,7 +349,9 @@ impl Editor {
             // the config file had at startup.
             self.show_config_warnings();
         } else if abbrev(n, "version", 2) {
-            self.info(crate::VERSION_MESSAGE);
+            // The short notice: the message line cannot show more than one
+            // line. The full text is `--version` and the start menu.
+            self.info(crate::NOTICE_SHORT);
         } else if abbrev(n, "edit", 1) {
             self.cmd_edit(&p);
         } else if abbrev(n, "checktime", 6) {
@@ -2522,12 +2524,9 @@ mod tests {
         ed.feed(":.-2<CR>");
         assert_eq!(ed.cursor().line, 0);
         ed.feed(":ve<CR>");
-        assert!(
-            ed.message()
-                .unwrap()
-                .text
-                .contains("modified version of Vim")
-        );
+        // `:version` shows the short notice (the full text is `--version`).
+        assert_eq!(ed.message().unwrap().text, crate::NOTICE_SHORT);
+        assert!(ed.message().unwrap().text.contains("modified Vim"));
         ed.feed(":frob<CR>");
         assert!(ed.message().unwrap().text.starts_with("E492"));
         ed.feed("x:x<CR>");

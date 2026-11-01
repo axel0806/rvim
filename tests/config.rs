@@ -107,13 +107,10 @@ fn a_syntax_error_names_the_line_and_keeps_the_defaults() {
     let (mut ed, problems) = start(&[], dir.path());
     assert_eq!(problems.len(), 1, "{problems:?}");
     assert!(problems[0].starts_with("config: line 3: "), "{problems:?}");
-    // The notice keeps the intro text and points at `:ConfigWarnings`.
+    // The notice keeps the intro text; the note counts the warnings.
     let shown = ed.message().expect("a message").text.clone();
-    assert!(shown.starts_with(rvim::VERSION_MESSAGE), "{shown}");
-    assert!(
-        shown.ends_with("[config: 1 warning, see :ConfigWarnings]"),
-        "{shown}"
-    );
+    assert!(shown.starts_with(rvim::NOTICE_SHORT), "{shown}");
+    assert!(shown.ends_with("[1 config warning]"), "{shown}");
     ed.feed(":ConfigWarnings<CR>");
     let listed = ed.message().expect("a message").text.clone();
     assert!(listed.starts_with("config: line 3: "), "{listed}");
@@ -184,7 +181,7 @@ fn msg(ed: &Editor) -> String {
     ed.message().map(|m| m.text.clone()).unwrap_or_default()
 }
 
-const NOTE: &str = "[config: 1 warning, see :ConfigWarnings]";
+const NOTE: &str = "[1 config warning]";
 
 #[test]
 fn the_modified_vim_notice_survives_config_warnings() {
@@ -195,7 +192,7 @@ fn the_modified_vim_notice_survives_config_warnings() {
     let (ed, problems) = start(&[], dir.path());
     assert_eq!(problems.len(), 1);
     let shown = msg(&ed);
-    assert!(shown.starts_with(rvim::VERSION_MESSAGE), "{shown}");
+    assert!(shown.starts_with(rvim::NOTICE_SHORT), "{shown}");
     assert!(shown.ends_with(NOTE), "{shown}");
 
     // Start menu: the menu draws the notice in full; the message is the note.
@@ -217,7 +214,7 @@ fn no_config_problems_means_the_plain_intro_message() {
     let dir = tempfile::tempdir().unwrap();
     let (ed, problems) = start(&[], dir.path());
     assert!(problems.is_empty());
-    assert_eq!(msg(&ed), rvim::VERSION_MESSAGE);
+    assert_eq!(msg(&ed), rvim::NOTICE_SHORT);
 }
 
 #[test]
@@ -271,7 +268,7 @@ mod symlinks {
 
         let (ed, problems) = start(&[], dir.path());
         assert!(problems.is_empty(), "{problems:?}");
-        assert_eq!(msg(&ed), rvim::VERSION_MESSAGE);
+        assert_eq!(msg(&ed), rvim::NOTICE_SHORT);
     }
 
     #[test]

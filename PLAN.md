@@ -7,7 +7,7 @@ a real Vim by the differential harness in `tests/common/mod.rs`.
 
 ## Status: read this first
 
-Last updated 2026-11-01 (milestone 6 config file loader: `config.toml` read once at startup, `[options]`, `[start] menu`, raw `[agent]`, `-u NONE`, `--clean`, `-N`, `:ConfigWarnings`; see "Config" under "Editing experience"; the non-file marks: `'[` `']` `'<` `'>` `'"` as motions, operator targets and Ex addresses, `m[ m] m< m>`, the `'[`/`']` marks set by each command, `:marks` and `:delmarks`; milestone 7 step 2a: undo steps record their source, the disk state per document with a hash, `:checktime`, and the reload of an unmodified buffer as one undo step with cursor and scroll mapping; milestone 4 option scopes: `:setlocal` and `:setglobal`, buffer-local, window-local and global-local values, see "Options registry"; Document/Window/Editor split steps 1 to 3 of milestone 4 (ids, collections, accessors, version counter, marks, `buf_mut()`, window size); CI first ran on GitHub; Linux builds Vim 9.1.1914 from source, and all three OS jobs require Vim; cell-level diff redraw in `redraw.rs`, with its escape sequences tested in `main.rs`; kitty keyboard protocol, with `RVIM_NO_KITTY=1` to turn it off and no support query when `TERM` is unset, empty or `dumb`; SIGHUP/SIGTERM recovery on Unix, milestone 4; Makefile packaging targets `install` with `PREFIX`/`DESTDIR`, `uninstall` and `dist`). **rvim is an alpha, roughly 25-30% of this plan.**
+Last updated 2026-11-01 (the modified-Vim notice on the message line is the short `NOTICE_SHORT` (39 characters, fits 80 columns) for the intro and `:version`, with the config note `[N config warnings]`; the full `VERSION_MESSAGE` stays in `--version` and the start menu; see "Licensing" and "Known differences"; milestone 6 config file loader: `config.toml` read once at startup, `[options]`, `[start] menu`, raw `[agent]`, `-u NONE`, `--clean`, `-N`, `:ConfigWarnings`; see "Config" under "Editing experience"; the non-file marks: `'[` `']` `'<` `'>` `'"` as motions, operator targets and Ex addresses, `m[ m] m< m>`, the `'[`/`']` marks set by each command, `:marks` and `:delmarks`; milestone 7 step 2a: undo steps record their source, the disk state per document with a hash, `:checktime`, and the reload of an unmodified buffer as one undo step with cursor and scroll mapping; milestone 4 option scopes: `:setlocal` and `:setglobal`, buffer-local, window-local and global-local values, see "Options registry"; Document/Window/Editor split steps 1 to 3 of milestone 4 (ids, collections, accessors, version counter, marks, `buf_mut()`, window size); CI first ran on GitHub; Linux builds Vim 9.1.1914 from source, and all three OS jobs require Vim; cell-level diff redraw in `redraw.rs`, with its escape sequences tested in `main.rs`; kitty keyboard protocol, with `RVIM_NO_KITTY=1` to turn it off and no support query when `TERM` is unset, empty or `dumb`; SIGHUP/SIGTERM recovery on Unix, milestone 4; Makefile packaging targets `install` with `PREFIX`/`DESTDIR`, `uninstall` and `dist`). **rvim is an alpha, roughly 25-30% of this plan.**
 As of 2026-11-01 milestones 1-3 are done; 4 and 5 are partly done; 6 has the start menu and the config loader; 7 has its first step (file reload, 2a), 8-9 are plans.
 Released as `v0.1.0-alpha.1`, `v0.1.0-alpha.2` and `v0.1.0-alpha.3`. The next release is `v0.1.0-alpha.4`, not yet tagged. All tests pass against Vim 9.1 and clippy/fmt are
 clean at the last commit.
@@ -526,17 +526,16 @@ and two windows in one `Editor`, and the write, reset and query rules).
     later copies them. Then `--start-menu` or `--no-start-menu`, when given,
     overrides `[start] menu`. The file is not watched or reloaded.
   - Warnings: kept in the editor (`Editor::set_config_warnings`). The startup
-    message is the intro (the modified-version notice, which the Vim license
-    asks to keep in the intro screen) with `[config: N warnings, see
-    :ConfigWarnings]` appended, so the notice is never replaced. With the
-    start menu on, the menu draws the notice in full and the message line
-    shows only the note. A file given on the command line keeps its info
-    message and gets the note too. `:ConfigWarnings` (rvim only, capital
-    letter) lists every warning on the message line, joined with ` | `, or
-    says `No config warnings`. There is no general message history. On a
-    terminal narrower than about 80 columns the message line is cut at the
-    ruler, so the note may not show; the notice itself is cut there too,
-    which is an existing limit of the intro message, not added by this.
+    message is the intro (the short modified-version notice, `NOTICE_SHORT`,
+    which the Vim license asks to keep in the intro screen) with ` [N config
+    warnings]` appended (`[1 config warning]` for one), so the notice is
+    never replaced. The note does not name `:ConfigWarnings`, to fit the
+    message line; this file and the README say that `:ConfigWarnings` lists
+    them. With the start menu on, the menu draws the full notice and the
+    message line shows only the note. A file given on the command line keeps
+    its info message and gets the note too. `:ConfigWarnings` (rvim only,
+    capital letter) lists every warning on the message line, joined with ` |
+    `, or says `No config warnings`. There is no general message history.
   - Flags: `-u NONE` and `--clean` skip the file. `-N` is accepted and does
     nothing (rvim is always Vim's `-N`). Any other `-u` value is a usage error
     (exit 2), since rvim reads no other vimrc. `--config <file>` is not added:
@@ -1814,7 +1813,17 @@ questions"). What is in effect:
   and the AUR accept the identifier `Vim` is still UNVERIFIED, so `license-file`
   is the fallback if they do not.
 - The README's License section explains the two licenses.
-- The `VERSION_MESSAGE` notice in `src/lib.rs` is unchanged (condition II.3).
+- The modified-version notice (condition II.3) has two texts in `src/lib.rs`.
+  `NOTICE_SHORT` (`rvim <version>: modified Vim (not official)`, 39
+  characters) is on the message line: the intro message and `:version`. The
+  line holds only 61 cells on 80 columns, so the short text is needed there.
+  `VERSION_MESSAGE` is the full text, with the license and the issue URL: it
+  is printed by `--version` (stdout) and drawn in full in the start menu,
+  where it is not cut. Tests: `tests/notice.rs`, `tests/config.rs`,
+  `tests/cli_flags.rs`, `tests/start_menu.rs`. The wording was chosen by the
+  implementer, not by counsel: the owner should confirm that the short notice
+  and the full text satisfy the Vim license condition (this is not legal
+  advice).
 
 **Per-file result** (classified 2026-11-01 from the header comments and the
 Vim C names they cite; Vim = `SPDX-License-Identifier: Vim`, the rest
@@ -2055,14 +2064,19 @@ plan, kept for the record; the files are the source of truth.
   vimrc. `-N` is accepted and does nothing; `--clean` is `-u NONE`. Vim's
   other flags (`-R`, `-es`, and so on) are not parsed; an unknown `-x` is
   taken as a file name, as before.
-- Message line width: the message line is cut at the ruler column (the
-  width minus 18), so on a terminal narrower than about 80 columns the start
-  message's modified-Vim notice (`VERSION_MESSAGE`, about 170 characters) is
-  cut after about 62 characters, and the `[config: N warnings, see
-  :ConfigWarnings]` suffix may not show at all. Pre-existing for the intro
-  message. Shown in full: `--version` (printed to stdout) and the start
-  menu (drawn in the frame). Also cut at the same column, because they use
-  the message line: `:version` (the notice) and `:ConfigWarnings` (the list).
+- Message line width: the message line shows at most `width - 19` cells (it
+  is cut at the ruler column, the width minus 18), so 61 cells on 80 columns.
+  The intro message and `:version` use the short notice `NOTICE_SHORT` (39
+  characters, `rvim 0.1.0: modified Vim (not official)`) plus, when the
+  config had problems, ` [N config warnings]` (at most 21 characters); the
+  total fits on 80 columns for any count up to 99. The full notice
+  (`VERSION_MESSAGE`, about 170 characters) is in `--version` (stdout) and
+  the start menu (drawn in the frame), where it is not cut. `:version`
+  cannot show the full text: the message line holds one line and rvim has
+  no multi-line output, so it shows the short notice only. Still cut at the
+  ruler on narrow terminals: the file-info message and `:ConfigWarnings`
+  (the list of warnings, joined with ` | `); a long file name can push the
+  file-info message past the cut too.
 - Emoji use approximate block ranges instead of Vim's full `emoji_all` table
   for word motions; composing characters are separate characters.
 - Option scopes (`options.rs`, "Options registry" in this file) follow Vim

@@ -470,21 +470,18 @@ impl Editor {
         self.config_warnings = warnings;
     }
 
-    /// Adds `[config: N warnings, see :ConfigWarnings]` to the startup message
-    /// when the config had problems. The message is the intro (the modified-
-    /// version notice, which the Vim license asks for) or the file's info
-    /// message; the note is appended, so the notice text is never replaced.
-    /// With the start menu shown there is no message, and the note is the
-    /// message. Does nothing when there are no problems.
+    /// Adds `[N config warnings]` to the startup message when the config had
+    /// problems. The message is the intro (the short modified-version notice,
+    /// which the Vim license asks for) or the file's info message; the note is
+    /// appended, so the notice text is never replaced. With the start menu
+    /// shown there is no message, and the note is the message. Does nothing
+    /// when there are no problems. `:ConfigWarnings` lists the problems.
     pub fn show_config_notice(&mut self) {
         let n = self.config_warnings.len();
         if n == 0 {
             return;
         }
-        let note = format!(
-            "[config: {n} warning{}, see :ConfigWarnings]",
-            if n == 1 { "" } else { "s" }
-        );
+        let note = format!("[{n} config warning{}]", if n == 1 { "" } else { "s" });
         let text = match self.message() {
             Some(m) => format!("{} {note}", m.text),
             None => note,
