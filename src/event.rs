@@ -43,6 +43,15 @@ pub enum Event {
         doc: DocId,
         version: u64,
     },
+    /// The file changed but is over the watcher's read cap
+    /// (`watch::MAX_WATCH_BYTES`), so its contents were not sent. The editor
+    /// does not load it: it marks the document stale.
+    FileTooLarge {
+        doc: DocId,
+        version: u64,
+        mtime: Option<SystemTime>,
+        size: usize,
+    },
 }
 
 #[cfg(test)]

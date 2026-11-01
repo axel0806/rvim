@@ -30,6 +30,10 @@ use std::time::{Duration, Instant, SystemTime};
 /// How often the worker looks at the watched files.
 pub const POLL_INTERVAL: Duration = Duration::from_millis(750);
 
+/// The largest file the worker reads. A changed file above this is not read:
+/// the editor is told it is too large, and the user loads it with `:e!`.
+pub const MAX_WATCH_BYTES: usize = 64 << 20;
+
 /// What the file system says about a path: the modification time and size.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Stat {
@@ -176,6 +180,13 @@ pub(crate) enum Observation {
     Deleted { doc: DocId, version: u64 },
     /// The file could not be stat'ed or read. Reported once per error.
     Unreadable { doc: DocId, message: String },
+    /// The file changed but is over `MAX_WATCH_BYTES`, so it was not read.
+    TooLarge {
+        doc: DocId,
+        version: u64,
+        mtime: Option<SystemTime>,
+        size: usize,
+    },
 }
 
 /// Looks at every watched file once and returns what changed since the
@@ -221,6 +232,19 @@ fn look(e: &mut Entry, fs: &dyn FileSystem) -> Option<Observation> {
             .as_ref()
             .map(|_| Observation::Deleted { doc, version });
     };
+    if st.size > MAX_WATCH_BYTES {
+        // Not read. Recorded like a read, so the same size is not reported again.
+        e.seen = Some(Seen {
+            stat: Some(st),
+            error: None,
+        });
+        return Some(Observation::TooLarge {
+            doc,
+            version,
+            mtime: st.mtime,
+            size: st.size,
+        });
+    }
     match fs.read(&e.target.path) {
         Err(err) => {
             let seen = Seen {
@@ -273,6 +297,17 @@ fn event_of(obs: Observation) -> Option<Event> {
             hash: state.hash,
         }),
         Observation::Deleted { doc, version } => Some(Event::FileDeleted { doc, version }),
+        Observation::TooLarge {
+            doc,
+            version,
+            mtime,
+            size,
+        } => Some(Event::FileTooLarge {
+            doc,
+            version,
+            mtime,
+            size,
+        }),
         Observation::Unreadable { .. } => None,
     }
 }
@@ -674,6 +709,51 @@ mod tests {
             }),
             None
         );
+    }
+
+    #[test]
+    fn a_file_over_the_cap_is_not_read_and_is_reported_once() {
+        /// Reports a file one byte over the cap, and counts the reads.
+        struct Huge {
+            reads: Cell<usize>,
+        }
+        impl FileSystem for Huge {
+            fn stat(&self, _: &Path) -> io::Result<Option<Stat>> {
+                Ok(Some(Stat {
+                    mtime: time(5),
+                    size: MAX_WATCH_BYTES + 1,
+                }))
+            }
+            fn read(&self, _: &Path) -> io::Result<Vec<u8>> {
+                self.reads.set(self.reads.get() + 1);
+                Ok(Vec::new())
+            }
+        }
+        let fs = Huge {
+            reads: Cell::new(0),
+        };
+        let mut set = set_of(vec![target(0, "big.bin", Some((1, b"one\n")))]);
+        assert_eq!(
+            poll(&mut set, &fs),
+            vec![Observation::TooLarge {
+                doc: DocId(0),
+                version: 7,
+                mtime: time(5),
+                size: MAX_WATCH_BYTES + 1,
+            }]
+        );
+        assert_eq!(fs.reads.get(), 0, "the file was not read");
+        assert!(poll(&mut set, &fs).is_empty(), "reported once");
+        assert_eq!(fs.reads.get(), 0);
+        assert!(matches!(
+            event_of(Observation::TooLarge {
+                doc: DocId(0),
+                version: 7,
+                mtime: None,
+                size: 1,
+            }),
+            Some(Event::FileTooLarge { size: 1, .. })
+        ));
     }
 
     /// A real file in a temp dir, watched by the real loop with a 20 ms

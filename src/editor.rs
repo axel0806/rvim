@@ -22,6 +22,7 @@ use crate::undo::{Step, UndoSource};
 use crate::watch::{WatchCmd, WatchTarget};
 use crate::window::{WinId, Window};
 use std::path::Path;
+use std::time::SystemTime;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum VisualMode {
@@ -206,12 +207,23 @@ pub struct Editor {
     watch_queue: Option<WatchQueued>,
 }
 
+/// What the watcher reported about a file that is there.
+enum Arrival {
+    /// The file's state and contents.
+    Read(DiskState, Vec<u8>),
+    /// The file is over the read cap and its contents were not read.
+    TooLarge {
+        mtime: Option<SystemTime>,
+        size: usize,
+    },
+}
+
 /// A file change the watcher reported, held until the editor can apply it.
 struct WatchQueued {
     doc: DocId,
     version: u64,
-    /// The file's state and bytes, or None when the file is gone.
-    now: Option<(DiskState, Vec<u8>)>,
+    /// What the file is now, or None when it is gone.
+    now: Option<Arrival>,
 }
 
 impl Default for Editor {
@@ -441,9 +453,15 @@ impl Editor {
                 hash,
             } => {
                 let state = DiskState { mtime, size, hash };
-                self.watch_arrived(doc, version, Some((state, bytes)));
+                self.watch_arrived(doc, version, Some(Arrival::Read(state, bytes)));
             }
             Event::FileDeleted { doc, version } => self.watch_arrived(doc, version, None),
+            Event::FileTooLarge {
+                doc,
+                version,
+                mtime,
+                size,
+            } => self.watch_arrived(doc, version, Some(Arrival::TooLarge { mtime, size })),
         }
         self.apply_watch_queue();
     }
@@ -1602,7 +1620,7 @@ impl Editor {
     /// `Event::FileDeleted`). It is dropped when the text has changed since
     /// the watcher was told the version: the watcher is asked to look again,
     /// so the change is reported again. Otherwise it waits for Normal mode.
-    fn watch_arrived(&mut self, doc: DocId, version: u64, now: Option<(DiskState, Vec<u8>)>) {
+    fn watch_arrived(&mut self, doc: DocId, version: u64, now: Option<Arrival>) {
         if !self.eff().filewatch() {
             return;
         }
@@ -1618,9 +1636,13 @@ impl Editor {
             // would load (unmodified and 'autoread' on).
             let d = &self.documents[doc.0];
             let note = match &d.buf.path {
-                Some(path) if !d.buf.modified && now.is_some() && self.autoread_on() => {
+                Some(path)
+                    if !d.buf.modified
+                        && matches!(now, Some(Arrival::Read(..)))
+                        && self.autoread_on() =>
+                {
                     Some(format!(
-                        "\"{}\" changed on disk; reloads in Normal mode",
+                        "\"{}\" changed on disk; handled when you return to Normal mode",
                         path.display()
                     ))
                 }
@@ -1656,9 +1678,39 @@ impl Editor {
             self.watch_outbox.push(WatchCmd::Resync(q.doc));
             return;
         }
-        let now = q.now.as_ref().map(|(s, b)| (s.clone(), b.as_slice()));
-        if let Some(error) = self.check_disk(q.doc, now, true) {
+        let error = match &q.now {
+            Some(Arrival::TooLarge { mtime, size }) => {
+                self.check_too_large(q.doc, *mtime, *size);
+                None
+            }
+            Some(Arrival::Read(state, bytes)) => {
+                self.check_disk(q.doc, Some((state.clone(), bytes.as_slice())), true)
+            }
+            None => self.check_disk(q.doc, None, true),
+        };
+        if let Some(error) = error {
             self.error(error);
+        }
+    }
+
+    /// A change to a file over the watcher's read cap (`MAX_WATCH_BYTES`).
+    /// Its contents are not known, so nothing is compared or loaded: the
+    /// buffer is kept and marked stale, and the user is told once to use
+    /// `:e!`, which reads the file.
+    fn check_too_large(&mut self, doc: DocId, mtime: Option<SystemTime>, size: usize) {
+        let Some(path) = self.documents[doc.0].buf.path.clone() else {
+            return;
+        };
+        let name = path.display().to_string();
+        let key = Warned::TooLarge { mtime, size };
+        let d = &mut self.documents[doc.0];
+        let repeat = d.warned == Some(key);
+        d.stale = Some(Stale::Changed);
+        d.warned = Some(key);
+        if !repeat {
+            self.info(format!(
+                "\"{name}\" changed on disk; too large to reload automatically, use :e!"
+            ));
         }
     }
 }
@@ -1996,7 +2048,7 @@ mod watch_tests {
         ed.handle_event(event_for_disk(&ed, &path));
         assert_eq!(ed.buf().lines(), ["one"], "not while typing");
         let note = format!(
-            "\"{}\" changed on disk; reloads in Normal mode",
+            "\"{}\" changed on disk; handled when you return to Normal mode",
             path.display()
         );
         assert_eq!(message_of(&ed), note);
@@ -2159,6 +2211,41 @@ mod watch_tests {
         assert_eq!(ed.doc().undo.seq(), seq, "no step");
         assert_eq!(ed.doc().stale, None);
         assert_eq!(message_of(&ed), "", "no message");
+    }
+
+    #[test]
+    fn a_file_over_the_read_cap_is_marked_stale_and_warned_once_without_loading() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut ed, path) = open(&dir, "one\n");
+        watch_on(&mut ed);
+        ed.feed(":set autoread<CR>");
+        let version = ed.doc().version();
+        // Even unmodified with 'autoread' on, the text is not replaced.
+        let big = |version| Event::FileTooLarge {
+            doc: DocId::default(),
+            version,
+            mtime: None,
+            size: crate::watch::MAX_WATCH_BYTES + 1,
+        };
+        ed.handle_event(big(version));
+        assert_eq!(ed.buf().lines(), ["one"], "not loaded");
+        assert!(!ed.buf().modified);
+        assert_eq!(ed.doc().stale, Some(Stale::Changed));
+        assert!(
+            message_of(&ed).contains("too large to reload automatically, use :e!"),
+            "{}",
+            message_of(&ed)
+        );
+        // The same change again is not warned about again.
+        ed.message = None;
+        ed.handle_event(big(version));
+        assert_eq!(message_of(&ed), "");
+        assert_eq!(ed.buf().lines(), ["one"]);
+        // `:e!` loads the file as it is.
+        fs::write(&path, "two\n").unwrap();
+        ed.feed(":e!<CR>");
+        assert_eq!(ed.buf().lines(), ["two"]);
+        assert_eq!(ed.doc().stale, None);
     }
 
     #[test]

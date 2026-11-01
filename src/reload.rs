@@ -88,6 +88,12 @@ pub(crate) enum Warned {
     Changed(u64),
     /// The file is gone.
     Deleted,
+    /// A change to a file too large to read (its contents are not known, so
+    /// its state is the stat's).
+    TooLarge {
+        mtime: Option<std::time::SystemTime>,
+        size: usize,
+    },
 }
 
 /// What `:checktime` and the file watcher do about a file (one decision for
