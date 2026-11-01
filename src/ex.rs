@@ -350,6 +350,15 @@ impl Editor {
                 return Err(format!("E488: Trailing characters: {}", p.arg));
             }
             self.agent_scan_command();
+        } else if n == "AgentConnect" {
+            // rvim only: connects to one agent, after the consent prompt for
+            // this project (agent_session.rs).
+            let name = p.arg.trim();
+            self.agent_connect((!name.is_empty()).then_some(name));
+        } else if n == "AgentDisconnect" {
+            self.agent_disconnect();
+        } else if n == "AgentCancel" {
+            self.agent_cancel();
         } else if n == "ConfigWarnings" {
             // rvim only (capital letter, as CLAUDE.md asks): the problems
             // the config file had at startup.

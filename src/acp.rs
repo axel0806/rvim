@@ -943,6 +943,12 @@ impl Conn {
         self.session.as_deref()
     }
 
+    /// The earliest handshake timeout still outstanding, for the caller's
+    /// timer. None when no request is waiting on the clock.
+    pub fn next_deadline(&self) -> Option<Instant> {
+        self.outstanding.iter().filter_map(|o| o.deadline).min()
+    }
+
     /// Permission requests waiting for the user, including the head.
     pub fn permissions_waiting(&self) -> usize {
         self.permissions.len()

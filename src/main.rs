@@ -59,6 +59,19 @@ fn main() -> io::Result<()> {
     if inv.agent {
         config.agent.enabled = true;
     }
+    // The approvals file (`agent-approvals.toml`) is read here too: a small
+    // local read, like the config. The project is the working directory.
+    let (approvals, warning) = match approvals_path() {
+        Some(path) => rvim::agent_approval::load(&path),
+        None => (
+            rvim::agent_approval::Approvals::broken(),
+            Some("no config directory: agent approvals cannot be saved".to_owned()),
+        ),
+    };
+    ed.set_agent_approvals(approvals, warning);
+    if let Ok(dir) = std::env::current_dir() {
+        ed.set_agent_project(dir);
+    }
     let mut problems = config.warnings.clone();
     problems.extend(ed.apply_config(&config, inv.start_menu));
     ed.set_config_warnings(problems);
@@ -110,6 +123,15 @@ fn load_config() -> rvim::config::Config {
         Some(path) => rvim::config::load(&path, rvim::config::read_capped),
         None => rvim::config::Config::default(),
     }
+}
+
+/// The approvals file's path: beside `config.toml` in the config directory.
+/// None when no config directory is known.
+fn approvals_path() -> Option<PathBuf> {
+    rvim::config::config_path(|k| std::env::var_os(k), cfg!(windows)).and_then(|p| {
+        p.parent()
+            .map(|dir| dir.join(rvim::agent_approval::FILE_NAME))
+    })
 }
 
 /// The `RVIM_NO_KITTY` rule: unset, empty or `0` leaves the protocol allowed;
@@ -229,7 +251,11 @@ fn run(ed: &mut Editor) -> io::Result<Option<i32>> {
     rvim::watch::spawn(watch_rx, tx.clone());
     forward_watch(ed, &watch_tx);
     let agent_tx = tx.clone();
-    forward_agent(ed, &agent_tx);
+    let (conn_tx, conn_rx) = mpsc::channel();
+    if let Some(path) = approvals_path() {
+        rvim::agent_conn::spawn(conn_rx, tx.clone(), path);
+    }
+    forward_agent(ed, &agent_tx, &conn_tx);
     spawn_input(tx);
     while !ed.should_quit() {
         draw(&mut out, ed, &mut screen)?;
@@ -260,7 +286,7 @@ fn run(ed: &mut Editor) -> io::Result<Option<i32>> {
             }
         }
         forward_watch(ed, &watch_tx);
-        forward_agent(ed, &agent_tx);
+        forward_agent(ed, &agent_tx, &conn_tx);
         if ed.take_bell() {
             queue!(out, Print('\x07'))?;
         }
@@ -279,7 +305,16 @@ fn forward_watch(ed: &mut Editor, watch_tx: &mpsc::Sender<rvim::watch::WatchCmd>
 /// Runs the agent layer's requests (`agent_scan.rs`). A scan runs on its own
 /// worker thread and comes back as `Event::AgentScan`; the editor never waits
 /// for it, and nothing here connects to an agent.
-fn forward_agent(ed: &mut Editor, tx: &mpsc::Sender<rvim::Event>) {
+fn forward_agent(
+    ed: &mut Editor,
+    tx: &mpsc::Sender<rvim::Event>,
+    conn_tx: &mpsc::Sender<rvim::agent_conn::ConnCmd>,
+) {
+    // The connection's requests go to its manager thread (`agent_conn.rs`);
+    // a send fails only when that thread has ended.
+    for cmd in ed.take_agent_conn_commands() {
+        let _ = conn_tx.send(cmd);
+    }
     for cmd in ed.take_agent_commands() {
         match cmd {
             rvim::agent_scan::AgentCmd::Scan => {

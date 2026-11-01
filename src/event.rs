@@ -55,6 +55,12 @@ pub enum Event {
     /// A scan for agents finished (`:AgentScan`, or the scan at startup with
     /// the config's opt-in). Its thread is in `main.rs`; see `agent_scan.rs`.
     AgentScan(crate::agent_detect::ScanSummary),
+    /// An event from the agent's process (`agent_conn.rs`). `generation` is the
+    /// connection it belongs to (0 for a note that belongs to none).
+    AgentConn {
+        generation: u64,
+        event: crate::agent_conn::AgentEvent,
+    },
 }
 
 #[cfg(test)]

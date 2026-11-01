@@ -201,6 +201,8 @@ pub struct Editor {
     pub(crate) agent_scan: Option<crate::agent_detect::ScanSummary>,
     /// Agent requests not yet taken by `take_agent_commands`.
     pub(crate) agent_outbox: Vec<crate::agent_scan::AgentCmd>,
+    /// The agent connection (`agent_session.rs`): its link, consent, approvals.
+    pub(crate) agent: crate::agent_session::AgentState,
     pub(crate) message: Option<Message>,
     pub(crate) quit: bool,
     bell: bool,
@@ -310,6 +312,7 @@ impl Editor {
             agent_active: false,
             agent_scan: None,
             agent_outbox: Vec::new(),
+            agent: Default::default(),
             message: None,
             quit: false,
             bell: false,
@@ -471,8 +474,10 @@ impl Editor {
             Event::Key(k) => self.handle_key(k),
             Event::Paste(text) => self.paste(&text),
             Event::Resize(cols, rows) => self.set_screen_size(cols as usize, rows as usize),
-            Event::FocusGained | Event::FocusLost | Event::Timer | Event::Signal(_) => {}
+            Event::FocusGained | Event::FocusLost | Event::Signal(_) => {}
+            Event::Timer => self.agent_timer(std::time::Instant::now()),
             Event::AgentScan(scan) => self.agent_arrived(scan),
+            Event::AgentConn { generation, event } => self.agent_conn_event(generation, event),
             Event::FileChanged {
                 doc,
                 version,
@@ -528,7 +533,7 @@ impl Editor {
     /// if nothing else happens first. `None` means no timer is needed (there
     /// are no mappings with `timeoutlen` yet).
     pub fn next_deadline(&self) -> Option<std::time::Instant> {
-        None
+        self.agent_deadline()
     }
 
     pub fn handle_key(&mut self, key: Key) {
@@ -539,6 +544,10 @@ impl Editor {
         // The start menu takes its own keys; any other key closes it and is
         // handled below as usual.
         if self.start_menu_key(key) {
+            return;
+        }
+        // The agent consent prompt takes every key while it is up.
+        if self.agent_consent_key(key) {
             return;
         }
         // Recording: the `q` that ends it is not part of the macro; keys
@@ -616,8 +625,9 @@ impl Editor {
     /// in Visual mode it replaces the selection, and on the command line it
     /// is appended without newlines.
     pub fn paste(&mut self, text: &str) {
-        // Pasted text is data, not an answer to the conflict prompt.
-        if self.conflict.is_some() {
+        // Pasted text is data, not an answer to the conflict prompt or to the
+        // agent consent prompt (a pasted `y` would approve a connection).
+        if self.conflict.is_some() || self.agent.consent.is_some() {
             return self.beep();
         }
         self.close_start_menu();

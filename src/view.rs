@@ -414,7 +414,7 @@ fn status_line(
     // The agent indicator (PLAN.md, "Agent experience", Lifecycle) sits just
     // left of the ruler; the message keeps the cells before it. With the
     // layer off, or no room, the row is Vim's.
-    let indicator = crate::agent_detect::indicator(ed.agent_active, ed.agent_scan.as_ref());
+    let indicator = ed.agent_indicator();
     let (msg_cols, tag) = match indicator {
         Some(t) if t.len() + 2 <= ruler_col => (ruler_col - t.len() - 1, Some(t)),
         _ => (ruler_col, None),
