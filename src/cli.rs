@@ -40,6 +40,8 @@ pub struct Invocation {
     /// neither is given, so the config's `[start] menu` decides.
     pub start_menu: Option<bool>,
     pub config: ConfigUse,
+    /// `--agent`: the agent opt-in for this run, as `[agent] enabled = true`.
+    pub agent: bool,
 }
 
 /// Parses the arguments after the program name, as Vim does: options may
@@ -65,6 +67,7 @@ where
 {
     let mut start_menu = None;
     let mut config = ConfigUse::Read;
+    let mut agent = false;
     let mut path = None;
     let mut options = true;
     let mut args = args.into_iter();
@@ -75,9 +78,11 @@ where
                     options = false;
                     continue;
                 }
-                Some("-h" | "--help") => return invocation(Action::Help, start_menu, config),
+                Some("-h" | "--help") => {
+                    return invocation(Action::Help, start_menu, config, agent);
+                }
                 Some("-v" | "--version") => {
-                    return invocation(Action::Version, start_menu, config);
+                    return invocation(Action::Version, start_menu, config, agent);
                 }
                 Some("--start-menu") => {
                     start_menu = Some(true);
@@ -89,6 +94,10 @@ where
                 }
                 Some("--clean") => {
                     config = ConfigUse::Skip;
+                    continue;
+                }
+                Some("--agent") => {
+                    agent = true;
                     continue;
                 }
                 Some("-N") => continue,
@@ -123,19 +132,26 @@ where
         },
         start_menu,
         config,
+        agent,
     )
 }
 
-fn invocation(action: Action, start_menu: Option<bool>, config: ConfigUse) -> Invocation {
+fn invocation(
+    action: Action,
+    start_menu: Option<bool>,
+    config: ConfigUse,
+    agent: bool,
+) -> Invocation {
     Invocation {
         action,
         start_menu,
         config,
+        agent,
     }
 }
 
 fn usage(message: String) -> Invocation {
-    invocation(Action::Usage(message), None, ConfigUse::Read)
+    invocation(Action::Usage(message), None, ConfigUse::Read, false)
 }
 
 /// The value of `-u`: only `NONE` is supported.
@@ -164,6 +180,7 @@ Options:
   --no-start-menu    Do not show the start menu (overrides [start] menu)
   -u NONE            Do not read the config file
   --clean            The same as -u NONE
+  --agent            Turn on the agent options for this run ([agent] enabled)
   -N                 Accepted; rvim always behaves as Vim with -N
   -h, --help         Print this help and exit
   -v, --version      Print the version and exit
@@ -332,6 +349,14 @@ mod tests {
     fn after_double_dash_u_is_a_file_name() {
         assert_eq!(invocation(&["--", "-u"]).action, edit(false, Some("-u")));
         assert_eq!(invocation(&["--", "-u"]).config, ConfigUse::Read);
+    }
+
+    #[test]
+    fn agent_flag_is_the_opt_in_for_one_run() {
+        assert!(!invocation(&[]).agent);
+        assert!(invocation(&["--agent", "f.txt"]).agent);
+        assert!(invocation(&["--clean", "--agent"]).agent);
+        assert!(!invocation(&["--", "--agent"]).agent);
     }
 
     #[test]

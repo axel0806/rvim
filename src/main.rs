@@ -49,10 +49,16 @@ fn main() -> io::Result<()> {
     };
     // The config file is read here, once, before the terminal is set up. The
     // options then go through the `:set` path; the flags win over the file.
-    let config = match inv.config {
+    let mut config = match inv.config {
         rvim::cli::ConfigUse::Read => load_config(),
         rvim::cli::ConfigUse::Skip => rvim::config::Config::default(),
     };
+    // `--agent` is the opt-in for this run, the same as `[agent] enabled =
+    // true`: it sets the flag before the config is applied, so the startup
+    // scan runs too.
+    if inv.agent {
+        config.agent.enabled = true;
+    }
     let mut problems = config.warnings.clone();
     problems.extend(ed.apply_config(&config, inv.start_menu));
     ed.set_config_warnings(problems);

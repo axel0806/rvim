@@ -26,9 +26,12 @@ impl Editor {
         self.info("Scanning for agents...");
     }
 
-    /// The config's opt-in (`[agent] enabled = true`). When on, the layer is
-    /// active and a scan runs at startup. When off, nothing happens.
+    /// The config's opt-in (`[agent] enabled = true` or `--agent`). It sets
+    /// the opt-in flag that gates the conflict prompt and the write guard
+    /// (`conflict.rs`). When on, the layer is active and a scan runs at
+    /// startup. When off, nothing happens.
     pub(crate) fn agent_opt_in(&mut self, enabled: bool) {
+        self.set_agent_enabled(enabled);
         if enabled {
             self.agent_active = true;
             self.agent_outbox.push(AgentCmd::Scan);

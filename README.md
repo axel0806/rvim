@@ -105,6 +105,12 @@ use:
 - No `vimrc`: rvim reads its own `config.toml` instead (see
   [Configuration](#configuration)). No plugins, Vimscript, `:help`, folds, completion,
   spell checking, `:terminal`, or `:!` shell commands.
+- A file that changes on disk while its buffer is modified: Vim warns (W12),
+  keeps the buffer, and `:w` overwrites without asking. With the agent opt-in
+  (`[agent] enabled = true` or `--agent`, off by default) rvim asks
+  `[l]oad disk [k]eep mine [d]iff [m]erge` (the diff view is not built yet),
+  can merge with conflict markers, and `:w` refuses to overwrite a changed
+  file (`:w!` overrides). See PLAN.md, milestone 7, and "Known differences".
 - `:s`: `\=` expressions are a subset (no floats, dictionaries, user functions
   or `v:` variables; see PLAN.md, Known differences); the `\n` (NUL)
   replacement is not implemented.

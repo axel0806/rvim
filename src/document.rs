@@ -52,6 +52,13 @@ pub(crate) struct Document {
     /// What the watcher's warning last said about the file, so that the same
     /// change is warned about once (not for `:checktime`, which always says).
     pub(crate) warned: Option<Warned>,
+    /// The text last known to be on disk: read from the file or written to
+    /// it (PLAN.md, "Conflict prompt", the `[base]` text). The base of a
+    /// three-way merge. `None` with no file on disk.
+    pub(crate) baseline: Option<Vec<String>>,
+    /// The disk state the conflict prompt's `k` answer was given for. The
+    /// prompt does not come back for this state (conflict.rs).
+    pub(crate) seen: Option<DiskState>,
 }
 
 impl Document {
@@ -74,6 +81,8 @@ impl Document {
             disk: None,
             stale: None,
             warned: None,
+            baseline: None,
+            seen: None,
         }
     }
 

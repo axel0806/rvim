@@ -711,6 +711,16 @@ impl Editor {
         if !own_file && !p.bang && target.exists() {
             return self.error("E13: File exists (add ! to override)");
         }
+        // With the agent opt-in, `:w` refuses to overwrite a file that changed
+        // since it was read, or text with conflict markers (conflict.rs).
+        let guard = if own_file && !p.bang && self.agent_enabled {
+            self.write_guard(&target)
+        } else {
+            None
+        };
+        if let Some(msg) = guard {
+            return self.error(msg);
+        }
         let is_new = !target.exists();
         match self.buf().write_to(&target) {
             Ok(stats) => {
@@ -724,6 +734,9 @@ impl Editor {
                     // is of the bytes `write_to` wrote.
                     let mtime = fs::metadata(&target).ok().and_then(|m| m.modified().ok());
                     let disk = DiskState::of(mtime, &self.buf().to_bytes());
+                    let lines = self.buf().lines();
+                    self.doc_mut().baseline = Some(lines);
+                    self.doc_mut().seen = None;
                     self.doc_mut().disk = Some(disk);
                     self.doc_mut().stale = None;
                     self.doc_mut().warned = None;

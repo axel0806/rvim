@@ -67,8 +67,18 @@ pub struct Config {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct AgentConfig {
     /// `enabled = true`: the agent indicators are shown and a scan runs at
-    /// startup (`agent_scan.rs`). It turns on nothing else.
+    /// startup (`agent_scan.rs`). It also turns on the conflict prompt and
+    /// the write guard (`conflict.rs`). It turns on nothing else.
     pub enabled: bool,
+}
+
+impl Config {
+    /// Whether `[agent] enabled = true` is set: the agent opt-in (PLAN.md,
+    /// "Agent experience"). The `--agent` flag is the same switch for one
+    /// run; `main.rs` sets `agent.enabled` for it before the config is applied.
+    pub fn agent_enabled(&self) -> bool {
+        self.agent.enabled
+    }
 }
 
 /// The path of `config.toml` for an environment. `env` looks up a variable

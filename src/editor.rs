@@ -212,6 +212,12 @@ pub struct Editor {
     /// A change the watcher reported that waits for Normal mode (PLAN.md,
     /// "Reload as one undo step": applied on return to Normal mode).
     watch_queue: Option<WatchQueued>,
+    /// A modified document whose file changed on disk, waiting for the
+    /// conflict prompt's answer (`conflict.rs`). Only with the agent opt-in.
+    pub(crate) conflict: Option<crate::conflict::Conflict>,
+    /// The agent opt-in (`[agent] enabled` or `--agent`), off by default. It
+    /// turns on the conflict prompt and the write guard (`conflict.rs`).
+    pub(crate) agent_enabled: bool,
 }
 
 /// What the watcher reported about a file that is there.
@@ -310,9 +316,21 @@ impl Editor {
             watch_sent: Vec::new(),
             watch_outbox: Vec::new(),
             watch_queue: None,
+            conflict: None,
+            agent_enabled: false,
         };
         ed.fit_windows();
         ed
+    }
+
+    /// Document `id`, for code that works on a document other than the one
+    /// the current window shows (the conflict prompt, `conflict.rs`).
+    pub(crate) fn document(&self, id: DocId) -> &Document {
+        &self.documents[id.0]
+    }
+
+    pub(crate) fn document_mut(&mut self, id: DocId) -> &mut Document {
+        &mut self.documents[id.0]
     }
 
     /// Gives every window the text area of the screen. There is one window,
@@ -514,6 +532,10 @@ impl Editor {
     }
 
     pub fn handle_key(&mut self, key: Key) {
+        // The conflict prompt takes every key while it is open (conflict.rs).
+        if self.conflict.is_some() {
+            return self.conflict_key(key);
+        }
         // The start menu takes its own keys; any other key closes it and is
         // handled below as usual.
         if self.start_menu_key(key) {
@@ -594,6 +616,10 @@ impl Editor {
     /// in Visual mode it replaces the selection, and on the command line it
     /// is appended without newlines.
     pub fn paste(&mut self, text: &str) {
+        // Pasted text is data, not an answer to the conflict prompt.
+        if self.conflict.is_some() {
+            return self.beep();
+        }
         self.close_start_menu();
         let text = text.replace("\r\n", "\n").replace('\r', "\n");
         let keys = text.chars().filter_map(|c| match c {
@@ -1418,7 +1444,9 @@ impl Editor {
                 let disk = read
                     .as_ref()
                     .map(|(mtime, bytes)| DiskState::of(*mtime, bytes));
+                let lines = buf.lines();
                 self.doc_mut().reload(buf);
+                self.doc_mut().baseline = disk.as_ref().map(|_| lines);
                 self.doc_mut().disk = disk;
                 self.win_mut().cursor = Pos::default();
                 self.win_mut().curswant = 0;
@@ -1451,6 +1479,19 @@ impl Editor {
         doc: DocId,
         new: Buffer,
         source: UndoSource,
+    ) -> Option<Change> {
+        self.apply_text_change(doc, new, source, false)
+    }
+
+    /// The change behind `apply_external_change`. `modified` is the buffer's
+    /// state after it: a reload leaves the buffer unmodified, and a merge of
+    /// the conflict prompt (`conflict.rs`) leaves it modified.
+    pub(crate) fn apply_text_change(
+        &mut self,
+        doc: DocId,
+        new: Buffer,
+        source: UndoSource,
+        modified: bool,
     ) -> Option<Change> {
         let old_lines = self.documents[doc.0].buf.lines();
         let new_lines = new.lines();
@@ -1508,7 +1549,7 @@ impl Editor {
         }
         // The `U` line refers to the old text.
         d.uline = None;
-        d.buf.modified = false;
+        d.buf.modified = modified;
         let snap = d.buf.snapshot();
         d.undo.sync(snap);
         for win in self.windows.iter_mut().filter(|w| w.doc == doc) {
@@ -1565,6 +1606,19 @@ impl Editor {
             _ => None,
         };
         let repeat = from_watch && key.is_some() && d.warned == key;
+        // With the opt-in, a modified buffer whose file changed (and that has
+        // not been shown this state with `k`) opens the conflict prompt.
+        let opt_in = self.agent_enabled;
+        let prompt_seen = match &now_state {
+            Some(s)
+                if opt_in
+                    && matches!(decision, Decision::Changed { modified: true })
+                    && d.seen.as_ref() != Some(s) =>
+            {
+                Some(s.clone())
+            }
+            _ => None,
+        };
         let mut info: Option<String> = None;
         let mut error: Option<String> = None;
         let mut reloaded: Option<Option<Change>> = None;
@@ -1586,7 +1640,9 @@ impl Editor {
                 // this one had, so the buffer is kept and marked.
                 d.stale = Some(Stale::Deleted);
                 d.warned = key;
-                if !repeat {
+                if !repeat && opt_in {
+                    info = Some(format!("\"{name}\" was deleted on disk"));
+                } else if !repeat {
                     error = Some(format!("E211: File \"{name}\" no longer available"));
                 }
             }
@@ -1606,7 +1662,7 @@ impl Editor {
                 // check.
                 d.stale = Some(Stale::Changed);
                 d.warned = key;
-                if !repeat {
+                if !repeat && prompt_seen.is_none() {
                     let (warning, what) = if modified {
                         (
                             "W12: Warning",
@@ -1620,29 +1676,26 @@ impl Editor {
             }
             Decision::Reload => {}
         }
+        if let Some(seen) = prompt_seen {
+            self.open_conflict(doc, seen);
+            if !repeat {
+                info = Some(crate::conflict::prompt_message(&name));
+            }
+        }
         if let (Decision::Reload, Some(bytes)) = (decision, bytes) {
             // Unmodified, and 'autoread' is on: reload as one undo step.
             let (new, _) = Buffer::from_file_bytes(&path, Some(bytes));
+            let lines = new.lines();
             let change = self.apply_external_change(doc, new, UndoSource::External);
             let d = &mut self.documents[doc.0];
+            d.baseline = Some(lines);
             d.disk = now_state;
             d.stale = None;
             d.warned = None;
             reloaded = Some(change);
         }
         if let Some(change) = reloaded {
-            info = Some(match change {
-                None => format!("\"{name}\" changed on disk"),
-                Some(c) if c.fallback => {
-                    format!(
-                        "\"{name}\" changed on disk; line diff too large, cursor kept on its line"
-                    )
-                }
-                Some(c) => format!(
-                    "\"{name}\" changed on disk: +{} -{} lines",
-                    c.added, c.removed
-                ),
-            });
+            info = Some(crate::conflict::reload_message(&name, change));
         }
         if let Some(text) = info {
             self.info(text);
