@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Options that change tab handling: 'tabstop', 'softtabstop', 'smarttab' and
 //! 'shiftround'. Each option is set with `:set` in the case's keys, which
 //! runs in both rvim and Vim; the harness resets them before every case.

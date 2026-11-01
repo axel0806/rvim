@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Vim
+// Derived in part from Vim (https://www.vim.org); see LICENSE-VIM.
+// This is a modified version, not the official Vim.
 //! Normal and Visual mode: parsing `["x][count]cmd[count][motion]` key
 //! sequences, the motions (ports of Vim's normal.c `nv_*` functions) and
 //! command dispatch. Operators themselves live in ops.rs.

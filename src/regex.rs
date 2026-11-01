@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Vim
+// Derived in part from Vim (https://www.vim.org); see LICENSE-VIM.
+// This is a modified version, not the official Vim.
 //! Vim regular expressions: a backtracking matcher for Vim's pattern syntax
 //! (`\v \m \M \V` modes, `\{}`, `\(\)`, `\%(\)`, `\|`, `\&`, `\zs`, `\ze`,
 //! look-around, character classes, `\_x` multi-line forms, `\n`).

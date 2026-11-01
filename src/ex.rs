@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Vim
+// Derived in part from Vim (https://www.vim.org); see LICENSE-VIM.
+// This is a modified version, not the official Vim.
 //! Ex commands typed after `:`: line ranges (numbers, `.`, `$`, `%`, `'<`,
 //! `/pat/`, offsets, `,` and `;`), files (`:w :q :wq :x :e :r`), line commands
 //! (`:d :y :pu :m :t :j :> :<`), `:s`, `:g`, `:normal`, `:undo`, `:set`.

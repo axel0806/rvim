@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Runs keys on a text and prints the result: `try "text" "keys"`.
 use rvim::{Editor, Key, Mode};
 

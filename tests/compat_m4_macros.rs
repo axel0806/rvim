@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Macros (`q`, `@`) checked against Vim, including the register contents
 //! that recording leaves behind. (The harness runs Vim under `silent!`, where
 //! an error does not flush typeahead, so macros never abort there; abort on

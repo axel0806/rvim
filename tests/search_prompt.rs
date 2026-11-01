@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The `/` and `?` prompt cases the differential harness cannot compare:
 //! cancelling (the harness runs Vim in silent Ex mode, which types `<Esc>`
 //! into a prompt), what is drawn while the prompt is open, and history

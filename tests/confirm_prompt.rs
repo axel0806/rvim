@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The `:s` `c` flag prompt where the differential harness cannot compare:
 //! what is shown while it waits, a typed `<Esc>` (the harness runs Vim in
 //! silent Ex mode, where `<Esc>` on an answer line is not a plain answer),

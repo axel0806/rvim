@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Bracketed paste is data: it must never run as commands, and it is one
 //! undo step. (Vim's harness cannot send a paste, so these are unit tests.)
 

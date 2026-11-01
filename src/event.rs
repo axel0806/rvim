@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Everything that can happen to the editor, as one enum. The front end
 //! reads the terminal on one thread, workers (file watching, agents,
 //! prediction, highlighting) send events too, and the main loop feeds them to

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Vim
+// Derived in part from Vim (https://www.vim.org); see LICENSE-VIM.
+// This is a modified version, not the official Vim.
 //! Undo tree. Every node holds the full text after its change as a rope
 //! snapshot; ropes share structure, so this costs memory proportional to the
 //! edits. Each change also records the line region it touched (Vim's undo

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Vim
+// Derived in part from Vim (https://www.vim.org); see LICENSE-VIM.
+// This is a modified version, not the official Vim.
 //! Operators, ported from Vim's ops.c and register.c: the
 //! `do_pending_operator()` setup, delete, yank, change, shift, case
 //! changes, replace, block insert/append, join and put.

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! The jumplist (`<C-o>`, `<C-i>`/`<Tab>` with counts, `:jumps`) and the
 //! previous context mark (`''`, ``` `` ```, `m'`, ``` m` ```) checked against
 //! Vim: which commands are jumps, how the list and the mark follow line

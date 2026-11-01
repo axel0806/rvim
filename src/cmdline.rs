@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Vim
+// Derived in part from Vim (https://www.vim.org); see LICENSE-VIM.
+// This is a modified version, not the official Vim.
 //! Command-line mode: editing keys, `<C-r>` insertion and history. It serves
 //! `:` and the `/` and `?` prompts that complete a search motion (`/pat`,
 //! `d/pat`, `v?pat`). For a search the keys before the prompt wait in

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Turns editor state into screen rows: line wrapping ('wrap' is on), `~`
 //! filler rows, `@` rows for a partly visible last line, and the command/
 //! ruler line. The window's top line and size are part of the `Editor` (see

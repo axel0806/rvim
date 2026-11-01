@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Terminal front end: `rvim [file]`.
 
 use crossterm::cursor::{Hide, MoveTo, SetCursorStyle, Show};

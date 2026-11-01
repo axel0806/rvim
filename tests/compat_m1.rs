@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Milestone 1 behaviour checked against real Vim (see tests/common).
 
 mod common;

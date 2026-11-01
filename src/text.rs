@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Display widths and virtual columns (Vim's control-character notation and
 //! tabs of width 'tabstop'). Every function takes the tabstop `ts` as an
 //! argument, so cursor movement and rendering always agree.

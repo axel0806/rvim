@@ -1,0 +1,47 @@
+rvim
+Copyright (c) 2026 Axel Furtenbach
+
+The copyright holder shown above is the name of the git author of this
+repository's commits. The owner should confirm it.
+
+rvim is a Vim-compatible text editor in Rust. It has two licenses, chosen per
+file. Each source file's first line is an SPDX identifier that says which one
+applies. The arrangement follows Neovim's, which is Apache-2.0 for the project
+with the parts contributed under the Vim license kept under that license. The
+difference is that rvim marks each file, where Neovim's C sources carry no
+per-file header. The Apache-2.0 grant covers all of rvim except the files
+marked Vim below.
+
+1. Apache License, Version 2.0 (LICENSE). Applies to rvim's own code: every
+   file whose first line is "// SPDX-License-Identifier: Apache-2.0".
+
+2. Vim license (LICENSE-VIM). Applies to the files derived from Vim's C source
+   or algorithms. Each of them has the first line
+   "// SPDX-License-Identifier: Vim" and, on the second line, a note that it is
+   derived in part from Vim and is a modified version. These files are:
+
+   src/buffer.rs      mark adjustment for lowercase marks (Vim's mark_adjust)
+   src/cmdline.rs     command-line history (Vim's histadd)
+   src/editor.rs      editor state, undo and redo glue, Insert mode (Vim's u_sync, open_line, start_arrow)
+   src/ex.rs          Ex commands; the :s loops port Vim's do_sub()
+   src/jumplist.rs    jumplist and context mark (Vim's setpcmark, checkpcmark, cleanup_jumplist, movemark)
+   src/motion.rs      word motions (fwd_word, bck_word, end_word), findmatchlimit(), utf_class table
+   src/normal.rs      Normal and Visual commands (ports of Vim's normal.c nv_* functions)
+   src/ops.rs         operators (Vim's ops.c and register.c)
+   src/regex.rs       regular expressions (semantics follow Vim's backtracking engine)
+   src/register.rs    registers (Vim's register.c)
+   src/scroll.rs      scroll commands (Vim's scroll and halfpage logic; marked conservatively)
+   src/search.rs      searchit(), do_search(), current_search() (ports of Vim's search.c)
+   src/textobject.rs  text objects (ported from Vim's textobject.c)
+   src/undo.rs        undo tree (Vim's u_undoredo model)
+
+   The marking of buffer.rs, cmdline.rs, editor.rs, register.rs, regex.rs,
+   scroll.rs and undo.rs is conservative. It is not an assertion that each
+   line is a copy of Vim's code. The owner has not yet reviewed these files
+   line by line against Vim's source.
+
+Vim is by Bram Moolenaar and the Vim contributors (https://www.vim.org). The
+Vim license text, with Vim's own notices, is in LICENSE-VIM. It is unchanged.
+
+This is a modified version of Vim, not the official Vim. For bug reports
+about this version, open an issue at https://github.com/axel0806/rvim/issues.

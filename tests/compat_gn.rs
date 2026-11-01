@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! `gn` and `gN` in Normal, Visual and operator-pending mode, checked against
 //! real Vim, plus the error paths of `:r` (the harness cannot create files,
 //! so successful `:r` is tested by unit tests in `src/ex.rs`).

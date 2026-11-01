@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Macros: `q{reg}` records typed keys, `@{reg}` replays a register.
 
 use crate::editor::Editor;

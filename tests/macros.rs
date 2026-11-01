@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! A failing command ends macro execution (Vim flushes the typeahead). The
 //! differential harness cannot see this, see `compat_m4_macros.rs`.
 

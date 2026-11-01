@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! rvim: a Vim-compatible editor core. The library has no terminal
 //! dependency; `main.rs` is the crossterm front end.
 

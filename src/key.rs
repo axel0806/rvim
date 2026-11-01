@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Keys as the editor core sees them, independent of any terminal library.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

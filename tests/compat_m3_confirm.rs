@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! `:s` with the `c` flag (confirm), checked against real Vim.
 //!
 //! Vim runs in silent Ex mode here. A prompt there reads one line per answer

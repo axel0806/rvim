@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Window top line, scrolling with wrapped lines, 'scrolloff' and resizing.
 //! These are what the differential harness cannot see (Vim run without a
 //! terminal does not keep its window up to date; see PLAN.md, "Scrolling and

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Milestone 2 behaviour checked against real Vim (see tests/common):
 //! operators, registers, undo, `.`, text objects and Visual mode.
 //!

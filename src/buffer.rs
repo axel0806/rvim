@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Vim
+// Derived in part from Vim (https://www.vim.org); see LICENSE-VIM.
+// This is a modified version, not the official Vim.
 //! Text storage. A buffer is a list of lines held in a rope; lines are joined
 //! by `\n` and the file's final newline is not stored (Vim's 'eol' model).
 //! Positions are (line, char) pairs, both zero-based.

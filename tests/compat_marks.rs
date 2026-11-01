@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Lowercase marks checked against Vim: `m{a-z}`, `'a` and `` `a `` (also as
 //! operator motions and Visual ends), `:k`/`:mark`, `'a` as an Ex address,
 //! and how marks follow line and column changes, undo and `:m`.

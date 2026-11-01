@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Vim
+// Derived in part from Vim (https://www.vim.org); see LICENSE-VIM.
+// This is a modified version, not the official Vim.
 //! `/ ? n N * #`: a port of Vim's `searchit()` and `do_search()` (search.c),
 //! including the 'cpoptions' `c` behaviour of the default Vim.
 

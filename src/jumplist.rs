@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Vim
+// Derived in part from Vim (https://www.vim.org); see LICENSE-VIM.
+// This is a modified version, not the official Vim.
 //! The jumplist and the previous context mark (`''`), ports of Vim's
 //! `setpcmark()`, `checkpcmark()`, `cleanup_jumplist()` and `movemark()` in
 //! mark.c. In Vim these belong to the window, not the buffer, so they live

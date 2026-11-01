@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Milestone 4 input: Insert, function keys, Alt, Shift-Tab.
 
 mod common;

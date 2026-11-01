@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! `:set` messages and errors (the Vim harness only sees buffer effects).
 
 use rvim::Editor;

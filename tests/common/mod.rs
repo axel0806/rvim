@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Differential testing against a real Vim. Every case is a starting text and
 //! a key sequence in Vim notation. All cases run in one headless Vim process
 //! (`vim -N -u NONE -es`, i.e. Vim defaults without any vimrc), fed with

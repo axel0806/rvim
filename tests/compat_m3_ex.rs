@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Ex commands checked against real Vim: ranges, line commands, `:s`,
 //! `:g` and `:normal`.
 

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Vim
+// Derived in part from Vim (https://www.vim.org); see LICENSE-VIM.
+// This is a modified version, not the official Vim.
 //! The window's top line and the scroll commands: `CTRL-E CTRL-Y CTRL-F
 //! CTRL-B CTRL-D CTRL-U`, `zt zz zb z<CR> z. z-`, and `H M L`, with
 //! 'scrolloff' and wrapped lines. The top line (Vim's `w_topline`) is a field

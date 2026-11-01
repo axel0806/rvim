@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Scrolling commands checked against Vim (CTRL-E/Y/F/B/D/U, zt/zz/zb,
 //! z<CR>/z./z-, H/M/L with counts and as operator motions, 'scrolloff').
 //!

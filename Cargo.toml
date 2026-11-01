@@ -3,7 +3,7 @@ name = "rvim"
 version = "0.1.0"
 edition = "2024"
 description = "A Vim-compatible text editor in Rust, derived from Vim"
-license = "Vim"
+license = "Apache-2.0 AND Vim"
 repository = "https://github.com/axel0806/rvim"
 
 [dependencies]

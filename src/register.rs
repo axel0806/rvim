@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Vim
+// Derived in part from Vim (https://www.vim.org); see LICENSE-VIM.
+// This is a modified version, not the official Vim.
 //! Registers, following Vim's register.c: `"0` gets yanks, `"1`-`"9` shift
 //! on multi-line deletes, `"-` gets small deletes, `"a`-`"z` (append with
 //! `"A`-`"Z`), `"_` discards, and `""` points at the last written register.

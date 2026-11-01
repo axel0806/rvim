@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Emergency recovery files: when rvim panics, the text of a modified buffer
 //! is written here so no work is lost. (Swap files come with milestone 5.)
 

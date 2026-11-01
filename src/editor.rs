@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Vim
+// Derived in part from Vim (https://www.vim.org); see LICENSE-VIM.
+// This is a modified version, not the official Vim.
 //! The editor state machine: modes, Insert/Replace mode, the command line,
 //! and the glue to undo, registers and `.`. Normal and Visual mode commands
 //! are in normal.rs, operators in ops.rs. No terminal dependency: tests

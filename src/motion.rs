@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Vim
+// Derived in part from Vim (https://www.vim.org); see LICENSE-VIM.
+// This is a modified version, not the official Vim.
 //! Cursor motions. The word motions are ports of Vim's `fwd_word`,
 //! `bck_word` and `end_word` (src/textobject.c) including their quirks, so
 //! they walk the buffer exactly like Vim's `inc_cursor`/`dec_cursor`: the

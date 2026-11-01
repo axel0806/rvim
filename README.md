@@ -133,12 +133,21 @@ compare the lines, cursor, modified flag and registers.
 
 ## License
 
-rvim is a modified version of Vim: parts of it (for example the word
-motions, the word-class table, the search and `:s` code) are translated from
-Vim's C source. It is therefore distributed under the [Vim license](LICENSE),
-which also applies to the rest of the code. As the license requires,
-`:version` and the startup message say that this is a modified Vim, not the
-official one.
+rvim has two licenses, and each source file says which one applies in its
+first line (`// SPDX-License-Identifier: ...`):
+
+- [Apache License 2.0](LICENSE) for rvim's own code. Files marked
+  `Apache-2.0` are under it.
+- [Vim license](LICENSE-VIM) for the parts derived from Vim. Files marked
+  `Vim` are under it. They are translations of Vim's C source or algorithms,
+  for example the word motions, text objects, operators, normal-mode
+  commands, search, the jumplist, the `:s` loops and the register and undo
+  code. [NOTICE](NOTICE) lists every such file and the reason.
+
+A file that contains code derived from Vim is under the Vim license as a
+whole. The conditions for modified versions are in LICENSE-VIM. As that
+license requires, `:version` and the startup message say that this is a
+modified Vim, not the official one.
 
 Vim is by Bram Moolenaar and the Vim contributors (https://www.vim.org).
 

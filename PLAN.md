@@ -41,7 +41,6 @@ restored by undo in `undo.rs`), and the scrolling commands with `scrolloff`
 **In progress** (as of 2026-11-01; maintained by the orchestrator, and an
 entry is removed when its branch lands on main):
 
-- Licensing (Apache-2.0 for new code, Vim license for Vim-derived files): being built by a Haiku agent (branch name pending); the owner approved this on 2026-11-01.
 - `:s` `\=` expressions and scrolling in the `c` prompt (`<C-e>`, `<C-y>`): being built by a Haiku agent (branch name pending); last open items of milestone 3.
 
 **Suggested order for what is left:** (1) Document/Window split, (2) splits +
@@ -53,11 +52,12 @@ pane wait for splits. (4) hlsearch/incsearch/syntax, (5) prediction. Cut a new r
 milestone lands; `.github/workflows/release.yml` builds the binaries.
 
 **Planned additions from the owner's todo (2026-11-01).** These are plans
-only. Nothing listed here is built, and the milestone table above is unchanged.
+only. Apart from the License item, which is done, nothing listed here is built,
+and the milestone table above is unchanged.
 
 - Start menu at startup, off by default: see "Start menu" (milestone 6).
-- License: Apache-2.0 for new code and the Vim license for Vim-derived code,
-  pending the owner's decision: see "Licensing".
+- License: Apache-2.0 for new code and the Vim license for Vim-derived code.
+  Implemented 2026-11-01; see "Licensing".
 - Neovim-inspired features, reimplemented from Neovim's documentation: see
   "Neovim-inspired features" (milestone 9 and later).
 - Lua extension layer: see "Lua extensions" (milestone 9).
@@ -1608,16 +1608,60 @@ have unit tests (for layout, on the styled `Frame` once milestone 4 lands).
 
 ## Licensing
 
-Status: a planning note. Nothing in this section is in effect. `LICENSE`,
-`Cargo.toml` and the README's License section are unchanged. The owner must
-confirm the scheme below, and should get legal advice, before any relicensing.
+Status: implemented on 2026-11-01, after the owner approved the scheme that
+day. This is not legal advice: no lawyer has reviewed the scheme, the Vim
+license, or Apache-2.0 compatibility. Counsel review is still open (see "Open
+questions"). What is in effect:
 
-**Current state** (checked 2026-11-01):
+- `LICENSE` is the Apache-2.0 text, verbatim. `LICENSE-VIM` is the old Vim
+  license text, kept as LICENSE-VIM (verbatim copy of the previous LICENSE).
+- `NOTICE` lists every Vim-licensed file and the Vim attribution.
+- Every `.rs` file under `src/`, `tests/` and `examples/` has an SPDX line
+  first. `tests/license_headers.rs` fails if one is missing (no Vim needed).
+- `Cargo.toml` has `license = "Apache-2.0 AND Vim"`. Cargo accepted the
+  expression for `cargo build` and `cargo package --list`. Whether crates.io
+  and the AUR accept the identifier `Vim` is still UNVERIFIED, so `license-file`
+  is the fallback if they do not.
+- The README's License section explains the two licenses.
+- The `VERSION_MESSAGE` notice in `src/lib.rs` is unchanged (condition II.3).
 
-- `LICENSE` is the full Vim license text. `Cargo.toml` has
-  `license = "Vim"`. The README's License section says the whole project is
-  under the Vim license. `VERSION_MESSAGE` in `src/lib.rs` carries the
-  modified-version notice that condition II.3 requires.
+**Per-file result** (classified 2026-11-01 from the header comments and the
+Vim C names they cite; Vim = `SPDX-License-Identifier: Vim`, the rest
+Apache-2.0):
+
+| Area | Files | Class |
+|---|---|---|
+| Word motions, findmatchlimit, utf_class | `src/motion.rs` | Vim |
+| Text objects | `src/textobject.rs` | Vim |
+| Operators, registers as ported from ops.c | `src/ops.rs` | Vim |
+| Normal and Visual commands (`nv_*`) | `src/normal.rs` | Vim |
+| Search (`searchit`, `do_search`, `current_search`) | `src/search.rs` | Vim |
+| Ex commands (`:s` loops are a port of `do_sub`) | `src/ex.rs` | Vim (mixed) |
+| Jumplist and context mark | `src/jumplist.rs` | Vim |
+| Registers (`register.c`) | `src/register.rs` | Vim (conservative) |
+| Undo tree (`u_undoredo` model) | `src/undo.rs` | Vim (conservative) |
+| Command-line history (`histadd`) | `src/cmdline.rs` | Vim (conservative) |
+| Editor state, `u_sync`, `open_line`, `start_arrow` | `src/editor.rs` | Vim (conservative) |
+| Regex (Vim's backtracking semantics) | `src/regex.rs` | Vim (conservative) |
+| Scrolling (`halfpage`, `nv_scroll` logic) | `src/scroll.rs` | Vim (conservative) |
+| Lowercase marks (`mark_adjust` model) | `src/buffer.rs` | Vim (conservative) |
+| Event loop, keys, options, macros, recovery, text widths, view, lib, main | `src/event.rs`, `src/key.rs`, `src/options.rs`, `src/macros.rs`, `src/recovery.rs`, `src/text.rs`, `src/view.rs`, `src/lib.rs`, `src/main.rs` | Apache-2.0 |
+| Tests (rvim's own differential cases and harness) | `tests/*.rs`, `tests/common/mod.rs`, `tests/license_headers.rs` | Apache-2.0 |
+| Example | `examples/try.rs` | Apache-2.0 |
+
+"Conservative" means the file's comments name a Vim function or model but the
+owner has not checked it line by line against Vim's source. These seven files
+need owner review, and they stay Vim until it is done. Their status is not an
+assertion that each line is a copy of Vim's code.
+
+**Contributor rule** (for `CONTRIBUTING.md`, not yet written): a contribution
+to an Apache-2.0 file is Apache-2.0. A contribution to a Vim-licensed file
+stays under the Vim license. Porting Vim code is declared in the commit message
+and the PR, and the new file gets the Vim header.
+
+**Previous state** (before 2026-11-01, kept for the record): `LICENSE` was the
+full Vim license text, `Cargo.toml` had `license = "Vim"`, and no file had an
+SPDX identifier.
 - No file under `src/` has an SPDX identifier or a copyright line.
 
 **Goal.** Apache-2.0 for rvim's new code. The Vim license for parts derived
@@ -1675,8 +1719,8 @@ copies of Vim's test suite (`src/testdir`), and must stay that way.
 - **Files.**
   - `LICENSE`: Apache-2.0 text, for new code. It replaces the Vim text only
     when the scheme is adopted.
-  - `LICENSE-VIM`: the current Vim license text, byte for byte, moved with
-    `git mv`. Renaming does not change the text.
+  - `LICENSE-VIM`: the current Vim license text, byte for byte, kept as
+    LICENSE-VIM (verbatim copy of the previous LICENSE).
   - `NOTICE`: Apache-2.0 attribution, the Vim attribution (Bram Moolenaar and
     the Vim contributors) and the modified-version statement.
   - README License section: explains both files and which files are which.
@@ -1698,11 +1742,23 @@ copies of Vim's test suite (`src/testdir`), and must stay that way.
   5. The modified-version message stays in `:version` and the intro screen in
      every case.
 
-**Open questions.** The copyright holder for new code. CLA or DCO. Whether
-`scroll.rs` and `regex.rs` are derived or new (a line-by-line check against
-Vim's source is needed). Whether the Vim-derived code should move to a
-separate crate. Keeping the whole project under the Vim license (today's
-state) is the simplest option and needs no change.
+**Open questions.**
+
+- Legal review (not done; this is not legal advice): the Vim license, whether
+  Apache-2.0 meets its "does not restrict" test (II.2.c), whether a
+  Vim-derived file can be re-headed, and whether `Apache-2.0 AND Vim` is an
+  acceptable license field for crates.io and the AUR.
+- Owner review of the seven "conservative" files (`buffer.rs`, `cmdline.rs`,
+  `editor.rs`, `regex.rs`, `register.rs`, `scroll.rs`, `undo.rs`). A
+  line-by-line check against Vim's source could move some of them to
+  Apache-2.0. Until then they stay Vim.
+- The copyright holder for new code. `NOTICE` uses the git author name
+  (Axel Furtenbach); the owner should confirm it. No per-file copyright lines
+  were added.
+- CLA or DCO for contributions. Not decided.
+- Whether the Vim-derived code should move to a separate crate, so that new
+  code is not in a Vim-licensed file. Keeping the whole project under the
+  Vim license was the simplest option and is what this scheme replaced.
 
 ## Repository and packaging
 
@@ -1752,8 +1808,8 @@ stays the release path.
 - **Depends on** the release archives and checksums, `make install` with
   `PREFIX` and `DESTDIR`, and `LICENSE*` being installed. It should not start
   before the Makefile, `LICENSE-VIM` and `INSTALL.md` exist.
-- **License field.** Matches the decision in "Licensing". Until then it is
-  `Vim`. Whether the AUR accepts the identifier `Vim` is UNVERIFIED.
+- **License field.** Matches "Licensing": `Apache-2.0 AND Vim` since
+  2026-11-01. Whether the AUR accepts the identifier `Vim` is UNVERIFIED.
 - **Name check** (UNVERIFIED, not yet done). Search the AUR, crates.io, Homebrew
   and the major distribution repositories for existing `rvim` packages, and
   check the name's trademark status, before publishing. Rename if it is taken.

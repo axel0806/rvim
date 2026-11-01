@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Vim
+// Derived in part from Vim (https://www.vim.org); see LICENSE-VIM.
+// This is a modified version, not the official Vim.
 //! Text objects (`iw aw iW aW is as ip ap i( a( ib i{ iB i[ i< i" i' i\``),
 //! ported from Vim's textobject.c with 'selection' fixed to "inclusive".
 //!

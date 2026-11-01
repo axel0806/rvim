@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Typed option registry. Every option is one table entry; `:set` works from
 //! the table. Scopes are recorded for the Document/Window split (milestone 4a);
 //! until then all values live in one `Options`.

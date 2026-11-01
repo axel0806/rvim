@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 //! Command-line editing keys and history, checked against Vim. The command
 //! line effects show in the buffer, so commands are chosen to differ visibly.
 //! (Vim runs in Ex mode here, where `<BS>` on an empty line does not cancel
