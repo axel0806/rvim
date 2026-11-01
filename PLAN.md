@@ -2050,9 +2050,19 @@ plan, kept for the record; the files are the source of truth.
   must not: it polls on a worker thread and delivers `FileChanged` events that
   carry the document version.
 - Command-line flags: `-v` means `--version` in rvim, but Vim's `-v` starts
-  Vi mode (rvim has no Vi mode). Vim's other flags (`-u`, `-N`, `-R`, `-es`,
-  and so on) are not parsed; an unknown `-x` is taken as a file name, as
-  before.
+  Vi mode (rvim has no Vi mode). `-u` takes only `NONE` (skips the config
+  file); any other `-u` value is a usage error, exit 2, where Vim reads that
+  vimrc. `-N` is accepted and does nothing; `--clean` is `-u NONE`. Vim's
+  other flags (`-R`, `-es`, and so on) are not parsed; an unknown `-x` is
+  taken as a file name, as before.
+- Message line width: the message line is cut at the ruler column (the
+  width minus 18), so on a terminal narrower than about 80 columns the start
+  message's modified-Vim notice (`VERSION_MESSAGE`, about 170 characters) is
+  cut after about 62 characters, and the `[config: N warnings, see
+  :ConfigWarnings]` suffix may not show at all. Pre-existing for the intro
+  message. Shown in full: `--version` (printed to stdout) and the start
+  menu (drawn in the frame). Also cut at the same column, because they use
+  the message line: `:version` (the notice) and `:ConfigWarnings` (the list).
 - Emoji use approximate block ranges instead of Vim's full `emoji_all` table
   for word motions; composing characters are separate characters.
 - Option scopes (`options.rs`, "Options registry" in this file) follow Vim
