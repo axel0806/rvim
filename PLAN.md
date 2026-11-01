@@ -7,7 +7,7 @@ a real Vim by the differential harness in `tests/common/mod.rs`.
 
 ## Status: read this first
 
-Last updated 2026-11-01 (CI first ran on GitHub; Linux builds Vim 9.1.1914 from source, and all three OS jobs require Vim; cell-level diff redraw in `redraw.rs`). **rvim is an alpha, roughly 25-30% of this plan.**
+Last updated 2026-11-01 (CI first ran on GitHub; Linux builds Vim 9.1.1914 from source, and all three OS jobs require Vim; cell-level diff redraw in `redraw.rs`; kitty keyboard protocol, with `RVIM_NO_KITTY=1` to turn it off). **rvim is an alpha, roughly 25-30% of this plan.**
 As of 2026-11-01 milestones 1-3 are done; 4 and 5 are partly done; 6 has the start menu only; 7-9 are plans.
 Released as `v0.1.0-alpha.1`, `v0.1.0-alpha.2` and `v0.1.0-alpha.3`. The next release is `v0.1.0-alpha.4`, not yet tagged. All tests pass against Vim 9.1 and clippy/fmt are
 clean at the last commit.
@@ -16,7 +16,7 @@ clean at the last commit.
 |---|---|
 | 1 Core, 2 Vim grammar | Done |
 | 3 Search and Ex | 100%. `:s` `\=` expressions done as the subset in `src/expr.rs` (see Known differences) |
-| 4 Foundation | ~75%. Left: the Document/Window/Editor split (the biggest item; see "Foundation"), kitty keyboard protocol, real local/global option scopes (`:setlocal`/`:setglobal` semantics; `:setlocal` is accepted as an alias of `:set`, `:setglobal` does not exist), recovery on terminal close (SIGHUP) |
+| 4 Foundation | ~75%. Left: the Document/Window/Editor split (the biggest item; see "Foundation"), real local/global option scopes (`:setlocal`/`:setglobal` semantics; `:setlocal` is accepted as an alias of `:set`, `:setglobal` does not exist), recovery on terminal close (SIGHUP) |
 | 5 Windows and buffers | ~30%. Done: macros (`q`, `@`, `@@`, `@:`), lowercase marks (`m{a-z}`, `'a`, `` `a ``, `:k`, `:mark`, `'a` addresses), the jumplist (`<C-o>`, `<Tab>` with counts, `:jumps`) and the context mark (`''`, `` `` ``, `m'`, `` m` ``), scrolling (`<C-e> <C-y> <C-f> <C-b> <C-d> <C-u> zt zz zb z<CR> z. z- H M L`, counts, `scrolloff`, wrapped lines). Left: splits, buffer list, the other marks (uppercase, `'[`/`']`, `'<`/`'>` motions), swap files |
 | 6 Modern editing experience | Started, not near done. Landed: the start menu (opt-in `--start-menu`, `startmenu` option). Left: hlsearch, incsearch, syntax, line numbers, config file, palette, mouse, `:Start`, the start menu's recent files, Config and agent entries, and its modern-profile default (see "Start menu") |
 | 7 Agent integration | 0%. Not started (file-change reload as an undo step, diff view, ACP connector, agent detection). Research is in "Detecting and connecting to agents" |
@@ -251,7 +251,7 @@ What the revised milestones fix, as the code stands today:
    match (`scroll::scroll_window_for_prompt`; tests in `tests/confirm_prompt.rs`,
    not probed in Vim: `-es` does not show the window).
    Marks in Ex addresses (`'a`) are done with the marks (milestone 5).
-4. **Foundation (in progress).** Done: bracketed paste, Alt/F-keys/Insert/Shift-Tab, Visual area drawn via highlight groups, cell-level diff redraw (`redraw.rs`), options registry (`autoindent`, `expandtab`, `shiftwidth`), panic recovery files, channel-based event loop with an input thread. Left: the Document/Window/Editor split, kitty keyboard protocol, real option scopes (`:setlocal`/`:setglobal`; `:setlocal` is only an alias of `:set` for now), SIGHUP recovery. Original description: Restructure before adding more features, because windows,
+4. **Foundation (in progress).** Done: bracketed paste, Alt/F-keys/Insert/Shift-Tab, kitty keyboard protocol, Visual area drawn via highlight groups, cell-level diff redraw (`redraw.rs`), options registry (`autoindent`, `expandtab`, `shiftwidth`), panic recovery files, channel-based event loop with an input thread. Left: the Document/Window/Editor split, real option scopes (`:setlocal`/`:setglobal`; `:setlocal` is only an alias of `:set` for now), SIGHUP recovery. Original description: Restructure before adding more features, because windows,
    agents and prediction all depend on it. Order, each step landing with the
    differential tests green: (a) Document/Window/Editor split, (b) internal
    event loop, (c) styled frame with the Visual area drawn, (d) diff redraw,
@@ -358,10 +358,15 @@ enum Event { Key(Key), Paste(String), Resize(w, h), FocusGained, FocusLost,
   Insert, Ctrl with non-letters. `convert()` maps them all; keys with no
   meaning are ignored, not errors. The Vim notation parser used by tests gets
   `<A-x>`, `<F5>`, `<S-Tab>`, `<Insert>`.
-- Where the terminal supports it, push the kitty keyboard protocol flags
-  (`PushKeyboardEnhancementFlags`, disambiguate escape codes), so `<C-i>` vs
-  `<Tab>`, `<C-m>` vs `<CR>` and `<Esc>` vs Alt-key are told apart. Fall back
-  silently to legacy input. This also removes the escape-time delay.
+- Where the terminal supports it, rvim pushes the kitty keyboard protocol flag
+  `DISAMBIGUATE_ESCAPE_CODES` (only that flag; no release or repeat events),
+  so `<C-i>` vs `<Tab>`, `<C-m>` vs `<CR>` and `<Esc>` vs Alt-key are told
+  apart on the wire. Done in `main.rs`: `supports_keyboard_enhancement` is
+  checked first, the flag is popped on every exit path (`restore_terminal`,
+  which the panic hook also calls), and `RVIM_NO_KITTY=1` turns it off. The
+  key mapping gives the same keys as the legacy bytes (`<C-i>` is `<Tab>`,
+  as in Vim). Unit tests in `main.rs` cover the table; the protocol itself
+  is a manual checklist item (see "Known differences").
 
 ### Options registry
 
@@ -1602,7 +1607,7 @@ possibly the ACP crate (check).
 | File changes | mtime/size polling | `notify` later, optional |
 | Local IPC | `interprocess` 2.4.7 (`local_socket`) | One API for Unix socket and Windows named pipe; std alone has no named pipes. Set permissions, handle stale socket files |
 | WebSocket (Claude Code IDE server) | `tungstenite` 0.30.0, blocking | One thread per client; bind 127.0.0.1 only and require a token |
-| Terminal input | `crossterm` 0.29 | Bracketed paste, focus events and kitty flags are in the API; always feature-detect (`supports_keyboard_enhancement`). Whether 0.29 delivers paste, focus and kitty events on Windows (conhost vs Windows Terminal) is UNVERIFIED: test both and keep fallbacks. Filter `KeyEventKind::Release` |
+| Terminal input | `crossterm` 0.29 | Bracketed paste, focus events and kitty flags are in the API; always feature-detect (`supports_keyboard_enhancement`). Whether 0.29 delivers paste and focus events on Windows (conhost vs Windows Terminal) is UNVERIFIED: test both and keep fallbacks. On Windows 0.29 reports no keyboard-enhancement support (`supports_keyboard_enhancement` returns `false`), so the kitty protocol is off there, including in Windows Terminal and WezTerm. Filter `KeyEventKind::Release` |
 | Syntax highlighting | `tree-sitter` 0.27 with per-language `tree-sitter-<lang>` crates | Needs a C compiler (also in CI); each grammar adds roughly 0.3-3 MB (UNVERIFIED), so bundle a small set (about 10) and keep a regex highlighter as fallback. `tree-sitter-language-pack` bundles 372 languages; too large, loading model UNVERIFIED |
 | Terminal pane | `portable-pty` 0.9 plus `vt100` 0.18 | ConPTY on Windows 10 1809+. `portable-pty` has had no release since February 2025; expect ConPTY quirks |
 | Prediction providers | blocking HTTP (`ureq`, version UNVERIFIED) with small `serde_json` request types per provider | FIM endpoints (Ollama `/api/generate` with `suffix`, llama.cpp `/infill`, Codestral `/v1/fim/completions`, OpenAI-style `/v1/completions` with `suffix`) are UNVERIFIED. LSP 3.18 `textDocument/inlineCompletion` is preview and `lsp-types` 0.97 (2024) lacks it; async LSP stacks need tokio. Defer LSP inline completion |
@@ -1999,7 +2004,19 @@ plan, kept for the record; the files are the source of truth.
   and macOS runners in that run. Run 41298351391 passed on all three runners
   (see "Repository and packaging").
 - Alt, F-keys, Insert and Shift-Tab work (milestone 4). The kitty keyboard
-  protocol is still missing (milestone 4, "Left").
+  protocol is on where the terminal supports it (`RVIM_NO_KITTY=1` turns it
+  off). Not tested by `cargo test`, which cannot run a real terminal: the
+  manual checklist is to run `cargo run` in kitty, WezTerm and Ghostty (on
+  macOS or Linux; crossterm reports no support on Windows, so the protocol is
+  off there) and check that `<C-i>` and `<Tab>` match the same way in Vim's
+  commands, that `<C-m>` and `<CR>` match, that `<C-[>` and `<Esc>` match,
+  that `<A-x>` and Alt-Shift-letter work, that `<S-Tab>` works, that key
+  repeat in Insert mode still types, and that the shell gets its keys back
+  after `:q` and after a panic (the flags are popped, so the next program is
+  not left with the protocol on). Shifted symbols with Alt (`<A-!>` on a US
+  layout) are not matched: without `REPORT_ALTERNATE_KEYS` the terminal does
+  not send the shifted symbol, so the key differs from legacy input. Not
+  requested, to keep the protocol to the one flag.
 - Jumplist: entries are positions in the one buffer. `:e` of another file
   clears the jumplist and the context mark (Vim keeps entries for other files
   and sets the context mark to the old position). `:jumps` prints one line

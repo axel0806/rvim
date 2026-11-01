@@ -121,6 +121,11 @@ use:
 - **Alt+key** is sent as `<Esc>` followed by the key, like terminal Vim
   without mappings. Function keys insert their name in Insert mode (as Vim
   does) and do nothing elsewhere. `<Insert>` works as in Vim.
+- Where the terminal supports the kitty keyboard protocol (kitty, WezTerm,
+  Ghostty; not on Windows), rvim turns it on so that `Ctrl-i`, `Ctrl-m` and
+  `Ctrl-[` are told apart from `Tab`, `Enter` and `Esc` on the wire. Vim
+  treats each pair as one key, so they act the same. Set `RVIM_NO_KITTY=1`
+  to turn it off.
 - Startup and `:version` say this is a modified Vim, as the licence requires.
 
 **Planned additions beyond Vim** (see PLAN.md): a styled renderer with Visual

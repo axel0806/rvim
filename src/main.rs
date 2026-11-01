@@ -4,7 +4,8 @@
 use crossterm::cursor::{Hide, MoveTo, SetCursorStyle, Show};
 use crossterm::event::{
     self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEvent, KeyEventKind,
-    KeyModifiers,
+    KeyModifiers, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
+    PushKeyboardEnhancementFlags,
 };
 use crossterm::style::{
     Attribute, Color, Print, ResetColor, SetAttribute, SetBackgroundColor, SetForegroundColor,
@@ -16,8 +17,13 @@ use rvim::view::{self, Hl};
 use rvim::{Editor, Key, Mode};
 use std::io::{self, Write};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::time::Instant;
+
+/// True while the kitty keyboard flags are pushed on this terminal, so that
+/// [`restore_terminal`] pops them exactly once, whichever exit path runs.
+static KITTY_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 fn main() -> io::Result<()> {
     // Help and version print and exit before the terminal is touched.
@@ -50,6 +56,7 @@ fn main() -> io::Result<()> {
         restore_terminal();
         default_hook(info);
     }));
+    enable_kitty_keys();
 
     // A panic must not lose unsaved text: write it to a recovery file.
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(&mut ed)));
@@ -79,7 +86,41 @@ fn main() -> io::Result<()> {
     }
 }
 
+/// Whether the kitty keyboard protocol may be used. `RVIM_NO_KITTY` set to a
+/// non-empty value other than `0` turns it off.
+fn kitty_wanted(opt_out: Option<std::ffi::OsString>) -> bool {
+    match opt_out {
+        None => true,
+        Some(v) => v.is_empty() || v == "0",
+    }
+}
+
+/// Asks the terminal for the kitty keyboard protocol and pushes
+/// `DISAMBIGUATE_ESCAPE_CODES`, so Ctrl-i, Ctrl-m, Ctrl-[ and modified keys
+/// arrive distinct from Tab, Enter and Esc. Only that flag is requested:
+/// release and repeat events are not, and key kinds other than press are
+/// ignored by [`convert`]. Any failure leaves the legacy input in place.
+/// Call after raw mode is on and before the input thread starts, because the
+/// support query reads the terminal's replies.
+fn enable_kitty_keys() {
+    if !kitty_wanted(std::env::var_os("RVIM_NO_KITTY")) {
+        return;
+    }
+    if !matches!(terminal::supports_keyboard_enhancement(), Ok(true)) {
+        return;
+    }
+    let flags = KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES;
+    if execute!(io::stdout(), PushKeyboardEnhancementFlags(flags)).is_ok() {
+        KITTY_ACTIVE.store(true, Ordering::SeqCst);
+    }
+}
+
 fn restore_terminal() {
+    // Pop while still on the alternate screen: the terminal keeps a separate
+    // flag stack per screen, and the push happened there.
+    if KITTY_ACTIVE.swap(false, Ordering::SeqCst) {
+        let _ = execute!(io::stdout(), PopKeyboardEnhancementFlags);
+    }
     let _ = execute!(
         io::stdout(),
         SetCursorStyle::DefaultUserShape,
@@ -96,7 +137,7 @@ fn spawn_input(tx: mpsc::Sender<rvim::Event>) {
     std::thread::spawn(move || {
         while let Ok(ev) = event::read() {
             let ev = match ev {
-                Event::Key(k) if k.kind != KeyEventKind::Release => match convert(k) {
+                Event::Key(k) => match convert(k) {
                     Some(key) => rvim::Event::Key(key),
                     None => continue,
                 },
@@ -243,12 +284,25 @@ fn draw(out: &mut impl Write, ed: &mut Editor, screen: &mut Screen) -> io::Resul
     out.flush()
 }
 
+/// Maps a terminal key event to an editor key. Terminal-free: it only reads
+/// the event. Release events are dropped; press and repeat count as presses.
+///
+/// With the kitty protocol on, some keys arrive as a character plus modifiers
+/// (Ctrl-i as `i`+Ctrl, Alt-Shift-a as `a`+Alt+Shift). They map to the same
+/// key that the legacy byte maps to, so Vim sees the same keys either way.
 fn convert(k: KeyEvent) -> Option<Key> {
+    if k.kind == KeyEventKind::Release {
+        return None;
+    }
     let ctrl = k.modifiers.contains(KeyModifiers::CONTROL);
     let alt = k.modifiers.contains(KeyModifiers::ALT);
+    let shift = k.modifiers.contains(KeyModifiers::SHIFT);
     Some(match k.code {
         KeyCode::Char(c) if ctrl => Key::ctrl(c),
-        KeyCode::Char(c) if alt => Key::Alt(c),
+        // Legacy Alt-Shift-a arrives as `A` with Alt; the protocol sends the
+        // unshifted `a` with a Shift flag. Shifted symbols cannot be recovered
+        // without REPORT_ALTERNATE_KEYS, which is not requested.
+        KeyCode::Char(c) if alt => Key::Alt(if shift { c.to_ascii_uppercase() } else { c }),
         KeyCode::Char(c) => Key::Char(c),
         KeyCode::Esc => Key::Esc,
         KeyCode::Enter => Key::Enter,
@@ -268,4 +322,151 @@ fn convert(k: KeyEvent) -> Option<Key> {
         KeyCode::F(n) if (1..=12).contains(&n) => Key::F(n),
         _ => return None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::Command;
+    use crossterm::event::KeyEventState;
+
+    fn press(code: KeyCode, mods: KeyModifiers) -> KeyEvent {
+        KeyEvent::new_with_kind(code, mods, KeyEventKind::Press)
+    }
+
+    #[test]
+    fn plain_keys_map_as_before() {
+        let none = KeyModifiers::NONE;
+        assert_eq!(
+            convert(press(KeyCode::Char('a'), none)),
+            Some(Key::Char('a'))
+        );
+        assert_eq!(
+            convert(press(KeyCode::Char('A'), KeyModifiers::SHIFT)),
+            Some(Key::Char('A'))
+        );
+        assert_eq!(
+            convert(press(KeyCode::Char('é'), none)),
+            Some(Key::Char('é'))
+        );
+        assert_eq!(convert(press(KeyCode::Esc, none)), Some(Key::Esc));
+        assert_eq!(convert(press(KeyCode::Enter, none)), Some(Key::Enter));
+        assert_eq!(convert(press(KeyCode::Tab, none)), Some(Key::Tab));
+        assert_eq!(
+            convert(press(KeyCode::BackTab, KeyModifiers::SHIFT)),
+            Some(Key::BackTab)
+        );
+        assert_eq!(
+            convert(press(KeyCode::Backspace, none)),
+            Some(Key::Backspace)
+        );
+        assert_eq!(convert(press(KeyCode::F(5), none)), Some(Key::F(5)));
+        assert_eq!(convert(press(KeyCode::F(13), none)), None);
+    }
+
+    #[test]
+    fn ctrl_letters() {
+        let ctrl = KeyModifiers::CONTROL;
+        assert_eq!(
+            convert(press(KeyCode::Char('a'), ctrl)),
+            Some(Key::Ctrl('a'))
+        );
+        assert_eq!(
+            convert(press(KeyCode::Char('r'), ctrl)),
+            Some(Key::Ctrl('r'))
+        );
+        // Ctrl-Shift-letter is Ctrl-letter, as Vim receives it.
+        let ctrl_shift = KeyModifiers::CONTROL | KeyModifiers::SHIFT;
+        assert_eq!(
+            convert(press(KeyCode::Char('a'), ctrl_shift)),
+            Some(Key::Ctrl('a'))
+        );
+        assert_eq!(
+            convert(press(KeyCode::Char('A'), ctrl_shift)),
+            Some(Key::Ctrl('a'))
+        );
+    }
+
+    #[test]
+    fn ctrl_aliases_match_their_legacy_bytes() {
+        // Protocol events (char + CONTROL) and legacy bytes (Tab, Enter, Esc)
+        // give the same key, so Vim's <C-i>, <C-m>, <C-[> and <C-h> behave as
+        // they always did.
+        let ctrl = KeyModifiers::CONTROL;
+        let none = KeyModifiers::NONE;
+        assert_eq!(convert(press(KeyCode::Char('i'), ctrl)), Some(Key::Tab));
+        assert_eq!(convert(press(KeyCode::Tab, none)), Some(Key::Tab));
+        assert_eq!(convert(press(KeyCode::Char('m'), ctrl)), Some(Key::Enter));
+        assert_eq!(convert(press(KeyCode::Enter, none)), Some(Key::Enter));
+        assert_eq!(convert(press(KeyCode::Char('['), ctrl)), Some(Key::Esc));
+        assert_eq!(convert(press(KeyCode::Esc, none)), Some(Key::Esc));
+        assert_eq!(
+            convert(press(KeyCode::Char('h'), ctrl)),
+            Some(Key::Backspace)
+        );
+    }
+
+    #[test]
+    fn alt_letters() {
+        let alt = KeyModifiers::ALT;
+        assert_eq!(convert(press(KeyCode::Char('x'), alt)), Some(Key::Alt('x')));
+        assert_eq!(convert(press(KeyCode::Char('A'), alt)), Some(Key::Alt('A')));
+        // Protocol form of Alt-Shift-a: unshifted letter with a Shift flag.
+        assert_eq!(
+            convert(press(KeyCode::Char('a'), alt | KeyModifiers::SHIFT)),
+            Some(Key::Alt('A'))
+        );
+        assert_eq!(
+            convert(press(KeyCode::Char('x'), alt | KeyModifiers::CONTROL)),
+            Some(Key::Ctrl('x'))
+        );
+    }
+
+    #[test]
+    fn release_is_ignored_and_repeat_is_a_press() {
+        let none = KeyModifiers::NONE;
+        let release = KeyEvent::new_with_kind(KeyCode::Char('a'), none, KeyEventKind::Release);
+        assert_eq!(convert(release), None);
+        let release_tab = KeyEvent::new_with_kind(KeyCode::Tab, none, KeyEventKind::Release);
+        assert_eq!(convert(release_tab), None);
+        let repeat = KeyEvent::new_with_kind(KeyCode::Char('j'), none, KeyEventKind::Repeat);
+        assert_eq!(convert(repeat), Some(Key::Char('j')));
+    }
+
+    #[test]
+    fn enhanced_event_fields_do_not_change_the_key() {
+        // A CSI u event also carries a state; it must not matter.
+        let ev = KeyEvent {
+            code: KeyCode::Char('i'),
+            modifiers: KeyModifiers::CONTROL,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::empty(),
+        };
+        assert_eq!(convert(ev), Some(Key::Tab));
+    }
+
+    #[test]
+    fn kitty_opt_out_env_var() {
+        use std::ffi::OsString;
+        assert!(kitty_wanted(None));
+        assert!(!kitty_wanted(Some(OsString::from("1"))));
+        assert!(!kitty_wanted(Some(OsString::from("yes"))));
+        assert!(kitty_wanted(Some(OsString::from("0"))));
+        assert!(kitty_wanted(Some(OsString::new())));
+    }
+
+    #[test]
+    fn kitty_sequences_push_disambiguate_and_pop() {
+        // Only DISAMBIGUATE_ESCAPE_CODES (bit 1) is requested.
+        let flags = KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES;
+        assert_eq!(flags.bits(), 1);
+        let mut push = String::new();
+        PushKeyboardEnhancementFlags(flags)
+            .write_ansi(&mut push)
+            .unwrap();
+        assert_eq!(push, "\x1b[>1u");
+        let mut pop = String::new();
+        PopKeyboardEnhancementFlags.write_ansi(&mut pop).unwrap();
+        assert_eq!(pop, "\x1b[<1u");
+    }
 }
