@@ -41,7 +41,11 @@ restored by undo in `undo.rs`), and the scrolling commands with `scrolloff`
 **In progress** (as of 2026-11-01; maintained by the orchestrator, and an
 entry is removed when its branch lands on main):
 
-- `:s` `\=` expressions and scrolling in the `c` prompt (`<C-e>`, `<C-y>`): being built by a Haiku agent (branch name pending); last open items of milestone 3.
+- `:s` `\=` expressions (two agents, split from one): the expression module
+  and `\=` in `:s`, and `<C-e>`/`<C-y>` scrolling in the `c` prompt. Last open
+  items of milestone 3.
+- Start menu (opt-in `--start-menu`, a `Frame` overlay shown when rvim starts
+  with no file): being built by a Haiku agent (branch name pending).
 
 **Suggested order for what is left:** (1) Document/Window split, (2) splits +
 buffers + scrolling, (3) milestone 7, in the step order of "Agent experience:
