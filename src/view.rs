@@ -42,6 +42,11 @@ pub enum Hl {
     MenuSelected,
     /// A start menu entry that is not available yet.
     Dimmed,
+    /// Line numbers in the number column ('number', 'relativenumber'); Vim's
+    /// LineNr.
+    LineNr,
+    /// The number of the cursor line; Vim's CursorLineNr.
+    CursorLineNr,
 }
 
 /// Linear cell ranges on `line` covered by the match a `c` flag prompt asks
@@ -208,6 +213,74 @@ pub fn line_height(line: RopeSlice, width: usize, ts: usize) -> usize {
     rows_needed(&layout(line, width, ts), width)
 }
 
+impl Editor {
+    /// Cells of the number column: Vim's `number_width()` plus one space, or 0
+    /// when 'number' and 'relativenumber' are both off. The column is sized by
+    /// the line count (by the window height when only 'relativenumber' is
+    /// set) and is never narrower than 'numberwidth'.
+    pub(crate) fn number_col_width(&self) -> usize {
+        let (nu, rnu) = (self.eff().number(), self.eff().relativenumber());
+        if !nu && !rnu {
+            return 0;
+        }
+        let lnum = if rnu && !nu {
+            self.win().height
+        } else {
+            self.buf().line_count()
+        };
+        let digits = lnum.max(1).to_string().len();
+        let cols = digits.max(self.eff().numberwidth() - 1) + 1;
+        // A window too narrow for the column and one text cell has no column.
+        if cols >= self.win().width { 0 } else { cols }
+    }
+
+    /// Cells left for the text of a line: the window minus the number column.
+    pub(crate) fn text_width(&self) -> usize {
+        self.win()
+            .width
+            .saturating_sub(self.number_col_width())
+            .max(1)
+    }
+}
+
+/// The number column of buffer line `line`, `nw` cells wide. The first row of
+/// the line shows its number, a wrapped line's later rows show blanks. The
+/// number is right-aligned, except the cursor line with both 'number' and
+/// 'relativenumber', which is left-aligned as in Vim.
+fn number_text(ed: &Editor, line: usize, first: bool, nw: usize) -> String {
+    if !first {
+        return " ".repeat(nw);
+    }
+    let digits = nw - 1;
+    let cur = ed.cursor().line;
+    let (nu, rnu) = (ed.eff().number(), ed.eff().relativenumber());
+    let (n, left) = if line == cur {
+        match (nu, rnu) {
+            (true, true) => (line + 1, true),
+            (true, false) => (line + 1, false),
+            // Only 'relativenumber': the cursor line shows 0.
+            _ => (0, false),
+        }
+    } else if rnu {
+        (line.abs_diff(cur), false)
+    } else {
+        (line + 1, false)
+    };
+    let body = if left {
+        format!("{n:<digits$}")
+    } else {
+        format!("{n:>digits$}")
+    };
+    // A number too wide for the column is cut, so every row keeps its width.
+    format!("{body} ").chars().take(nw).collect()
+}
+
+/// A row with a blank number column and `mark` (`~` or `@`) at the start of
+/// the text area.
+fn filler(nw: usize, tw: usize, mark: &str) -> String {
+    format!("{}{}", " ".repeat(nw), pad(mark.into(), tw))
+}
+
 /// Lays out the window of `ed`: its size is the editor's screen size and it
 /// starts at the editor's top line. The cursor must already be in view (the
 /// editor keeps it there after every key).
@@ -229,17 +302,21 @@ pub fn frame(ed: &Editor) -> Frame {
             cursor,
         };
     }
+    // The number column (`nw` cells) is left of the text area (`tw` cells,
+    // which wraps lines); the two make up the window's width.
+    let nw = ed.number_col_width();
+    let tw = ed.text_width();
     let mut rows = Vec::with_capacity(text_height);
     let mut hl = vec![vec![Hl::Normal; width]; text_height];
     let mut cursor = (0, 0);
     let mut line = ed.win().top;
     while rows.len() < text_height && line < ed.buf().line_count() {
-        let lay = layout(ed.buf().line(line), width, ed.eff().tabstop());
-        let need = rows_needed(&lay, width);
+        let lay = layout(ed.buf().line(line), tw, ed.eff().tabstop());
+        let need = rows_needed(&lay, tw);
         if line != ed.win().top && rows.len() + need > text_height {
             while rows.len() < text_height {
-                hl[rows.len()].fill(Hl::NonText);
-                rows.push(pad("@".into(), width));
+                hl[rows.len()][nw..].fill(Hl::NonText);
+                rows.push(filler(nw, tw, "@"));
             }
             break;
         }
@@ -250,36 +327,49 @@ pub fn frame(ed: &Editor) -> Frame {
             if on_tab && ed.mode() != Mode::Insert {
                 cell += lay.widths[col] - 1;
             }
-            cursor = (cell % width, rows.len() + cell / width);
+            cursor = (nw + cell % tw, rows.len() + cell / tw);
         }
         let base = rows.len();
         for (c0, c1) in visual_cells(ed, line, &lay) {
             for c in c0..c1 {
-                if base + c / width < text_height {
-                    hl[base + c / width][c % width] = Hl::Visual;
+                if base + c / tw < text_height {
+                    hl[base + c / tw][nw + c % tw] = Hl::Visual;
                 }
             }
         }
         for (c0, c1) in confirm_cells(ed, line, &lay) {
             for c in c0..c1 {
-                if base + c / width < text_height {
-                    hl[base + c / width][c % width] = Hl::IncSearch;
+                if base + c / tw < text_height {
+                    hl[base + c / tw][nw + c % tw] = Hl::IncSearch;
                 }
             }
         }
+        let num_hl = if line == ed.cursor().line {
+            Hl::CursorLineNr
+        } else {
+            Hl::LineNr
+        };
         for r in 0..need {
             if rows.len() == text_height {
                 break;
             }
             let text = lay.rows.get(r).cloned().unwrap_or_default();
-            rows.push(pad(text, width));
+            let num = if nw > 0 {
+                number_text(ed, line, r == 0, nw)
+            } else {
+                String::new()
+            };
+            if r == 0 {
+                hl[rows.len()][..nw].fill(num_hl);
+            }
+            rows.push(num + &pad(text, tw));
         }
         line += 1;
     }
     let filler_from = rows.len();
     while rows.len() < text_height {
-        hl[rows.len()].fill(Hl::NonText);
-        rows.push(pad("~".into(), width));
+        hl[rows.len()][nw..].fill(Hl::NonText);
+        rows.push(filler(nw, tw, "~"));
     }
 
     // `line` is now the first buffer line not fully shown.
@@ -406,6 +496,8 @@ mod tests {
                         Hl::IncSearch => 'I',
                         Hl::MenuSelected => 'M',
                         Hl::Dimmed => 'd',
+                        Hl::LineNr => 'n',
+                        Hl::CursorLineNr => 'c',
                         Hl::Normal => '.',
                     })
                     .collect()

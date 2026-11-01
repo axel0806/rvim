@@ -324,7 +324,8 @@ fn set_style(out: &mut impl Write, style: Style) -> io::Result<()> {
             SetForegroundColor(Color::Black),
             SetBackgroundColor(Color::Yellow)
         )?,
-        Hl::Dimmed => queue!(out, SetForegroundColor(Color::DarkGrey))?,
+        Hl::Dimmed | Hl::LineNr => queue!(out, SetForegroundColor(Color::DarkGrey))?,
+        Hl::CursorLineNr => queue!(out, SetForegroundColor(Color::Yellow))?,
     }
     if style.bold {
         queue!(out, SetAttribute(Attribute::Bold))?;

@@ -89,6 +89,7 @@ pub const TABLE: &[Def] = &[
     b("incsearch", "is", Scope::Global, false),
     b("number", "nu", Scope::Window, false),
     b("relativenumber", "rnu", Scope::Window, false),
+    n("numberwidth", "nuw", Scope::Window, 4),
     b("wrap", "wrap", Scope::Window, true),
     b("autoread", "ar", Scope::GlobalOrBuffer, false),
     // Not a Vim option: turns on the start menu (see startmenu.rs). Off by
@@ -310,6 +311,19 @@ impl<'a> Eff<'a> {
     }
     pub fn wrapscan(&self) -> bool {
         self.bool_of("wrapscan")
+    }
+    /// `'number'`: show the line number of each line.
+    pub fn number(&self) -> bool {
+        self.bool_of("number")
+    }
+    /// `'relativenumber'`: show each line's distance from the cursor line.
+    pub fn relativenumber(&self) -> bool {
+        self.bool_of("relativenumber")
+    }
+    /// `'numberwidth'`: the least width of the number column, in digits plus
+    /// one space. Vim keeps it within 1 to 20.
+    pub fn numberwidth(&self) -> usize {
+        self.num_of("numberwidth").clamp(1, 20) as usize
     }
     pub fn autoindent(&self) -> bool {
         self.bool_of("autoindent")
@@ -562,6 +576,7 @@ mod tests {
             ("scrolloff", GlobalOrWindow),
             ("number", Window),
             ("relativenumber", Window),
+            ("numberwidth", Window),
             ("wrap", Window),
         ];
         assert_eq!(want.len(), TABLE.len(), "every option has a row here");

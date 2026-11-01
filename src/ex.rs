@@ -1385,6 +1385,11 @@ impl Editor {
                 _ => v,
             }
         };
+        if TABLE[i].name == "numberwidth" {
+            // Vim clamps 'numberwidth' to 1 to 20 without an error (probed).
+            self.write_option(i, target, n.clamp(1, 20));
+            return Ok(());
+        }
         let def_name = TABLE[i].name;
         if def_name == "tabstop" && n < 1 {
             // Vim falls back to the default instead of keeping the value.

@@ -41,7 +41,7 @@ pub(crate) enum ScrollCmd {
 impl Editor {
     /// Screen rows of buffer line `l` (wrapped).
     fn line_rows(&self, l: usize) -> usize {
-        view::line_height(self.buf().line(l), self.win().width, self.eff().tabstop())
+        view::line_height(self.buf().line(l), self.text_width(), self.eff().tabstop())
     }
 
     /// Rows of the text area (the screen minus the command line).

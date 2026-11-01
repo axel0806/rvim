@@ -7,8 +7,8 @@ a real Vim by the differential harness in `tests/common/mod.rs`.
 
 ## Status: read this first
 
-Last updated 2026-11-01 (milestone 7 step 4b: `:AgentScan`, which runs the detection on a worker and shows the result on the message line (`src/agent_scan.rs`, `Event::AgentScan`); the status indicator `ai: ...` for the states without a connection, drawn only after the opt-in or after `:AgentScan`, left of the ruler; the config's `[agent] enabled` opt-in, with a scan at startup, and `shareable` and `log` warned as not supported yet; see "Detecting and connecting to agents", section 11 row 4, and "Known differences"; milestone 7 step 4a: the agent registry and the read-only detection core in `src/agent_detect.rs`, with the registry checked against the agents' own docs and the ACP registry, see "Detecting and connecting to agents"; milestone 7 step 5a: the ACP connector core in `src/acp.rs`, pure with no process or UI: newline-delimited JSON-RPC framing with an 8 MiB line cap, typed ACP v1 messages, and the `Conn` session state machine driven by a fake clock; recorded transcripts in `tests/fixtures/acp/` replayed by `tests/acp_connector.rs`; `serde` and `serde_json` added, see "ACP connector core" and "Dependency choices"; the modified-Vim notice on the message line is the short `NOTICE_SHORT` (39 characters, fits 80 columns) for the intro and `:version`, with the config note `[N config warnings]`; the full `VERSION_MESSAGE` stays in `--version` and the start menu; see "Licensing" and "Known differences"; milestone 6 config file loader: `config.toml` read once at startup, `[options]`, `[start] menu`, raw `[agent]`, `-u NONE`, `--clean`, `-N`, `:ConfigWarnings`; see "Config" under "Editing experience"; the non-file marks: `'[` `']` `'<` `'>` `'"` as motions, operator targets and Ex addresses, `m[ m] m< m>`, the `'[`/`']` marks set by each command, `:marks` and `:delmarks`; milestone 7 step 2b: the file watcher thread (`src/watch.rs`) with the option `filewatch`, off by default: `FileChanged`, `FileDeleted` and `FileTooLarge` events, echo suppression by hash, reads capped at 64 MiB, one decision shared with `:checktime` (`Editor::check_disk`), and the change applied in Normal mode only; milestone 7 step 2b: the file watcher thread (`src/watch.rs`) with the option `filewatch`, off by default, echo suppression by hash, reads capped at 64 MiB; milestone 7 step 2a: undo steps record their source, the disk state per document with a hash, `:checktime`, and the reload of an unmodified buffer as one undo step with cursor and scroll mapping; milestone 4 option scopes: `:setlocal` and `:setglobal`, buffer-local, window-local and global-local values, see "Options registry"; Document/Window/Editor split steps 1 to 3 of milestone 4 (ids, collections, accessors, version counter, marks, `buf_mut()`, window size); CI first ran on GitHub; Linux builds Vim 9.1.1914 from source, and all three OS jobs require Vim; cell-level diff redraw in `redraw.rs`, with its escape sequences tested in `main.rs`; kitty keyboard protocol, with `RVIM_NO_KITTY=1` to turn it off and no support query when `TERM` is unset, empty or `dumb`; SIGHUP/SIGTERM recovery on Unix, milestone 4; Makefile packaging targets `install` with `PREFIX`/`DESTDIR`, `uninstall` and `dist`). **rvim is an alpha, roughly 25-30% of this plan.**
-As of 2026-11-01 milestones 1-3 are done; 4 and 5 are partly done; 6 has the start menu and the config loader; 7 has its file reload and file watcher (2a, 2b) and the ACP protocol core (5a) and agent detection and the opt-in with its indicator (4a, 4b), 8-9 are plans.
+Last updated 2026-11-01 (milestone 6 line numbers: `number`, `relativenumber` and `numberwidth` (window-local), drawn in a number column by `view.rs` with the text area narrowed by it for wrapping and scrolling, and the `LineNr` and `CursorLineNr` groups; see "Line numbers" under "Editing experience"; milestone 7 step 4b: `:AgentScan`, which runs the detection on a worker and shows the result on the message line (`src/agent_scan.rs`, `Event::AgentScan`); the status indicator `ai: ...` for the states without a connection, drawn only after the opt-in or after `:AgentScan`, left of the ruler; the config's `[agent] enabled` opt-in, with a scan at startup, and `shareable` and `log` warned as not supported yet; see "Detecting and connecting to agents", section 11 row 4, and "Known differences"; milestone 7 step 4a: the agent registry and the read-only detection core in `src/agent_detect.rs`, with the registry checked against the agents' own docs and the ACP registry, see "Detecting and connecting to agents"; milestone 7 step 5a: the ACP connector core in `src/acp.rs`, pure with no process or UI: newline-delimited JSON-RPC framing with an 8 MiB line cap, typed ACP v1 messages, and the `Conn` session state machine driven by a fake clock; recorded transcripts in `tests/fixtures/acp/` replayed by `tests/acp_connector.rs`; `serde` and `serde_json` added, see "ACP connector core" and "Dependency choices"; the modified-Vim notice on the message line is the short `NOTICE_SHORT` (39 characters, fits 80 columns) for the intro and `:version`, with the config note `[N config warnings]`; the full `VERSION_MESSAGE` stays in `--version` and the start menu; see "Licensing" and "Known differences"; milestone 6 config file loader: `config.toml` read once at startup, `[options]`, `[start] menu`, raw `[agent]`, `-u NONE`, `--clean`, `-N`, `:ConfigWarnings`; see "Config" under "Editing experience"; the non-file marks: `'[` `']` `'<` `'>` `'"` as motions, operator targets and Ex addresses, `m[ m] m< m>`, the `'[`/`']` marks set by each command, `:marks` and `:delmarks`; milestone 7 step 2b: the file watcher thread (`src/watch.rs`) with the option `filewatch`, off by default: `FileChanged`, `FileDeleted` and `FileTooLarge` events, echo suppression by hash, reads capped at 64 MiB, one decision shared with `:checktime` (`Editor::check_disk`), and the change applied in Normal mode only; milestone 7 step 2b: the file watcher thread (`src/watch.rs`) with the option `filewatch`, off by default, echo suppression by hash, reads capped at 64 MiB; milestone 7 step 2a: undo steps record their source, the disk state per document with a hash, `:checktime`, and the reload of an unmodified buffer as one undo step with cursor and scroll mapping; milestone 4 option scopes: `:setlocal` and `:setglobal`, buffer-local, window-local and global-local values, see "Options registry"; Document/Window/Editor split steps 1 to 3 of milestone 4 (ids, collections, accessors, version counter, marks, `buf_mut()`, window size); CI first ran on GitHub; Linux builds Vim 9.1.1914 from source, and all three OS jobs require Vim; cell-level diff redraw in `redraw.rs`, with its escape sequences tested in `main.rs`; kitty keyboard protocol, with `RVIM_NO_KITTY=1` to turn it off and no support query when `TERM` is unset, empty or `dumb`; SIGHUP/SIGTERM recovery on Unix, milestone 4; Makefile packaging targets `install` with `PREFIX`/`DESTDIR`, `uninstall` and `dist`). **rvim is an alpha, roughly 25-30% of this plan.**
+As of 2026-11-01 milestones 1-3 are done; 4 and 5 are partly done; 6 has line numbers, the start menu and the config loader; 7 has its file reload and file watcher (2a, 2b) and the ACP protocol core (5a) and agent detection and the opt-in with its indicator (4a, 4b), 8-9 are plans.
 Released as `v0.1.0-alpha.1`, `v0.1.0-alpha.2` and `v0.1.0-alpha.3`. The next release is `v0.1.0-alpha.4`, not yet tagged. All tests pass against Vim 9.1 and clippy/fmt are
 clean at the last commit.
 
@@ -18,7 +18,7 @@ clean at the last commit.
 | 3 Search and Ex | 100%. `:s` `\=` expressions done as the subset in `src/expr.rs` (see Known differences) |
 | 4 Foundation | 100%. The Document/Window/Editor split: steps 1 to 3 done (one document and one window, with `DocId`/`WinId` collections and window size from the screen; see "Foundation"). Option scopes done: `:setlocal`, `:setglobal`, buffer-, window- and global-local values (see "Options registry"). Foundation is complete; the rest is milestone 5 (layout and splits, several documents and windows in use) |
 | 5 Windows and buffers | ~30%. Done: macros (`q`, `@`, `@@`, `@:`), lowercase marks (`m{a-z}`, `'a`, `` `a ``, `:k`, `:mark`, `'a` addresses), the other marks (`'[` `']` `` `[ `] `` as motions, operator targets and Ex addresses, set by yank, delete, change, insert, put, shifts, `J`, `~` `g~` `gu` `gU`, `:s`, `:d`, `:m`, `:t`, `:pu`, undo and redo; `'<` `'>` and `'"`; `m[ m] m< m>`; `:marks`, `:delmarks`; `src/marks.rs`), the jumplist (`<C-o>`, `<Tab>` with counts, `:jumps`) and the context mark (`''`, `` `` ``, `m'`, `` m` ``), scrolling (`<C-e> <C-y> <C-f> <C-b> <C-d> <C-u> zt zz zb z<CR> z. z- H M L`, counts, `scrolloff`, wrapped lines). Left: splits, buffer list, uppercase (file) marks, swap files |
-| 6 Modern editing experience | Started, not near done. Landed: the start menu (opt-in `--start-menu`, `startmenu` option); the config file loader (`config.toml`: `[options]`, `[start] menu`, `[agent]` kept raw; `-u NONE`, `--clean`; `:ConfigWarnings`; see "Config"). Left: hlsearch, incsearch, syntax, line numbers, palette, mouse, `:Start`, the start menu's recent files, Config and agent entries, its modern-profile default (see "Start menu"), and the config's `[profile]`, mappings and theme |
+| 6 Modern editing experience | Started, not near done. Landed: line numbers (`number`, `relativenumber`, `numberwidth`; see "Line numbers"); the start menu (opt-in `--start-menu`, `startmenu` option); the config file loader (`config.toml`: `[options]`, `[start] menu`, `[agent]` kept raw; `-u NONE`, `--clean`; `:ConfigWarnings`; see "Config"). Left: hlsearch, incsearch, syntax, palette, mouse, `:Start`, the start menu's recent files, Config and agent entries, its modern-profile default (see "Start menu"), and the config's `[profile]`, mappings and theme |
 | 7 Agent integration | ~15%. Step 4a done (2026-11-01): the agent registry and the read-only detection core (`src/agent_detect.rs`, see "Detecting and connecting to agents"); 4b done (2026-11-01): `:AgentScan`, the status indicator without a connection and the `[agent] enabled` opt-in (`src/agent_scan.rs`; see section 11, row 4, and "Known differences"). Step 5a done (2026-11-01): the ACP protocol core, pure (`src/acp.rs`, see "ACP connector core"). Step 2a done (2026-11-01): undo steps record their source (`UndoSource`), the disk state per document (`DiskState`, FNV-1a hash, mtime and size, taken by `:e`, `:w` and `:checktime`), `:checktime` with W11, W12, W13 and E211, and a changed file reloaded when unmodified and `autoread` is on, as one undo step tagged `external` with the cursor and scroll mapped (`src/reload.rs`, `Editor::apply_external_change`). Step 2b done (2026-11-01): the file watcher thread (`src/watch.rs`, option `filewatch`, off by default; `FileChanged`, `FileDeleted` and `FileTooLarge` events, echo suppression by hash, reads capped at 64 MiB, see "Files changed under rvim"). Step 2 is complete; the conflict prompt is step 3. The connector's process, consent, approvals and `:Agent` commands (step 5b) are not started. Not started: the diff view. |
 | 8 Prediction | 0%. Not started |
 | 9 Extras | 0%. Not started |
@@ -54,6 +54,7 @@ this, `--help` opened a buffer named `--help`.
 entry is removed when its branch lands on main):
 
 - Agent integration, step 4b: done on branch `worktree-agent-a77247acadd2b92b6` (`:AgentScan`, the status indicator and the opt-in config table; milestone 7). Remove this entry when the branch lands on main.
+- Milestone 6 line numbers (`number`, `relativenumber`, `numberwidth`): see "Line numbers" under "Editing experience"
 
 **Suggested order for what is left:** (1) Document/Window split, (2) splits +
 buffers + scrolling, (3) milestone 7, in the step order of "Agent experience:
@@ -405,7 +406,7 @@ checks every row:
 | buffer-local | `autoindent` (`ai`), `expandtab` (`et`), `shiftwidth` (`sw`), `tabstop` (`ts`), `softtabstop` (`sts`) |
 | global-local to buffer | `autoread` (`ar`) |
 | global-local to window | `scrolloff` (`so`) |
-| window-local | `number` (`nu`), `relativenumber` (`rnu`), `wrap` |
+| window-local | `number` (`nu`), `relativenumber` (`rnu`), `numberwidth` (`nuw`), `wrap` |
 
 Storage: the global values are in `Editor`'s `Options`. A document has its
 buffer-local values (`Document::local`, a `Local`), and a window has its
@@ -480,7 +481,7 @@ and two windows in one `Editor`, and the write, reset and query rules).
   highlighting via tree-sitter grammars per filetype, filetype detection by
   extension and shebang. Highlighting runs off the UI thread on a snapshot and
   posts spans back as an event (see document versions above).
-- **Chrome**: line numbers (`number`, `relativenumber`), a real status line,
+- **Chrome**: line numbers (done, see "Line numbers" below), a real status line,
   and a buffer/tab line once there are buffers.
 - **Defaults**: a built-in modern profile (`hlsearch`, `incsearch`,
   `autoindent`, `scrolloff=5`, `ignorecase smartcase`, mouse, true-colour
@@ -548,6 +549,32 @@ and two windows in one `Editor`, and the write, reset and query rules).
   which-key style hints for pending operators and prefixes, and Ex
   completion (`<Tab>` on commands, options, file names).
 - **Mouse**: click to place the cursor, drag for Visual, wheel to scroll.
+
+### Line numbers (done)
+
+- Options `number` (`nu`), `relativenumber` (`rnu`) and `numberwidth` (`nuw`,
+  default 4, kept within 1 to 20 without an error, as Vim does). All three
+  are window-local (see "Options registry"). Off by default, so with no
+  config the frame is unchanged.
+- The column is Vim's `number_width()` plus one space: the digits of the line
+  count, or of the window height when only 'relativenumber' is set, and never
+  narrower than 'numberwidth'. It widens past 999 lines
+  (`Editor::number_col_width()` in `view.rs`).
+- The text area is the window minus the column (`Editor::text_width()`).
+  Wrapping, the cursor cell and the line heights in `scroll.rs` use it, so
+  scrolling, `H M L` and 'scrolloff' see the narrower area.
+- The first row of a line shows its number; the later rows of a wrapped line
+  and the `~` and `@` rows show blanks. With 'number' and 'relativenumber'
+  together, the cursor line shows its absolute number left-aligned; with only
+  'relativenumber' it shows `0`.
+- Styles: `Hl::LineNr` and `Hl::CursorLineNr`. The colours in `main.rs` are
+  rvim's theme (dim grey and yellow), not Vim's defaults.
+- Tests: `tests/line_numbers.rs` (Frame rows and cursor, wrapped rows, the
+  narrower scroll, widening past 999 lines, styles, `:set nu?`, `:setlocal`,
+  `:set invnu`, `numberwidth` and its clamp, and the default output). The
+  column rules and the `numberwidth` clamp and scope were probed with
+  `vim -es`. Vim run that way has no screen, so the drawn layout is checked
+  against rvim's own Frame, not against Vim's screen.
 
 ### Start menu
 
@@ -2239,6 +2266,10 @@ plan, kept for the record; the files are the source of truth.
 
 ## Known differences from Vim
 
+- Line numbers: the column follows Vim's rules, but the drawn screen is not
+  compared with Vim (`vim -es` has no screen). The colours of `LineNr` and
+  `CursorLineNr` are rvim's theme. With only 'relativenumber' the column is
+  sized by the window height, as in Vim.
 - `:checktime`, `:e` and `:w` read and stat files synchronously inside the Editor,
   against the CLAUDE.md rule of no blocking I/O. They are user-triggered and read
   one file, as Vim does. The automatic path (the file watcher, `src/watch.rs`)
