@@ -7,7 +7,7 @@ a real Vim by the differential harness in `tests/common/mod.rs`.
 
 ## Status: read this first
 
-Last updated 2026-11-01 (CI first ran on GitHub; Linux builds Vim 9.1.1914 from source, and all three OS jobs require Vim; cell-level diff redraw in `redraw.rs` on branch `worktree-agent-a63a7c6205c158718`, not yet merged). **rvim is an alpha, roughly 25-30% of this plan.**
+Last updated 2026-11-01 (CI first ran on GitHub; Linux builds Vim 9.1.1914 from source, and all three OS jobs require Vim; cell-level diff redraw in `redraw.rs`). **rvim is an alpha, roughly 25-30% of this plan.**
 As of 2026-11-01 milestones 1-3 are done; 4 and 5 are partly done; 6 has the start menu only; 7-9 are plans.
 Released as `v0.1.0-alpha.1`, `v0.1.0-alpha.2` and `v0.1.0-alpha.3`. The next release is `v0.1.0-alpha.4`, not yet tagged. All tests pass against Vim 9.1 and clippy/fmt are
 clean at the last commit.
@@ -53,7 +53,6 @@ this, `--help` opened a buffer named `--help`.
 **In progress** (as of 2026-11-01; maintained by the orchestrator, and an
 entry is removed when its branch lands on main):
 
-- Cell-level diff redraw (milestone 4; `view.rs`, the draw code in `main.rs`)
 - Kitty keyboard protocol (milestone 4; key decoding in `main.rs`)
 - Recovery on terminal close, SIGHUP/SIGTERM on Unix (milestone 4; `recovery.rs`, `main.rs`)
 
