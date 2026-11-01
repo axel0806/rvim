@@ -217,6 +217,11 @@ fn run(ed: &mut Editor) -> io::Result<Option<i32>> {
     let mut out = io::BufWriter::new(io::stdout());
     let (tx, rx) = mpsc::channel();
     rvim::signals::spawn(tx.clone())?;
+    // The file watcher does no work until the editor sends it a watched set,
+    // which it does only with the option `filewatch` on (see `watch.rs`).
+    let (watch_tx, watch_rx) = mpsc::channel();
+    rvim::watch::spawn(watch_rx, tx.clone());
+    forward_watch(ed, &watch_tx);
     spawn_input(tx);
     while !ed.should_quit() {
         draw(&mut out, ed, &mut screen)?;
@@ -246,11 +251,20 @@ fn run(ed: &mut Editor) -> io::Result<Option<i32>> {
                 break;
             }
         }
+        forward_watch(ed, &watch_tx);
         if ed.take_bell() {
             queue!(out, Print('\x07'))?;
         }
     }
     Ok(None)
+}
+
+/// Sends the editor's watcher commands to the watcher thread (`watch.rs`).
+/// A send fails only when the thread has ended, and then nothing is watched.
+fn forward_watch(ed: &mut Editor, watch_tx: &mpsc::Sender<rvim::watch::WatchCmd>) {
+    for cmd in ed.take_watch_commands() {
+        let _ = watch_tx.send(cmd);
+    }
 }
 
 /// The grid last written to the terminal, so only changed cells are sent.

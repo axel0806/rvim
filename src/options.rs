@@ -94,6 +94,10 @@ pub const TABLE: &[Def] = &[
     // Not a Vim option: turns on the start menu (see startmenu.rs). Off by
     // default, so `:set` behaves as in Vim while it is off.
     b("startmenu", "startmenu", Scope::Global, false),
+    // Not a Vim option: polls the open files for changes made outside rvim
+    // (see watch.rs). Off by default: Vim does not poll, so with it off no
+    // file is read in the background.
+    b("filewatch", "filewatch", Scope::Global, false),
 ];
 
 /// Options Vim has that rvim accepts in `:set` and ignores.
@@ -344,6 +348,9 @@ impl<'a> Eff<'a> {
     pub fn startmenu(&self) -> bool {
         self.bool_of("startmenu")
     }
+    pub fn filewatch(&self) -> bool {
+        self.bool_of("filewatch")
+    }
 }
 
 impl Editor {
@@ -544,6 +551,7 @@ mod tests {
             ("hlsearch", Global),
             ("incsearch", Global),
             ("startmenu", Global),
+            ("filewatch", Global),
             ("autoindent", Buffer),
             ("expandtab", Buffer),
             ("shiftwidth", Buffer),
@@ -559,6 +567,18 @@ mod tests {
         for (name, s) in want {
             assert_eq!(TABLE[idx(name)].scope, s, "scope of {name}");
         }
+    }
+
+    #[test]
+    fn filewatch_is_global_and_off_by_default() {
+        // Off: Vim does not poll files, so rvim does not either.
+        let mut ed = crate::editor::Editor::from_text("x\n");
+        assert!(!ed.eff().filewatch());
+        ed.feed(":set filewatch<CR>");
+        assert!(ed.eff().filewatch());
+        assert_eq!(ed.message().map(|m| m.error), None, "no E518: rvim-only");
+        ed.feed(":set nofilewatch<CR>");
+        assert!(!ed.eff().filewatch());
     }
 
     #[test]

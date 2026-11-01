@@ -47,7 +47,8 @@ Prebuilt binaries for Windows, Linux and macOS are attached to the
   :checktime`.
 - `:checktime` (`:checkt`) reports a file changed on disk (W11, W12, W13, E211).
   With `autoread` set and the buffer unmodified, it reloads the file as one undo
-  step, which `u` undoes. Nothing reloads by itself yet (see PLAN.md, milestone 7).
+  step, which `u` undoes. With the option `filewatch` on, rvim polls the open
+  file and does the same when it changes on disk (see PLAN.md, milestone 7).
 - Lowercase marks `a`-`z` (`m{a-z}`, `'a`, `` `a ``).
 - Jumplist and context mark: `<C-o>` and `<Tab>` with counts, `''`, `` `` ``,
   `m'`, `` m` ``, and `:jumps` (a one-line message). `G`, `gg`, `/`, `?`, `n`,
@@ -86,11 +87,13 @@ use:
   `ignorecase`, `smartcase`, `wrapscan`, `autoindent`, `expandtab`,
   `shiftwidth`, `tabstop`, `softtabstop`, `smarttab`, `shiftround` and
   `scrolloff`, and store `hlsearch`, `incsearch`, `number`, `relativenumber`
-  and `wrap` without using them yet; `autoread` (global-local) only applies to
-  `:checktime`. Each option has Vim's scope:
+  and `wrap` without using them yet; `autoread` (global-local) applies to
+  `:checktime` and to the file watcher. Each option has Vim's scope:
   `autoindent`, `expandtab`, `shiftwidth`, `tabstop` and `softtabstop` are
   buffer-local, `scrolloff` and `autoread` are global-local, `number`,
-  `relativenumber` and `wrap` are window-local, the rest are global. Tab
+  `relativenumber` and `wrap` are window-local, the rest are global. `startmenu`
+  and `filewatch` are rvim's own, global and off by default; `filewatch` polls
+  the open file for changes made outside rvim (see PLAN.md, milestone 7). Tab
   handling is Vim's for the common cases, but some
   combinations with `softtabstop` and `tabstop` 2 or 4, Replace-mode Tab with
   `softtabstop`, and block `<` or block put with tabs still differ from Vim

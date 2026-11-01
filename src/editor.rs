@@ -14,9 +14,12 @@ use crate::motion::{self, Pos};
 use crate::ops::OpArg;
 use crate::options::Options;
 use crate::register::Registers;
-use crate::reload::{Change, DiskState, LineMap};
+use crate::reload::{
+    Change, Decision, DiskState, LineMap, Stale, Warned, external_change_decision,
+};
 use crate::text;
 use crate::undo::{Step, UndoSource};
+use crate::watch::{WatchCmd, WatchTarget};
 use crate::window::{WinId, Window};
 use std::path::Path;
 
@@ -193,6 +196,22 @@ pub struct Editor {
     pub(crate) message: Option<Message>,
     pub(crate) quit: bool,
     bell: bool,
+    /// The watch set last sent to the watcher thread (see
+    /// `take_watch_commands`). Empty while the option `filewatch` is off.
+    watch_sent: Vec<WatchTarget>,
+    /// Commands for the watcher thread not yet taken by `take_watch_commands`.
+    watch_outbox: Vec<WatchCmd>,
+    /// A change the watcher reported that waits for Normal mode (PLAN.md,
+    /// "Reload as one undo step": applied on return to Normal mode).
+    watch_queue: Option<WatchQueued>,
+}
+
+/// A file change the watcher reported, held until the editor can apply it.
+struct WatchQueued {
+    doc: DocId,
+    version: u64,
+    /// The file's state and bytes, or None when the file is gone.
+    now: Option<(DiskState, Vec<u8>)>,
 }
 
 impl Default for Editor {
@@ -266,6 +285,9 @@ impl Editor {
             message: None,
             quit: false,
             bell: false,
+            watch_sent: Vec::new(),
+            watch_outbox: Vec::new(),
+            watch_queue: None,
         };
         ed.fit_windows();
         ed
@@ -410,7 +432,49 @@ impl Editor {
             Event::Paste(text) => self.paste(&text),
             Event::Resize(cols, rows) => self.set_screen_size(cols as usize, rows as usize),
             Event::FocusGained | Event::FocusLost | Event::Timer | Event::Signal(_) => {}
+            Event::FileChanged {
+                doc,
+                version,
+                bytes,
+                mtime,
+                size,
+                hash,
+            } => {
+                let state = DiskState { mtime, size, hash };
+                self.watch_arrived(doc, version, Some((state, bytes)));
+            }
+            Event::FileDeleted { doc, version } => self.watch_arrived(doc, version, None),
         }
+        self.apply_watch_queue();
+    }
+
+    /// The watcher commands the front end must send now (see `watch.rs`):
+    /// the resyncs the editor asked for, and the watched set when it has
+    /// changed. With the option `filewatch` off the set is empty, so no
+    /// watcher command is ever produced, and the watcher thread does nothing.
+    pub fn take_watch_commands(&mut self) -> Vec<WatchCmd> {
+        let mut out = std::mem::take(&mut self.watch_outbox);
+        let want: Vec<WatchTarget> = if self.eff().filewatch() {
+            self.documents
+                .iter()
+                .enumerate()
+                .filter_map(|(i, d)| {
+                    d.buf.path.as_ref().map(|path| WatchTarget {
+                        doc: DocId(i),
+                        path: path.clone(),
+                        synced: d.disk.clone(),
+                        version: d.version(),
+                    })
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        if want != self.watch_sent {
+            self.watch_sent = want.clone();
+            out.push(WatchCmd::Set(want));
+        }
+        out
     }
 
     /// When the front end should send [`Event::Timer`](crate::event::Event::Timer)
@@ -1412,6 +1476,191 @@ impl Editor {
             fallback: map.fallback,
         })
     }
+
+    /// Checks the file of document `doc` against the state its buffer last
+    /// synced with, and acts on the decision (`external_change_decision`). It
+    /// is the one place for `:checktime` and for the watcher, so they cannot
+    /// disagree. `now` is the file's state and bytes, None when it is gone.
+    /// Returns the E211 text for a gone file, for the caller to show.
+    ///
+    /// `from_watch` is set by the watcher. A warning (W11, W12, W13, E211)
+    /// is then shown once per change: the watcher reports a change once, but
+    /// a dropped event may come again, and the same warning is not repeated.
+    /// `:checktime` always shows its warning.
+    pub(crate) fn check_disk(
+        &mut self,
+        doc: DocId,
+        now: Option<(DiskState, &[u8])>,
+        from_watch: bool,
+    ) -> Option<String> {
+        let path = self.documents[doc.0].buf.path.clone()?;
+        let name = path.display().to_string();
+        let now_state = now.as_ref().map(|(s, _)| s.clone());
+        let bytes: Option<&[u8]> = now.as_ref().map(|(_, b)| *b);
+        let autoread = self.autoread_on();
+        let d = &self.documents[doc.0];
+        let decision = external_change_decision(
+            d.disk.as_ref(),
+            now_state.as_ref(),
+            d.buf.modified,
+            autoread,
+        );
+        let key = match (decision, &now_state) {
+            (Decision::Deleted, _) => Some(Warned::Deleted),
+            (Decision::Created | Decision::Changed { .. }, Some(s)) => {
+                Some(Warned::Changed(s.hash))
+            }
+            _ => None,
+        };
+        let repeat = from_watch && key.is_some() && d.warned == key;
+        let mut info: Option<String> = None;
+        let mut error: Option<String> = None;
+        let mut reloaded: Option<Option<Change>> = None;
+        let d = &mut self.documents[doc.0];
+        match decision {
+            Decision::Same => {
+                d.stale = None;
+                d.warned = None;
+            }
+            Decision::Touched => {
+                // Same contents, a new modification time or size (touched, or
+                // written by rvim itself and read back). Not a change: record it.
+                d.disk = now_state.clone();
+                d.stale = None;
+                d.warned = None;
+            }
+            Decision::Deleted => {
+                // A buffer that never had a file on disk has nothing to lose;
+                // this one had, so the buffer is kept and marked.
+                d.stale = Some(Stale::Deleted);
+                d.warned = key;
+                if !repeat {
+                    error = Some(format!("E211: File \"{name}\" no longer available"));
+                }
+            }
+            Decision::Created => {
+                // The file was created after editing started.
+                d.stale = Some(Stale::Changed);
+                d.warned = key;
+                if !repeat {
+                    info = Some(format!(
+                        "W13: Warning: File \"{name}\" has been created after editing started"
+                    ));
+                }
+            }
+            Decision::Changed { modified } => {
+                // The buffer is not touched. Its disk state stays as it was,
+                // so the change is still seen (and reported again) by the next
+                // check.
+                d.stale = Some(Stale::Changed);
+                d.warned = key;
+                if !repeat {
+                    let (warning, what) = if modified {
+                        (
+                            "W12: Warning",
+                            "has changed and the buffer was changed in Vim as well",
+                        )
+                    } else {
+                        ("W11: Warning", "has changed since editing started")
+                    };
+                    info = Some(format!("{warning}: File \"{name}\" {what}"));
+                }
+            }
+            Decision::Reload => {}
+        }
+        if let (Decision::Reload, Some(bytes)) = (decision, bytes) {
+            // Unmodified, and 'autoread' is on: reload as one undo step.
+            let (new, _) = Buffer::from_file_bytes(&path, Some(bytes));
+            let change = self.apply_external_change(doc, new, UndoSource::External);
+            let d = &mut self.documents[doc.0];
+            d.disk = now_state;
+            d.stale = None;
+            d.warned = None;
+            reloaded = Some(change);
+        }
+        if let Some(change) = reloaded {
+            info = Some(match change {
+                None => format!("\"{name}\" changed on disk"),
+                Some(c) if c.fallback => {
+                    format!(
+                        "\"{name}\" changed on disk; line diff too large, cursor kept on its line"
+                    )
+                }
+                Some(c) => format!(
+                    "\"{name}\" changed on disk: +{} -{} lines",
+                    c.added, c.removed
+                ),
+            });
+        }
+        if let Some(text) = info {
+            self.info(text);
+        }
+        error
+    }
+
+    /// A change the watcher reported (`Event::FileChanged` or
+    /// `Event::FileDeleted`). It is dropped when the text has changed since
+    /// the watcher was told the version: the watcher is asked to look again,
+    /// so the change is reported again. Otherwise it waits for Normal mode.
+    fn watch_arrived(&mut self, doc: DocId, version: u64, now: Option<(DiskState, Vec<u8>)>) {
+        if !self.eff().filewatch() {
+            return;
+        }
+        let Some(d) = self.documents.get(doc.0) else {
+            return;
+        };
+        if d.version() != version {
+            self.watch_outbox.push(WatchCmd::Resync(doc));
+            return;
+        }
+        if !self.ready_for_change() {
+            // Tell the user once that it will load in Normal mode, when it
+            // would load (unmodified and 'autoread' on).
+            let d = &self.documents[doc.0];
+            let note = match &d.buf.path {
+                Some(path) if !d.buf.modified && now.is_some() && self.autoread_on() => {
+                    Some(format!(
+                        "\"{}\" changed on disk; reloads in Normal mode",
+                        path.display()
+                    ))
+                }
+                _ => None,
+            };
+            if let Some(note) = note {
+                self.info(note);
+            }
+        }
+        // A newer report replaces an older one still waiting.
+        self.watch_queue = Some(WatchQueued { doc, version, now });
+    }
+
+    /// Whether a change from outside may be applied now: Normal mode, no
+    /// command being typed, and no start menu.
+    fn ready_for_change(&self) -> bool {
+        self.mode == Mode::Normal && self.pending.is_empty() && self.start_menu.is_none()
+    }
+
+    /// Applies the waiting watcher change when the editor is ready for it.
+    fn apply_watch_queue(&mut self) {
+        if !self.ready_for_change() {
+            return;
+        }
+        let Some(q) = self.watch_queue.take() else {
+            return;
+        };
+        let Some(d) = self.documents.get(q.doc.0) else {
+            return;
+        };
+        if d.version() != q.version {
+            // The text changed while the change waited: look again.
+            self.watch_outbox.push(WatchCmd::Resync(q.doc));
+            return;
+        }
+        let now = q.now.as_ref().map(|(s, b)| (s.clone(), b.as_slice()));
+        if let Some(error) = self.check_disk(q.doc, now, true) {
+            self.error(error);
+        }
+    }
 }
 
 /// `[noeol] [dos] 3L, 42B`
@@ -1602,5 +1851,326 @@ mod tests {
         assert!(ed.buf().crlf);
         assert_eq!(ed.doc().undo.seq(), seq);
         assert!(!ed.buf().modified);
+    }
+}
+
+/// The file watcher's handling in the editor (watch.rs does the polling):
+/// the version rule, Normal mode, the decision shared with `:checktime`, and
+/// the warnings. Events are built as the watcher builds them, from the file.
+#[cfg(test)]
+mod watch_tests {
+    use super::*;
+    use crate::event::Event;
+    use crate::reload::{Stale, fnv1a};
+    use crate::watch::WatchCmd;
+    use std::fs;
+    use std::path::PathBuf;
+
+    /// `f.txt` in a new temp dir, opened in an editor.
+    fn open(dir: &tempfile::TempDir, contents: &str) -> (Editor, PathBuf) {
+        let path = dir.path().join("f.txt");
+        fs::write(&path, contents).unwrap();
+        (Editor::open(&path), path)
+    }
+
+    fn message_of(ed: &Editor) -> String {
+        ed.message().map(|m| m.text.clone()).unwrap_or_default()
+    }
+
+    /// The event the watcher sends for the file as it is on disk now.
+    fn event_for_disk(ed: &Editor, path: &Path) -> Event {
+        let bytes = fs::read(path).unwrap();
+        let mtime = fs::metadata(path).unwrap().modified().ok();
+        Event::FileChanged {
+            doc: DocId::default(),
+            version: ed.doc().version(),
+            size: bytes.len(),
+            hash: fnv1a(&bytes),
+            mtime,
+            bytes,
+        }
+    }
+
+    /// Turns the option on and takes the watcher command it produces.
+    fn watch_on(ed: &mut Editor) -> Vec<WatchCmd> {
+        ed.feed(":set filewatch<CR>");
+        ed.take_watch_commands()
+    }
+
+    #[test]
+    fn with_the_option_off_nothing_is_watched_and_no_event_changes_the_buffer() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut ed, path) = open(&dir, "one\n");
+        ed.feed("ix<Esc>:w<CR>");
+        assert!(ed.take_watch_commands().is_empty(), "no watched set");
+        // A change on disk and an event for it: the option is off, so nothing.
+        fs::write(&path, "other\n").unwrap();
+        let seq = ed.doc().undo.seq();
+        ed.handle_event(event_for_disk(&ed, &path));
+        assert_eq!(ed.buf().lines(), ["xone"]);
+        assert_eq!(ed.doc().undo.seq(), seq);
+        assert_eq!(ed.doc().stale, None);
+        assert!(!message_of(&ed).starts_with('W'), "{}", message_of(&ed));
+        assert!(ed.take_watch_commands().is_empty());
+    }
+
+    #[test]
+    fn turning_the_option_on_sends_the_watched_set_and_only_changes_send_more() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut ed, path) = open(&dir, "one\n");
+        let cmds = watch_on(&mut ed);
+        let [WatchCmd::Set(targets)] = cmds.as_slice() else {
+            panic!("{cmds:?}");
+        };
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].path, path);
+        assert_eq!(targets[0].synced, ed.doc().disk.clone());
+        // Nothing changed: no command.
+        assert!(ed.take_watch_commands().is_empty());
+        // A text change moves the version the watcher is told about.
+        ed.feed("x");
+        assert!(matches!(
+            ed.take_watch_commands().as_slice(),
+            [WatchCmd::Set(_)]
+        ));
+    }
+
+    #[test]
+    fn an_event_for_an_older_version_is_dropped_and_the_file_is_looked_at_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut ed, path) = open(&dir, "one\n");
+        watch_on(&mut ed);
+        let seen = ed.doc().version();
+        ed.feed("x");
+        fs::write(&path, "two\n").unwrap();
+        let mut stale = event_for_disk(&ed, &path);
+        if let Event::FileChanged { version, .. } = &mut stale {
+            *version = seen;
+        }
+        ed.handle_event(stale);
+        assert_eq!(ed.buf().lines(), ["ne"], "the text is not replaced");
+        assert_eq!(ed.doc().stale, None);
+        let cmds = ed.take_watch_commands();
+        assert!(
+            cmds.contains(&WatchCmd::Resync(DocId::default())),
+            "{cmds:?}"
+        );
+    }
+
+    #[test]
+    fn unmodified_with_autoread_reloads_as_one_undo_step_tagged_external() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut ed, path) = open(&dir, "one\ntwo\n");
+        watch_on(&mut ed);
+        ed.feed(":set autoread<CR>");
+        let seq = ed.doc().undo.seq();
+        fs::write(&path, "one\nTWO\n").unwrap();
+        ed.handle_event(event_for_disk(&ed, &path));
+        assert_eq!(ed.buf().lines(), ["one", "TWO"]);
+        assert_eq!(ed.doc().undo.seq(), seq + 1, "one step");
+        assert_eq!(ed.doc().undo.source(seq + 1), Some(UndoSource::External));
+        assert!(
+            message_of(&ed).contains("changed on disk"),
+            "{}",
+            message_of(&ed)
+        );
+        assert!(!ed.buf().modified);
+        assert_eq!(ed.doc().stale, None);
+        // The disk state is the new file: the same event again does nothing.
+        let seq = ed.doc().undo.seq();
+        ed.handle_event(event_for_disk(&ed, &path));
+        assert_eq!(ed.doc().undo.seq(), seq);
+        // And `u` undoes the reload.
+        ed.feed("u");
+        assert_eq!(ed.buf().lines(), ["one", "two"]);
+    }
+
+    #[test]
+    fn insert_mode_holds_the_change_until_normal_mode() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut ed, path) = open(&dir, "one\n");
+        watch_on(&mut ed);
+        ed.feed(":set autoread<CR>");
+        ed.feed("i");
+        fs::write(&path, "two\n").unwrap();
+        ed.handle_event(event_for_disk(&ed, &path));
+        assert_eq!(ed.buf().lines(), ["one"], "not while typing");
+        let note = format!(
+            "\"{}\" changed on disk; reloads in Normal mode",
+            path.display()
+        );
+        assert_eq!(message_of(&ed), note);
+        ed.handle_event(Event::Key(Key::Esc));
+        assert_eq!(
+            ed.buf().lines(),
+            ["two"],
+            "applied on return to Normal mode"
+        );
+        assert_eq!(ed.doc().stale, None);
+    }
+
+    #[test]
+    fn a_command_being_typed_holds_the_change() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut ed, path) = open(&dir, "one\ntwo\n");
+        watch_on(&mut ed);
+        ed.feed(":set autoread<CR>");
+        ed.feed("d");
+        assert!(!ed.pending_keys().is_empty());
+        fs::write(&path, "new\n").unwrap();
+        ed.handle_event(event_for_disk(&ed, &path));
+        assert_eq!(
+            ed.buf().lines(),
+            ["one", "two"],
+            "held while `d` is pending"
+        );
+        ed.handle_event(Event::Key(Key::Esc));
+        assert_eq!(
+            ed.buf().lines(),
+            ["new"],
+            "applied once the command is over"
+        );
+    }
+
+    #[test]
+    fn the_command_line_holds_the_change_too() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut ed, path) = open(&dir, "one\n");
+        watch_on(&mut ed);
+        ed.feed(":set autoread<CR>");
+        ed.feed(":");
+        fs::write(&path, "two\n").unwrap();
+        ed.handle_event(event_for_disk(&ed, &path));
+        assert_eq!(ed.buf().lines(), ["one"]);
+        ed.handle_event(Event::Key(Key::Esc));
+        assert_eq!(ed.buf().lines(), ["two"]);
+    }
+
+    #[test]
+    fn a_modified_buffer_is_kept_and_warned_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut ed, path) = open(&dir, "one\n");
+        watch_on(&mut ed);
+        ed.feed(":set autoread<CR>");
+        ed.feed("ix<Esc>");
+        fs::write(&path, "two\n").unwrap();
+        ed.handle_event(event_for_disk(&ed, &path));
+        assert_eq!(ed.buf().lines(), ["xone"]);
+        assert_eq!(ed.doc().stale, Some(Stale::Changed));
+        assert!(message_of(&ed).starts_with("W12"), "{}", message_of(&ed));
+        // The same change reported again (a resync) is not warned about again.
+        ed.message = None;
+        ed.handle_event(event_for_disk(&ed, &path));
+        assert_eq!(message_of(&ed), "");
+        assert_eq!(ed.doc().stale, Some(Stale::Changed));
+        assert_eq!(ed.buf().lines(), ["xone"]);
+    }
+
+    #[test]
+    fn noautoread_keeps_an_unmodified_buffer_and_warns_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut ed, path) = open(&dir, "one\n");
+        watch_on(&mut ed);
+        fs::write(&path, "two\n").unwrap();
+        ed.handle_event(event_for_disk(&ed, &path));
+        assert_eq!(ed.buf().lines(), ["one"]);
+        assert_eq!(ed.doc().stale, Some(Stale::Changed));
+        assert!(message_of(&ed).starts_with("W11"), "{}", message_of(&ed));
+        ed.message = None;
+        ed.handle_event(event_for_disk(&ed, &path));
+        assert_eq!(message_of(&ed), "");
+        // The next change is a new warning.
+        fs::write(&path, "three\n").unwrap();
+        ed.handle_event(event_for_disk(&ed, &path));
+        assert!(message_of(&ed).starts_with("W11"), "{}", message_of(&ed));
+    }
+
+    #[test]
+    fn the_watcher_and_checktime_give_the_same_warning() {
+        let dir = tempfile::tempdir().unwrap();
+        // Two files in two dirs, so each message names its own path; the
+        // paths are replaced by "P" before the messages are compared.
+        let dir2 = tempfile::tempdir().unwrap();
+        let (mut by_check, path) = open(&dir, "one\n");
+        by_check.feed("ix<Esc>");
+        fs::write(&path, "two\n").unwrap();
+        by_check.feed(":checktime<CR>");
+
+        let (mut by_watch, path2) = open(&dir2, "one\n");
+        watch_on(&mut by_watch);
+        by_watch.feed("ix<Esc>");
+        fs::write(&path2, "two\n").unwrap();
+        by_watch.handle_event(event_for_disk(&by_watch, &path2));
+
+        let normal = |ed: &Editor, p: &Path| message_of(ed).replace(&p.display().to_string(), "P");
+        assert_eq!(by_watch.doc().stale, by_check.doc().stale);
+        assert_eq!(normal(&by_watch, &path2), normal(&by_check, &path));
+        assert!(normal(&by_check, &path).starts_with("W12"));
+        assert_eq!(by_watch.buf().lines(), by_check.buf().lines());
+    }
+
+    #[test]
+    fn a_deleted_file_keeps_the_buffer_and_says_so_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut ed, path) = open(&dir, "one\n");
+        watch_on(&mut ed);
+        fs::remove_file(&path).unwrap();
+        let version = ed.doc().version();
+        ed.handle_event(Event::FileDeleted {
+            doc: DocId::default(),
+            version,
+        });
+        assert_eq!(ed.buf().lines(), ["one"]);
+        assert_eq!(ed.doc().stale, Some(Stale::Deleted));
+        assert!(message_of(&ed).starts_with("E211"), "{}", message_of(&ed));
+        assert!(ed.message().is_some_and(|m| m.error));
+        ed.message = None;
+        ed.handle_event(Event::FileDeleted {
+            doc: DocId::default(),
+            version,
+        });
+        assert_eq!(message_of(&ed), "", "not again");
+    }
+
+    #[test]
+    fn a_file_created_after_editing_started_is_warned_as_w13() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("new.txt");
+        let mut ed = Editor::open(&path);
+        watch_on(&mut ed);
+        fs::write(&path, "hello\n").unwrap();
+        ed.handle_event(event_for_disk(&ed, &path));
+        assert_eq!(ed.buf().lines(), [""], "the empty buffer is kept");
+        assert_eq!(ed.doc().stale, Some(Stale::Changed));
+        assert!(message_of(&ed).starts_with("W13"), "{}", message_of(&ed));
+    }
+
+    #[test]
+    fn our_own_write_read_back_is_not_a_change() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut ed, path) = open(&dir, "one\n");
+        watch_on(&mut ed);
+        ed.feed(":set autoread<CR>");
+        ed.feed("ix<Esc>:w<CR>");
+        let seq = ed.doc().undo.seq();
+        ed.message = None;
+        ed.handle_event(event_for_disk(&ed, &path));
+        assert_eq!(ed.buf().lines(), ["xone"]);
+        assert_eq!(ed.doc().undo.seq(), seq, "no step");
+        assert_eq!(ed.doc().stale, None);
+        assert_eq!(message_of(&ed), "", "no message");
+    }
+
+    #[test]
+    fn an_event_is_ignored_when_the_option_is_turned_off_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut ed, path) = open(&dir, "one\n");
+        watch_on(&mut ed);
+        ed.feed(":set nofilewatch<CR>");
+        ed.feed(":set autoread<CR>");
+        fs::write(&path, "two\n").unwrap();
+        ed.handle_event(event_for_disk(&ed, &path));
+        assert_eq!(ed.buf().lines(), ["one"]);
+        assert_eq!(ed.doc().stale, None);
     }
 }

@@ -5,7 +5,9 @@
 //! [`Editor::handle_event`](crate::Editor::handle_event). The editor itself
 //! never blocks and never touches the terminal.
 
+use crate::document::DocId;
 use crate::key::Key;
+use std::time::SystemTime;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
@@ -21,6 +23,26 @@ pub enum Event {
     /// A signal that ends the session (SIGHUP, SIGTERM; see `signals.rs`).
     /// The front end acts on it; the editor ignores it.
     Signal(i32),
+    /// The file of document `doc` differs from what the buffer last synced
+    /// with (sent by the watcher, `watch.rs`, only with the option
+    /// `filewatch`). `version` is the document version the watcher was told
+    /// about; the editor drops the event if the text has changed since. The
+    /// file's contents are `bytes`, and `mtime`, `size` and `hash` describe
+    /// them (`hash` as `reload::fnv1a`). A file the buffer had no state for
+    /// (no file on disk yet) also comes as this event.
+    FileChanged {
+        doc: DocId,
+        version: u64,
+        bytes: Vec<u8>,
+        mtime: Option<SystemTime>,
+        size: usize,
+        hash: u64,
+    },
+    /// The file that the buffer had on disk is gone (see `FileChanged`).
+    FileDeleted {
+        doc: DocId,
+        version: u64,
+    },
 }
 
 #[cfg(test)]

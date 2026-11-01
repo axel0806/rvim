@@ -7,8 +7,8 @@ a real Vim by the differential harness in `tests/common/mod.rs`.
 
 ## Status: read this first
 
-Last updated 2026-11-01 (milestone 7 step 5a: the ACP connector core in `src/acp.rs`, pure with no process or UI: newline-delimited JSON-RPC framing with an 8 MiB line cap, typed ACP v1 messages, and the `Conn` session state machine driven by a fake clock; recorded transcripts in `tests/fixtures/acp/` replayed by `tests/acp_connector.rs`; `serde` and `serde_json` added, see "ACP connector core" and "Dependency choices"; the modified-Vim notice on the message line is the short `NOTICE_SHORT` (39 characters, fits 80 columns) for the intro and `:version`, with the config note `[N config warnings]`; the full `VERSION_MESSAGE` stays in `--version` and the start menu; see "Licensing" and "Known differences"; milestone 6 config file loader: `config.toml` read once at startup, `[options]`, `[start] menu`, raw `[agent]`, `-u NONE`, `--clean`, `-N`, `:ConfigWarnings`; see "Config" under "Editing experience"; the non-file marks: `'[` `']` `'<` `'>` `'"` as motions, operator targets and Ex addresses, `m[ m] m< m>`, the `'[`/`']` marks set by each command, `:marks` and `:delmarks`; milestone 7 step 2a: undo steps record their source, the disk state per document with a hash, `:checktime`, and the reload of an unmodified buffer as one undo step with cursor and scroll mapping; milestone 4 option scopes: `:setlocal` and `:setglobal`, buffer-local, window-local and global-local values, see "Options registry"; Document/Window/Editor split steps 1 to 3 of milestone 4 (ids, collections, accessors, version counter, marks, `buf_mut()`, window size); CI first ran on GitHub; Linux builds Vim 9.1.1914 from source, and all three OS jobs require Vim; cell-level diff redraw in `redraw.rs`, with its escape sequences tested in `main.rs`; kitty keyboard protocol, with `RVIM_NO_KITTY=1` to turn it off and no support query when `TERM` is unset, empty or `dumb`; SIGHUP/SIGTERM recovery on Unix, milestone 4; Makefile packaging targets `install` with `PREFIX`/`DESTDIR`, `uninstall` and `dist`). **rvim is an alpha, roughly 25-30% of this plan.**
-As of 2026-11-01 milestones 1-3 are done; 4 and 5 are partly done; 6 has the start menu and the config loader; 7 has its first step (file reload, 2a) and the ACP protocol core (5a), 8-9 are plans.
+Last updated 2026-11-01 (milestone 7 step 5a: the ACP connector core in `src/acp.rs`, pure with no process or UI: newline-delimited JSON-RPC framing with an 8 MiB line cap, typed ACP v1 messages, and the `Conn` session state machine driven by a fake clock; recorded transcripts in `tests/fixtures/acp/` replayed by `tests/acp_connector.rs`; `serde` and `serde_json` added, see "ACP connector core" and "Dependency choices"; the modified-Vim notice on the message line is the short `NOTICE_SHORT` (39 characters, fits 80 columns) for the intro and `:version`, with the config note `[N config warnings]`; the full `VERSION_MESSAGE` stays in `--version` and the start menu; see "Licensing" and "Known differences"; milestone 6 config file loader: `config.toml` read once at startup, `[options]`, `[start] menu`, raw `[agent]`, `-u NONE`, `--clean`, `-N`, `:ConfigWarnings`; see "Config" under "Editing experience"; the non-file marks: `'[` `']` `'<` `'>` `'"` as motions, operator targets and Ex addresses, `m[ m] m< m>`, the `'[`/`']` marks set by each command, `:marks` and `:delmarks`; milestone 7 step 2b: the file watcher thread (`src/watch.rs`) with the option `filewatch`, off by default: `FileChanged`, `FileDeleted` and `FileTooLarge` events, echo suppression by hash, reads capped at 64 MiB, one decision shared with `:checktime` (`Editor::check_disk`), and the change applied in Normal mode only; milestone 7 step 2a: undo steps record their source, the disk state per document with a hash, `:checktime`, and the reload of an unmodified buffer as one undo step with cursor and scroll mapping; milestone 4 option scopes: `:setlocal` and `:setglobal`, buffer-local, window-local and global-local values, see "Options registry"; Document/Window/Editor split steps 1 to 3 of milestone 4 (ids, collections, accessors, version counter, marks, `buf_mut()`, window size); CI first ran on GitHub; Linux builds Vim 9.1.1914 from source, and all three OS jobs require Vim; cell-level diff redraw in `redraw.rs`, with its escape sequences tested in `main.rs`; kitty keyboard protocol, with `RVIM_NO_KITTY=1` to turn it off and no support query when `TERM` is unset, empty or `dumb`; SIGHUP/SIGTERM recovery on Unix, milestone 4; Makefile packaging targets `install` with `PREFIX`/`DESTDIR`, `uninstall` and `dist`). **rvim is an alpha, roughly 25-30% of this plan.**
+As of 2026-11-01 milestones 1-3 are done; 4 and 5 are partly done; 6 has the start menu and the config loader; 7 has its file reload and file watcher (2a, 2b) and the ACP protocol core (5a), 8-9 are plans.
 Released as `v0.1.0-alpha.1`, `v0.1.0-alpha.2` and `v0.1.0-alpha.3`. The next release is `v0.1.0-alpha.4`, not yet tagged. All tests pass against Vim 9.1 and clippy/fmt are
 clean at the last commit.
 
@@ -19,7 +19,7 @@ clean at the last commit.
 | 4 Foundation | 100%. The Document/Window/Editor split: steps 1 to 3 done (one document and one window, with `DocId`/`WinId` collections and window size from the screen; see "Foundation"). Option scopes done: `:setlocal`, `:setglobal`, buffer-, window- and global-local values (see "Options registry"). Foundation is complete; the rest is milestone 5 (layout and splits, several documents and windows in use) |
 | 5 Windows and buffers | ~30%. Done: macros (`q`, `@`, `@@`, `@:`), lowercase marks (`m{a-z}`, `'a`, `` `a ``, `:k`, `:mark`, `'a` addresses), the other marks (`'[` `']` `` `[ `] `` as motions, operator targets and Ex addresses, set by yank, delete, change, insert, put, shifts, `J`, `~` `g~` `gu` `gU`, `:s`, `:d`, `:m`, `:t`, `:pu`, undo and redo; `'<` `'>` and `'"`; `m[ m] m< m>`; `:marks`, `:delmarks`; `src/marks.rs`), the jumplist (`<C-o>`, `<Tab>` with counts, `:jumps`) and the context mark (`''`, `` `` ``, `m'`, `` m` ``), scrolling (`<C-e> <C-y> <C-f> <C-b> <C-d> <C-u> zt zz zb z<CR> z. z- H M L`, counts, `scrolloff`, wrapped lines). Left: splits, buffer list, uppercase (file) marks, swap files |
 | 6 Modern editing experience | Started, not near done. Landed: the start menu (opt-in `--start-menu`, `startmenu` option); the config file loader (`config.toml`: `[options]`, `[start] menu`, `[agent]` kept raw; `-u NONE`, `--clean`; `:ConfigWarnings`; see "Config"). Left: hlsearch, incsearch, syntax, line numbers, palette, mouse, `:Start`, the start menu's recent files, Config and agent entries, its modern-profile default (see "Start menu"), and the config's `[profile]`, mappings and theme |
-| 7 Agent integration | ~10%. Step 5a done (2026-11-01): the ACP protocol core, pure (`src/acp.rs`, see "ACP connector core"). Step 2a done (2026-11-01): undo steps record their source (`UndoSource`), the disk state per document (`DiskState`, FNV-1a hash, mtime and size, taken by `:e`, `:w` and `:checktime`), `:checktime` with W11, W12, W13 and E211, and a changed file reloaded when unmodified and `autoread` is on, as one undo step tagged `external` with the cursor and scroll mapped (`src/reload.rs`, `Editor::apply_external_change`). Left of step 2: the file watcher thread (2b) and echo suppression with it; the conflict prompt is step 3. The connector's process, consent, approvals and `:Agent` commands (step 5b) are not started. Not started: the diff view, agent detection (research is in "Detecting and connecting to agents") |
+| 7 Agent integration | ~15%. Step 5a done (2026-11-01): the ACP protocol core, pure (`src/acp.rs`, see "ACP connector core"). Step 2a done (2026-11-01): undo steps record their source (`UndoSource`), the disk state per document (`DiskState`, FNV-1a hash, mtime and size, taken by `:e`, `:w` and `:checktime`), `:checktime` with W11, W12, W13 and E211, and a changed file reloaded when unmodified and `autoread` is on, as one undo step tagged `external` with the cursor and scroll mapped (`src/reload.rs`, `Editor::apply_external_change`). Step 2b done (2026-11-01): the file watcher thread (`src/watch.rs`, option `filewatch`, off by default; `FileChanged`, `FileDeleted` and `FileTooLarge` events, echo suppression by hash, reads capped at 64 MiB, see "Files changed under rvim"). Step 2 is complete; the conflict prompt is step 3. The connector's process, consent, approvals and `:Agent` commands (step 5b) are not started. Not started: the diff view, agent detection (research is in "Detecting and connecting to agents") |
 | 8 Prediction | 0%. Not started |
 | 9 Extras | 0%. Not started |
 
@@ -53,8 +53,6 @@ this, `--help` opened a buffer named `--help`.
 **In progress** (as of 2026-11-01; maintained by the orchestrator, and an
 entry is removed when its branch lands on main):
 
-- Agent integration, step 2b: file watcher worker thread, `filewatch` option (off by default), echo suppression (milestone 7; new `watch.rs`, `event.rs`, `main.rs`)
-- Agent integration, step 5a: ACP protocol core, pure framing and session state machine, recorded transcripts (milestone 7; new `acp.rs`, `serde`/`serde_json`)
 - Agent integration, step 4a: read-only agent detection core behind `:AgentScan` (milestone 7; new `agent_detect.rs`)
 
 **Suggested order for what is left:** (1) Document/Window split, (2) splits +
@@ -403,7 +401,7 @@ checks every row:
 
 | Scope | Options (short name) |
 |---|---|
-| global | `ignorecase` (`ic`), `smartcase` (`scs`), `wrapscan` (`ws`), `smarttab` (`sta`), `shiftround` (`sr`), `hlsearch` (`hls`), `incsearch` (`is`); `startmenu` is rvim-only |
+| global | `ignorecase` (`ic`), `smartcase` (`scs`), `wrapscan` (`ws`), `smarttab` (`sta`), `shiftround` (`sr`), `hlsearch` (`hls`), `incsearch` (`is`); `startmenu` and `filewatch` are rvim-only |
 | buffer-local | `autoindent` (`ai`), `expandtab` (`et`), `shiftwidth` (`sw`), `tabstop` (`ts`), `softtabstop` (`sts`) |
 | global-local to buffer | `autoread` (`ar`) |
 | global-local to window | `scrolloff` (`so`) |
@@ -1133,18 +1131,28 @@ Nothing is applied "computed for an old version": the editor applies what is
 on disk, so the rule that asynchronous results are dropped when the document
 version has moved (CLAUDE.md) is not broken.
 
-File watcher (worker, milestone 7 step 2): polls mtime and size of open files
-every 750 ms and on focus gained; `:checktime` polls at once. When a file has
-changed, the worker reads it and sends `FileChanged(DocId, text, hash,
-writer)` (refines `FileChanged(DocId)`: the worker does the I/O, so the editor
-receives the text). `writer` follows the tagging rule above.
+File watcher (worker, milestone 7 step 2b, built): polls mtime and size of the
+open files every 750 ms (`POLL_INTERVAL`, `src/watch.rs`). When a file's mtime
+or size differs from its last look, the worker reads it and hashes it, unless
+it is larger than 64 MiB (`MAX_WATCH_BYTES`): then it reads nothing and sends
+`Event::FileTooLarge`. Same contents as the synced state (an echo of our write,
+or a touch): nothing. Other contents: `Event::FileChanged` with the bytes, mtime,
+size, hash and the document version the watcher was told about. A file that is
+gone (and was on disk) sends `Event::FileDeleted`. The editor decides with the
+same function as `:checktime` (`external_change_decision`, `Editor::check_disk`).
+A file too large to read is never loaded automatically: it is marked stale and
+the user is told to use `:e!`. Every watcher reload is tagged `external`; the
+`agent:<id>` tag comes with the connector (step 5). Focus is not a trigger,
+because rvim does not ask the terminal for focus events. `:checktime` polls at
+once. With the option `filewatch` off (the default), the watched set is empty
+and the thread never reads a file.
 
 When the editor applies it:
 
 | Document | Mode | Result |
 |---|---|---|
 | Unmodified since the last sync | Normal, no pending keys | Reload as one undo step (below). Applied at once |
-| Unmodified | Any other mode | Queued; applied on return to Normal mode. Message: `x.rs changed on disk; reloads in Normal mode` |
+| Unmodified | Any other mode | Queued; applied on return to Normal mode. Message: `x.rs changed on disk; handled when you return to Normal mode` (a change to a modified buffer then warns, W12, as in the row below) |
 | Modified | Any | Conflict prompt (below). Never a silent reload |
 | Deleted on disk | Any | Buffer kept and marked `[deleted]`; message `"x.rs" was deleted on disk`; `:w` writes it again |
 
@@ -1411,7 +1419,7 @@ above (`.env*` etc.) apply.
 Each step lands with `RVIM_REQUIRE_VIM=1 cargo test`, clippy and fmt clean.
 New modules keep the terminal out: `agent/state.rs` (pure), `agent/registry.rs`
 and `agent/detect.rs`, `agent/approval.rs`, `agent/acp.rs` (connector),
-`agent/ide.rs` (IDE server), `filewatch.rs` (worker), `reload.rs` (line diff,
+`agent/ide.rs` (IDE server), `watch.rs` (file watcher, worker; was planned as `filewatch.rs`), `reload.rs` (line diff,
 cursor and scroll mapping, undo step), `review.rs` (baseline, gutter, diff
 view model). `main.rs` only wires threads and draws.
 
@@ -1422,7 +1430,7 @@ needs no splits. Splits gate step 7 alone.
 | Step | Lands | Depends on | Tests |
 |---|---|---|---|
 | 1 | Document/Window split (milestone 4, item (a)) | none | Existing compat suite unchanged. Unit: two windows on one document share undo and marks, keep their own cursors |
-| 2 | **2a done (2026-11-01):** undo step source and hash, `checktime`, `autoread`, reload as one undo step with cursor and scroll mapping (`reload.rs`, `Editor::apply_external_change`), echo suppression by hash and by the stat taken after `:w`. **2b left:** file watcher (worker), `FileChanged` events, echo suppression with the watcher, and the watcher's stat polling | 1 (per-document version) | Unit: mapping table (equal, inserted above, deleted under cursor, replaced, deleted top line); `u` and `<C-r>` after reload. Scripted watcher with fake clock and fake file contents. Echo: a `:w` does not reload itself. Differential: `autoread` value and `:checktime` with no change. Add the cursor-placement difference to "Known differences" |
+| 2 | **2a done (2026-11-01):** undo step source and hash, `checktime`, `autoread`, reload as one undo step with cursor and scroll mapping (`reload.rs`, `Editor::apply_external_change`), echo suppression by hash and by the stat taken after `:w`. **2b done (2026-11-01):** file watcher (`src/watch.rs`: worker thread, stat polling every 750 ms, `WatchSet` and `poll` pure over a `FileSystem` trait), `FileChanged`, `FileDeleted` and `FileTooLarge` events, echo suppression by hash, the watched set sent by `Editor::take_watch_commands` (empty unless `filewatch` is on), resync when an event is dropped, and the option `filewatch`. Step 2 is complete | 1 (per-document version) | Unit: mapping table (equal, inserted above, deleted under cursor, replaced, deleted top line); `u` and `<C-r>` after reload. Scripted watcher with fake clock and fake file contents. Echo: a `:w` does not reload itself. Differential: `autoread` value and `:checktime` with no change. Add the cursor-placement difference to "Known differences" |
 | 3 | Conflict prompt (`l k d m`) with the opt-in, baseline (`[base]` scratch) and gutter, `:w` W11/W12 guard, deleted file, `:AgentChanges`, merge with markers (marker refusal of `:w` with the opt-in only) | 2 | Unit: each conflict key on a fixed state; merge (clean, conflicting, identical); Frame golden of the gutter and of the prompt line. With no opt-in: a modified buffer is not reloaded and `:w` gives W11. No differential (messages) |
 | 4 | Opt-in config table, registry, detection, `:AgentScan`, status-line states without connection | minimal config loader (shared with milestone 6), options | Detection with a temporary fake home and `PATH`: found, not found, found under the config dir only. Frame golden for each indicator. Golden with no opt-in and no Agent command: no indicator, identical to Vim's frame. Golden after `:AgentScan` with no opt-in: indicator shown |
 | 5 | **5a done (2026-11-01): the pure protocol core, see "ACP connector core". 5b, the connector itself, is left.** ACP connector: consent, approval store, `:Agent`, `:AgentConnect`, `:AgentUse`, `:AgentCancel`, `:AgentDisconnect`, agent log document, `\a` and `\al`, lifecycle and backoff, `Editor::prediction_allowed` (returns false) | 4 | Fake agent (test helper binary) replays recorded JSON-RPC transcripts both ways: success, auth failure, reply timeout, EOF mid-turn, malformed line. Pure transition table test. Fake timer for backoff. Approval store round trip and unreadable file. Consent keys. `:AgentUse` with two fake agents: listing, switching, and the choice prompt when several are found and none is active. Cases: `:Agent` without opt-in still works, keys stay unbound |
@@ -2178,7 +2186,7 @@ plan, kept for the record; the files are the source of truth.
 
 - `:checktime`, `:e` and `:w` read and stat files synchronously inside the Editor,
   against the CLAUDE.md rule of no blocking I/O. They are user-triggered and read
-  one file, as Vim does. The automatic path (the file watcher, agent step 2b)
+  one file, as Vim does. The automatic path (the file watcher, `src/watch.rs`)
   must not: it polls on a worker thread and delivers `FileChanged` events that
   carry the document version.
 - Command-line flags: `-v` means `--version` in rvim, but Vim's `-v` starts
@@ -2414,6 +2422,40 @@ plan, kept for the record; the files are the source of truth.
   equal in both texts goes with its text, and a changed line goes to the
   first new line of its replacement. Vim's exact rule is not known beyond
   these probes, so the difference stays until it is.
+- The file watcher (milestone 7 step 2b, option `filewatch`, off by default:
+  Vim does not poll files). It polls with `stat` every 750 ms, so a change
+  made outside rvim is seen up to about 750 ms later, plus the read. It does
+  not use inotify or the `notify` crate, so a poll costs one `stat` per open
+  file, and a file is read only when its size or mtime moved. A change while
+  the buffer is modified, or while `autoread` is off, keeps the buffer and
+  warns (W11, W12, or W13 for a new file); the warning is shown once per change.
+  A change while Insert mode or a command is pending waits for Normal mode,
+  and the message says it is handled then, because the buffer may have become
+  modified in the meantime (then it warns, W12). Focus is not a trigger: rvim
+  does not enable terminal focus reporting. An unreadable file sends nothing to
+  the editor; `:checktime` reports it (E211). `filewatch` is rvim-only:
+  `:set filewatch` gives E518 in Vim.
+- The watcher reads a changed file only up to 64 MiB (`MAX_WATCH_BYTES` in
+  `src/watch.rs`). A larger file is not read: the buffer is kept, marked stale,
+  and the message `changed on disk; too large to reload automatically, use :e!`
+  is shown once per change. A touch of such a file is reported the same way,
+  since there is no hash to compare. `:e!` loads it. `:checktime` and `:e` read
+  the whole file, as before, because the user asked for it.
+- Echo suppression covers rvim's own writes and touches: after `:w` the synced
+  state is the written bytes' hash and mtime, so the watcher's read of them is
+  not a change. It does not cover a file that changed and then went back to
+  the synced bytes: the watcher does not report that return, so a stale warning
+  stays until `:checktime` or the next change. A deleted file that comes back
+  with its synced content keeps the Deleted stale flag for the same reason; the
+  next `:checktime` or `:e!` clears it. A rewrite that keeps both the size and
+  the mtime is seen by `:checktime` (it compares the contents), but the watcher
+  does not read a file whose stat did not move, so it misses that rewrite. That
+  matters on network and WSL file systems, where mtimes can be coarse or stale,
+  so `:checktime` stays the check to run there.
+- API surface (step 2b): `DocId` is now `pub` and re-exported from the crate
+  root, and `pub mod watch` is exported from `lib.rs`, so `WatchCmd`, the
+  `Event` variants `FileChanged`, `FileDeleted` and `FileTooLarge`, and the
+  `FileSystem` trait are public.
 - Where PLAN.md is silent, the rules in `src/reload.rs` are these. A pure
   deletion sends its lines to the line before it, but a deletion at the top
   of the file sends them to the first line after it. The scroll top follows
@@ -2436,7 +2478,7 @@ plan, kept for the record; the files are the source of truth.
   E939, and a name that matches nothing is E94. Vim's `#` (alternate buffer)
   is not supported. Vim checks every buffer when there is no argument, and
   rvim checks its one buffer. The command reads the file itself, as it is
-  user-triggered; the watcher (step 2b) will read on a worker thread instead.
+  user-triggered; the watcher reads on a worker thread instead (`src/watch.rs`).
 - `:checktime` decides by content: a file whose contents are the same is not
   a change even when its modification time moved. Vim warns on a new
   modification time; this was not probed. A rewrite that keeps the size and

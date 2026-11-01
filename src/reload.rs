@@ -80,6 +80,56 @@ pub(crate) enum Stale {
     Deleted,
 }
 
+/// The message `:checktime` and the watcher last showed for a file, so the
+/// watcher shows a warning once per change (Document::warned).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Warned {
+    /// A change to the file with this hash.
+    Changed(u64),
+    /// The file is gone.
+    Deleted,
+}
+
+/// What `:checktime` and the file watcher do about a file (one decision for
+/// both, so they cannot disagree). `synced` is the state the buffer last read
+/// or wrote, None when it has no file on disk yet; `now` is the file's state
+/// now, None when it is gone.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Decision {
+    /// The file is as the buffer last saw it, or there is no file either time.
+    Same,
+    /// Same contents, a new modification time or size: record it, no change.
+    Touched,
+    /// The file was created after editing started (W13).
+    Created,
+    /// The file is gone (E211). The buffer is kept.
+    Deleted,
+    /// The file changed and the buffer is kept: it is modified (W12), or
+    /// 'autoread' is off (W11).
+    Changed { modified: bool },
+    /// The file changed, the buffer is unmodified and 'autoread' is on: reload.
+    Reload,
+}
+
+/// The decision for a file, given the state the buffer synced with, the
+/// file's state now, whether the buffer is modified, and 'autoread'.
+pub(crate) fn external_change_decision(
+    synced: Option<&DiskState>,
+    now: Option<&DiskState>,
+    modified: bool,
+    autoread: bool,
+) -> Decision {
+    match (synced, now) {
+        (None, None) => Decision::Same,
+        (Some(_), None) => Decision::Deleted,
+        (None, Some(_)) => Decision::Created,
+        (Some(d), Some(n)) if d.same_as(n) => Decision::Same,
+        (Some(d), Some(n)) if d.hash == n.hash => Decision::Touched,
+        (Some(_), Some(_)) if modified || !autoread => Decision::Changed { modified },
+        (Some(_), Some(_)) => Decision::Reload,
+    }
+}
+
 /// What a reload changed, for the message.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Change {
@@ -299,6 +349,29 @@ mod tests {
         assert_eq!(a.size, 3);
         assert!(a.same_as(&DiskState::of(None, b"x\r\n")));
         assert!(!a.same_as(&b));
+    }
+
+    #[test]
+    fn decision_table_for_checktime_and_the_watcher() {
+        use Decision::*;
+        let a = DiskState::of(None, b"a\n");
+        let b = DiskState::of(None, b"bb\n");
+        let a_touched = DiskState::of(Some(SystemTime::UNIX_EPOCH), b"a\n");
+        let d = external_change_decision;
+        assert_eq!(d(None, None, false, true), Same);
+        assert_eq!(d(Some(&a), None, false, true), Deleted);
+        assert_eq!(d(None, Some(&a), false, true), Created);
+        assert_eq!(d(Some(&a), Some(&a), true, true), Same);
+        assert_eq!(d(Some(&a), Some(&a_touched), false, false), Touched);
+        assert_eq!(d(Some(&a), Some(&b), false, true), Reload);
+        assert_eq!(
+            d(Some(&a), Some(&b), false, false),
+            Changed { modified: false }
+        );
+        assert_eq!(
+            d(Some(&a), Some(&b), true, true),
+            Changed { modified: true }
+        );
     }
 
     // The mapping table of PLAN.md, one row per case.

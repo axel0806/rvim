@@ -14,9 +14,8 @@ use crate::normal::Op;
 use crate::ops::OpArg;
 use crate::options::Target;
 use crate::regex::{Match, Regex};
-use crate::reload::{DiskState, Stale};
+use crate::reload::DiskState;
 use crate::search::{SearchFlags, Start, searchit};
-use crate::undo::UndoSource;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -720,6 +719,7 @@ impl Editor {
                     let disk = DiskState::of(mtime, &self.buf().to_bytes());
                     self.doc_mut().disk = Some(disk);
                     self.doc_mut().stale = None;
+                    self.doc_mut().warned = None;
                 }
                 let new = if is_new { " [New]" } else { "" };
                 self.info(format!(
@@ -796,81 +796,28 @@ impl Editor {
         let Some(path) = self.buf().path.clone() else {
             return Ok(());
         };
-        let name = path.display().to_string();
         let read = match read_file(&path) {
             Ok(read) => read,
-            Err(e) => return Err(format!("E211: File \"{name}\" no longer available ({e})")),
-        };
-        let Some((mtime, bytes)) = read else {
-            // Gone. A buffer that never had a file on disk has nothing to lose.
-            if self.doc().disk.is_some() {
-                self.doc_mut().stale = Some(Stale::Deleted);
-                return Err(format!("E211: File \"{name}\" no longer available"));
+            Err(e) => {
+                let name = path.display();
+                return Err(format!("E211: File \"{name}\" no longer available ({e})"));
             }
-            return Ok(());
         };
-        let now = DiskState::of(mtime, &bytes);
-        let disk = self.doc().disk.clone();
-        if disk.as_ref().is_some_and(|d| d.same_as(&now)) {
-            self.doc_mut().stale = None;
-            return Ok(());
-        }
-        if disk.as_ref().is_some_and(|d| d.hash == now.hash) {
-            // Same contents, a new modification time or size (touched, or
-            // written by rvim itself and read back). Not a change: record it.
-            self.doc_mut().disk = Some(now);
-            self.doc_mut().stale = None;
-            return Ok(());
-        }
-        if disk.is_none() {
-            // The file was created after editing started.
-            self.doc_mut().stale = Some(Stale::Changed);
-            self.info(format!(
-                "W13: Warning: File \"{name}\" has been created after editing started"
-            ));
-            return Ok(());
-        }
-        let modified = self.buf().modified;
-        if modified || !self.autoread_on() {
-            // The buffer is not touched. Its disk state stays as it was, so the
-            // change is still seen (and reported again) by the next check.
-            self.doc_mut().stale = Some(Stale::Changed);
-            let warning = if modified {
-                "W12: Warning"
-            } else {
-                "W11: Warning"
-            };
-            let what = if modified {
-                "has changed and the buffer was changed in Vim as well"
-            } else {
-                "has changed since editing started"
-            };
-            self.info(format!("{warning}: File \"{name}\" {what}"));
-            return Ok(());
-        }
-        // Unmodified, and 'autoread' is on: reload as one undo step.
-        let (new, _) = Buffer::from_file_bytes(&path, Some(&bytes));
+        let now = read.map(|(mtime, bytes)| (DiskState::of(mtime, &bytes), bytes));
         let doc = self.win().doc;
-        let change = self.apply_external_change(doc, new, UndoSource::External);
-        let d = self.doc_mut();
-        d.disk = Some(now);
-        d.stale = None;
-        self.info(match change {
-            None => format!("\"{name}\" changed on disk"),
-            Some(c) if c.fallback => {
-                format!("\"{name}\" changed on disk; line diff too large, cursor kept on its line")
-            }
-            Some(c) => format!(
-                "\"{name}\" changed on disk: +{} -{} lines",
-                c.added, c.removed
-            ),
-        });
-        Ok(())
+        match self.check_disk(
+            doc,
+            now.as_ref().map(|(s, b)| (s.clone(), b.as_slice())),
+            false,
+        ) {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
     }
 
     /// The effective value of 'autoread' for the current document and window.
     /// It is global-local: an unset local value means the global one.
-    fn autoread_on(&self) -> bool {
+    pub(crate) fn autoread_on(&self) -> bool {
         let i = crate::options::Options::find("autoread");
         i.is_some_and(|i| matches!(self.eff().value(i), crate::options::Val::Bool(true)))
     }

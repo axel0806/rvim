@@ -9,7 +9,7 @@ use crate::buffer::Buffer;
 use crate::editor::LastVisual;
 use crate::motion::Pos;
 use crate::options::{Local, Options};
-use crate::reload::{DiskState, Stale};
+use crate::reload::{DiskState, Stale, Warned};
 use crate::undo::UndoTree;
 
 /// The line `U` restores (Vim's `b_u_line_*`).
@@ -23,7 +23,7 @@ pub(crate) struct ULine {
 /// Index of a document in `Editor::documents`. Ids stay stable: documents are
 /// not removed yet.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub(crate) struct DocId(pub(crate) usize);
+pub struct DocId(pub(crate) usize);
 
 pub(crate) struct Document {
     pub(crate) buf: Buffer,
@@ -49,6 +49,9 @@ pub(crate) struct Document {
     /// The file has changed or gone since the text was read or written, and
     /// nothing has reloaded or written it since (set by `:checktime`).
     pub(crate) stale: Option<Stale>,
+    /// What the watcher's warning last said about the file, so that the same
+    /// change is warned about once (not for `:checktime`, which always says).
+    pub(crate) warned: Option<Warned>,
 }
 
 impl Document {
@@ -70,6 +73,7 @@ impl Document {
             local,
             disk: None,
             stale: None,
+            warned: None,
         }
     }
 
