@@ -2,6 +2,7 @@
 //! rvim: a Vim-compatible editor core. The library has no terminal
 //! dependency; `main.rs` is the crossterm front end.
 
+pub mod acp;
 pub mod buffer;
 pub mod cli;
 mod cmdline;

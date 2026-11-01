@@ -14,6 +14,9 @@ unicode-width = "0.2.3"
 # feature. The cost is in PLAN.md, "Dependency choices" (about +23% release
 # binary); `display` (writing TOML) is not needed.
 toml = { version = "1.1.8", default-features = false, features = ["std", "serde", "parse"] }
+# Agent connector wire types (src/acp.rs). Published 2026-07-18 and 2026-10-11.
+serde = { version = "1.0.229", default-features = false, features = ["std", "derive"] }
+serde_json = { version = "1.0.154", default-features = false, features = ["std"] }
 
 # SIGHUP and SIGTERM on Unix (src/signals.rs). crossterm already depends on
 # signal-hook 0.3, so this adds no crate to the build.

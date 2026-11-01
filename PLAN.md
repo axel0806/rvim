@@ -7,8 +7,8 @@ a real Vim by the differential harness in `tests/common/mod.rs`.
 
 ## Status: read this first
 
-Last updated 2026-11-01 (the modified-Vim notice on the message line is the short `NOTICE_SHORT` (39 characters, fits 80 columns) for the intro and `:version`, with the config note `[N config warnings]`; the full `VERSION_MESSAGE` stays in `--version` and the start menu; see "Licensing" and "Known differences"; milestone 6 config file loader: `config.toml` read once at startup, `[options]`, `[start] menu`, raw `[agent]`, `-u NONE`, `--clean`, `-N`, `:ConfigWarnings`; see "Config" under "Editing experience"; the non-file marks: `'[` `']` `'<` `'>` `'"` as motions, operator targets and Ex addresses, `m[ m] m< m>`, the `'[`/`']` marks set by each command, `:marks` and `:delmarks`; milestone 7 step 2a: undo steps record their source, the disk state per document with a hash, `:checktime`, and the reload of an unmodified buffer as one undo step with cursor and scroll mapping; milestone 4 option scopes: `:setlocal` and `:setglobal`, buffer-local, window-local and global-local values, see "Options registry"; Document/Window/Editor split steps 1 to 3 of milestone 4 (ids, collections, accessors, version counter, marks, `buf_mut()`, window size); CI first ran on GitHub; Linux builds Vim 9.1.1914 from source, and all three OS jobs require Vim; cell-level diff redraw in `redraw.rs`, with its escape sequences tested in `main.rs`; kitty keyboard protocol, with `RVIM_NO_KITTY=1` to turn it off and no support query when `TERM` is unset, empty or `dumb`; SIGHUP/SIGTERM recovery on Unix, milestone 4; Makefile packaging targets `install` with `PREFIX`/`DESTDIR`, `uninstall` and `dist`). **rvim is an alpha, roughly 25-30% of this plan.**
-As of 2026-11-01 milestones 1-3 are done; 4 and 5 are partly done; 6 has the start menu and the config loader; 7 has its first step (file reload, 2a), 8-9 are plans.
+Last updated 2026-11-01 (milestone 7 step 5a: the ACP connector core in `src/acp.rs`, pure with no process or UI: newline-delimited JSON-RPC framing with an 8 MiB line cap, typed ACP v1 messages, and the `Conn` session state machine driven by a fake clock; recorded transcripts in `tests/fixtures/acp/` replayed by `tests/acp_connector.rs`; `serde` and `serde_json` added, see "ACP connector core" and "Dependency choices"; the modified-Vim notice on the message line is the short `NOTICE_SHORT` (39 characters, fits 80 columns) for the intro and `:version`, with the config note `[N config warnings]`; the full `VERSION_MESSAGE` stays in `--version` and the start menu; see "Licensing" and "Known differences"; milestone 6 config file loader: `config.toml` read once at startup, `[options]`, `[start] menu`, raw `[agent]`, `-u NONE`, `--clean`, `-N`, `:ConfigWarnings`; see "Config" under "Editing experience"; the non-file marks: `'[` `']` `'<` `'>` `'"` as motions, operator targets and Ex addresses, `m[ m] m< m>`, the `'[`/`']` marks set by each command, `:marks` and `:delmarks`; milestone 7 step 2a: undo steps record their source, the disk state per document with a hash, `:checktime`, and the reload of an unmodified buffer as one undo step with cursor and scroll mapping; milestone 4 option scopes: `:setlocal` and `:setglobal`, buffer-local, window-local and global-local values, see "Options registry"; Document/Window/Editor split steps 1 to 3 of milestone 4 (ids, collections, accessors, version counter, marks, `buf_mut()`, window size); CI first ran on GitHub; Linux builds Vim 9.1.1914 from source, and all three OS jobs require Vim; cell-level diff redraw in `redraw.rs`, with its escape sequences tested in `main.rs`; kitty keyboard protocol, with `RVIM_NO_KITTY=1` to turn it off and no support query when `TERM` is unset, empty or `dumb`; SIGHUP/SIGTERM recovery on Unix, milestone 4; Makefile packaging targets `install` with `PREFIX`/`DESTDIR`, `uninstall` and `dist`). **rvim is an alpha, roughly 25-30% of this plan.**
+As of 2026-11-01 milestones 1-3 are done; 4 and 5 are partly done; 6 has the start menu and the config loader; 7 has its first step (file reload, 2a) and the ACP protocol core (5a), 8-9 are plans.
 Released as `v0.1.0-alpha.1`, `v0.1.0-alpha.2` and `v0.1.0-alpha.3`. The next release is `v0.1.0-alpha.4`, not yet tagged. All tests pass against Vim 9.1 and clippy/fmt are
 clean at the last commit.
 
@@ -19,7 +19,7 @@ clean at the last commit.
 | 4 Foundation | 100%. The Document/Window/Editor split: steps 1 to 3 done (one document and one window, with `DocId`/`WinId` collections and window size from the screen; see "Foundation"). Option scopes done: `:setlocal`, `:setglobal`, buffer-, window- and global-local values (see "Options registry"). Foundation is complete; the rest is milestone 5 (layout and splits, several documents and windows in use) |
 | 5 Windows and buffers | ~30%. Done: macros (`q`, `@`, `@@`, `@:`), lowercase marks (`m{a-z}`, `'a`, `` `a ``, `:k`, `:mark`, `'a` addresses), the other marks (`'[` `']` `` `[ `] `` as motions, operator targets and Ex addresses, set by yank, delete, change, insert, put, shifts, `J`, `~` `g~` `gu` `gU`, `:s`, `:d`, `:m`, `:t`, `:pu`, undo and redo; `'<` `'>` and `'"`; `m[ m] m< m>`; `:marks`, `:delmarks`; `src/marks.rs`), the jumplist (`<C-o>`, `<Tab>` with counts, `:jumps`) and the context mark (`''`, `` `` ``, `m'`, `` m` ``), scrolling (`<C-e> <C-y> <C-f> <C-b> <C-d> <C-u> zt zz zb z<CR> z. z- H M L`, counts, `scrolloff`, wrapped lines). Left: splits, buffer list, uppercase (file) marks, swap files |
 | 6 Modern editing experience | Started, not near done. Landed: the start menu (opt-in `--start-menu`, `startmenu` option); the config file loader (`config.toml`: `[options]`, `[start] menu`, `[agent]` kept raw; `-u NONE`, `--clean`; `:ConfigWarnings`; see "Config"). Left: hlsearch, incsearch, syntax, line numbers, palette, mouse, `:Start`, the start menu's recent files, Config and agent entries, its modern-profile default (see "Start menu"), and the config's `[profile]`, mappings and theme |
-| 7 Agent integration | ~5%. Step 2a done (2026-11-01): undo steps record their source (`UndoSource`), the disk state per document (`DiskState`, FNV-1a hash, mtime and size, taken by `:e`, `:w` and `:checktime`), `:checktime` with W11, W12, W13 and E211, and a changed file reloaded when unmodified and `autoread` is on, as one undo step tagged `external` with the cursor and scroll mapped (`src/reload.rs`, `Editor::apply_external_change`). Left of step 2: the file watcher thread (2b) and echo suppression with it; the conflict prompt is step 3. Not started: the diff view, ACP connector, agent detection (research is in "Detecting and connecting to agents") |
+| 7 Agent integration | ~10%. Step 5a done (2026-11-01): the ACP protocol core, pure (`src/acp.rs`, see "ACP connector core"). Step 2a done (2026-11-01): undo steps record their source (`UndoSource`), the disk state per document (`DiskState`, FNV-1a hash, mtime and size, taken by `:e`, `:w` and `:checktime`), `:checktime` with W11, W12, W13 and E211, and a changed file reloaded when unmodified and `autoread` is on, as one undo step tagged `external` with the cursor and scroll mapped (`src/reload.rs`, `Editor::apply_external_change`). Left of step 2: the file watcher thread (2b) and echo suppression with it; the conflict prompt is step 3. The connector's process, consent, approvals and `:Agent` commands (step 5b) are not started. Not started: the diff view, agent detection (research is in "Detecting and connecting to agents") |
 | 8 Prediction | 0%. Not started |
 | 9 Extras | 0%. Not started |
 
@@ -1051,10 +1051,12 @@ text and presses Enter. Nothing is sent until Enter.
 Protocol surface used in this section: `initialize`, `authenticate`,
 `session/new`, `session/prompt`, `session/cancel`, `session/request_permission`,
 `session/update`, `fs/read_text_file`, `fs/write_text_file` and `terminal/*` are
-confirmed from the ACP overview page only. Field-level shapes (option kinds,
-tool-call kinds and locations, `resource_link`, stop reasons, cancelled
-outcome) are UNVERIFIED until read from the protocol reference and tested
-against a real agent.
+confirmed from the ACP schema v1 (step 5a, see "ACP connector core"): option
+kinds, the selected and cancelled outcomes, stop reasons, tool-call kinds,
+statuses and content, `resource_link` and the fs shapes. The items still
+UNVERIFIED there (the authenticate timing, the file URI of a selection, the
+tool-call location tagging) and everything about a real agent remain UNVERIFIED
+until tested against one.
 
 Context attached to each prompt:
 
@@ -1423,7 +1425,7 @@ needs no splits. Splits gate step 7 alone.
 | 2 | **2a done (2026-11-01):** undo step source and hash, `checktime`, `autoread`, reload as one undo step with cursor and scroll mapping (`reload.rs`, `Editor::apply_external_change`), echo suppression by hash and by the stat taken after `:w`. **2b left:** file watcher (worker), `FileChanged` events, echo suppression with the watcher, and the watcher's stat polling | 1 (per-document version) | Unit: mapping table (equal, inserted above, deleted under cursor, replaced, deleted top line); `u` and `<C-r>` after reload. Scripted watcher with fake clock and fake file contents. Echo: a `:w` does not reload itself. Differential: `autoread` value and `:checktime` with no change. Add the cursor-placement difference to "Known differences" |
 | 3 | Conflict prompt (`l k d m`) with the opt-in, baseline (`[base]` scratch) and gutter, `:w` W11/W12 guard, deleted file, `:AgentChanges`, merge with markers (marker refusal of `:w` with the opt-in only) | 2 | Unit: each conflict key on a fixed state; merge (clean, conflicting, identical); Frame golden of the gutter and of the prompt line. With no opt-in: a modified buffer is not reloaded and `:w` gives W11. No differential (messages) |
 | 4 | Opt-in config table, registry, detection, `:AgentScan`, status-line states without connection | minimal config loader (shared with milestone 6), options | Detection with a temporary fake home and `PATH`: found, not found, found under the config dir only. Frame golden for each indicator. Golden with no opt-in and no Agent command: no indicator, identical to Vim's frame. Golden after `:AgentScan` with no opt-in: indicator shown |
-| 5 | ACP connector: consent, approval store, `:Agent`, `:AgentConnect`, `:AgentUse`, `:AgentCancel`, `:AgentDisconnect`, agent log document, `\a` and `\al`, lifecycle and backoff, `Editor::prediction_allowed` (returns false) | 4 | Fake agent (test helper binary) replays recorded JSON-RPC transcripts both ways: success, auth failure, reply timeout, EOF mid-turn, malformed line. Pure transition table test. Fake timer for backoff. Approval store round trip and unreadable file. Consent keys. `:AgentUse` with two fake agents: listing, switching, and the choice prompt when several are found and none is active. Cases: `:Agent` without opt-in still works, keys stay unbound |
+| 5 | **5a done (2026-11-01): the pure protocol core, see "ACP connector core". 5b, the connector itself, is left.** ACP connector: consent, approval store, `:Agent`, `:AgentConnect`, `:AgentUse`, `:AgentCancel`, `:AgentDisconnect`, agent log document, `\a` and `\al`, lifecycle and backoff, `Editor::prediction_allowed` (returns false) | 4 | Fake agent (test helper binary) replays recorded JSON-RPC transcripts both ways: success, auth failure, reply timeout, EOF mid-turn, malformed line. Pure transition table test. Fake timer for backoff. Approval store round trip and unreadable file. Consent keys. `:AgentUse` with two fake agents: listing, switching, and the choice prompt when several are found and none is active. Cases: `:Agent` without opt-in still works, keys stay unbound |
 | 6 | Permissions and served file calls: queue, prompt keys, session grants, `:AgentForget`, `:AgentGrants`, write intent and the tagging rule, `AgentWritten`, `fs/*` limited to shareable paths | 5, 3 | Transcripts with a permission queue of two; never-answered-without-key test (no reply sent until a key); a session grant (`a`) answers the next matching request of that kind and scope only, and nothing is written to `agent-approvals.toml`; forget removes it; cancel answers as cancelled; a served write is applied once, tagged `agent:<id>`, and the watcher's later event for the same hash is ignored; `fs/read_text_file` returns unsaved text; a path outside shareable gets an error |
 | 7 | Splits-dependent UI: agent log split, side-by-side diff view, `:AgentChanges` jump, terminal pane (PTY) with its gating, `<C-\><C-n>` routing | milestone 5 splits, buffer list, PTY | Frame goldens with a split, status and agent log. Differential, scratch buffers with `:diffthis`: `]c [c do dp` on the same text in Vim and rvim (UNVERIFIED that the harness can drive two diff buffers; check first). Desired column, as CLAUDE.md requires: `lllljXj`-style cases for `]c`, `[c`, `dp`, `do` and the `<CR>` jump of `:AgentChanges`, each stating the column the command leaves and the column after a following `j`; expected values from Vim where the harness can express the case, otherwise from the CLAUDE.md rule and marked so. Terminal: key routing test with a fake child that echoes; no child is spawned without approval |
 | 8 | Claude Code IDE server (`claude-ide`), context endpoint `RVIM_SOCKET`, `openDiff` as permission | 5, 6 | Lock file lifecycle in a temp `CLAUDE_CONFIG_DIR`: created, stale removed, another tool's file kept, removed on quit. WebSocket transcript replay with a fake client; `openDiff` answered only by a key. Manual checklist with a real Claude Code (`/ide`, at-mention, `openDiff`); not part of `cargo test` |
@@ -1435,6 +1437,126 @@ gets a differential case where the harness can express it (diff-mode keys on
 scratch buffers, `:checktime` with no change, the option values). File changes
 cannot be written by the harness between keys, so reload is tested in unit and
 scripted tests, and the Vim placement rule is probed by hand.
+
+### ACP connector core (step 5a, 2026-11-01)
+
+What was read, and from where. Protocol: ACP v1 (`ProtocolVersion` is the
+integer 1, "only bumped for breaking changes"). Pages read on 2026-11-01:
+`agentclientprotocol.com/protocol/overview`, `/protocol/transports`,
+`/protocol/initialization`, `/protocol/session-setup`, `/protocol/prompt-turn`,
+`/protocol/file-system` and `/protocol/v1/authentication`. (`/protocol/auth`
+returns 404.) Schema: the rendered v1 reference at
+`agentclientprotocol.com/protocol/v1/schema`, read as text. The raw JSON was not
+downloaded (a sandbox check refused the command), so the field details come
+from the rendered page. The upstream repository's `main` head was commit
+`b4c72a8` (2026-10-31), where `schema/v1/schema.json` has blob `776c231`. The
+v1 changelog's latest entry is schema package 1.28.0 (2026-10-30). The docs
+name no protocol version string beyond the `v1` path. Framing is confirmed by
+the transports page only, not by a real agent.
+
+Implemented (client side only; `src/acp.rs`, no I/O):
+
+- Framing: newline-delimited JSON-RPC 2.0, UTF-8, no embedded newlines.
+  `LineDecoder` keeps partial lines, skips empty and whitespace-only lines,
+  accepts CRLF, and rejects a line longer than 8 MiB (bytes before its newline),
+  reporting it once and discarding the rest of that line. Invalid UTF-8, invalid
+  JSON and non-JSON-RPC objects are reported per line.
+- Requests sent: `initialize` (protocolVersion 1; `fs` and `terminal` all false,
+  because file calls and terminals are not served before step 6),
+  `session/new` (`cwd`, `mcpServers: []`), `authenticate` (`methodId`, never a
+  terminal method), `session/prompt` (text blocks). Notification sent:
+  `session/cancel`. `session/load` has its params type only; it is not called.
+- Received requests: `session/request_permission` (queued; answered only by a
+  `PermissionAnswer` event, or as `cancelled`), `fs/read_text_file` and
+  `fs/write_text_file` (surfaced as `ServeRead` and `ServeWrite` data for the
+  caller; the path check is step 6). Any other request is answered with
+  `-32601` (method not found).
+- Received notifications: `session/update` with `agent_message_chunk`,
+  `agent_thought_chunk`, `user_message_chunk`, `tool_call`, `tool_call_update`
+  and `plan`. An unknown kind, or a known kind whose body does not parse, is
+  kept as `SessionUpdate::Other` with its raw JSON and logged, not shown. Other
+  notification methods are logged and ignored.
+- Responses: `stopReason` `end_turn`, `max_tokens`, `max_turn_requests`,
+  `refusal`, `cancelled` (an unknown value parses as `Other`).
+
+Not implemented in step 5a: `session/load`, `session/set_mode`, `logout`, the
+newer `session/list`, `session/close` and `session/resume`, `terminal/*`,
+`elicitation/*`, process spawning, the path sandbox, and the tagging of changes
+as agent writes.
+
+The state machine. `Conn` (a new one per connection attempt) takes `InEvent`s
+and returns `OutAction`s. States (`ConnState`): `Disconnected` (before
+`Connect` and after a lost connection), `Initializing`, `NeedsAuth`, `Ready`,
+`Prompting { turn }`, `Cancelling { turn }`, `Closed` (final: handshake failed
+or timed out, or the agent speaks another protocol version). Differences from
+the list in the task: `Cancelling` carries the turn, and "waiting for
+permission" is `Prompting` with a non-empty queue (`permissions_waiting()`), not
+a state of its own. Events beyond the task's list: `Connect { cwd, now }`
+starts the handshake, `Authenticate { method_id }`, and `FileReadAnswer` and
+`FileWriteAnswer`, the caller's answers to `ServeRead` and `ServeWrite`. Time
+is data: `Bytes` and `Tick` carry `now: Instant`, and the module never reads
+the clock or sleeps. Output actions: `Send` (one encoded line), `Update`,
+`Notice` (for the UI: connected, auth required, turn started and ended,
+request failed, connection lost, failed), `AskPermission` (with the queue
+length), `ServeRead`, `ServeWrite`, `Log` and `Close`.
+
+Rules where the spec is silent or PLAN decides:
+
+- A 10 s limit for the `initialize` reply (PLAN, section 10). The same limit is
+  applied to the `session/new` reply (a choice, UNVERIFIED). A timeout ends in
+  `Closed`. Nothing times out for `authenticate` or a turn.
+- A protocol version other than 1 in the `initialize` reply ends in `Closed`.
+  The spec says the client should disconnect.
+- `session/new` failing with `-32000` (auth required) gives `NeedsAuth`. Only
+  the user's choice of a non-terminal method (`Authenticate`) sends
+  `authenticate`; success sends `session/new` again. The order of `session/new`
+  and `authenticate`, and what triggers `authenticate`, are UNVERIFIED: the auth
+  page gives no timing rule and names only the string `auth_required`.
+- A malformed line is logged and skipped. Ten in a row lose the connection
+  (`ConnectionLost`, then `Close`).
+- Connection lost (EOF, or the ten-line rule) during a turn gives
+  `ConnectionLost { turn }`. The permission queue is dropped and the turn is not
+  resumed by a reconnect.
+- Permissions are never answered by the machine except as `cancelled`: on
+  `Cancel`, when a turn ends with requests still queued, or for a request that
+  arrives during `Cancelling`, which is answered without asking. An option id
+  that was not offered is logged and the request stays queued.
+- Requests from rvim are numbered from 1 per connection. A response with an
+  unknown id is logged. A `session/update` for another session is dropped.
+- `Connect` outside `Disconnected` and `Prompt` outside `Ready` are refused
+  with a notice.
+
+Checked against the schema (these were UNVERIFIED in the overview research):
+the option kinds `allow_once`, `allow_always`, `reject_once` and `reject_always`;
+the outcome objects, sent as `result.outcome` with `"outcome":"selected"` and an
+`optionId`, or `"outcome":"cancelled"`; the stop reasons; the tool-call statuses
+`pending`, `in_progress`, `completed` and `failed`; the tool-call kinds; plan
+priorities and statuses; tool-call content `content` and `diff`; `resource_link`
+with `uri` and `name`; the embedded resource's `uri`, `text` and `mimeType`; the
+fs parameters (absolute paths, 1-based `line`, `limit`) and the `{}` reply to
+`fs/write_text_file`; and the error codes `-32000` (auth required), `-32002`
+(not found), `-32601` (method not found) and `-32602` (invalid params).
+
+Still UNVERIFIED:
+
+- The order of `session/new` and `authenticate`, and the trigger for
+  `authenticate` (see above).
+- The number of the auth-required error for the wire. The schema says `-32000`;
+  the auth page names `auth_required` without a number.
+- The file URI convention for a selection (`file:///path#Lstart-end`).
+- The tool-call `locations` rule for the change tag (step 6).
+- Behaviour with a real agent. None of this has been tested against Claude Code,
+  Codex, Cursor or Kimi. The fixtures in `tests/fixtures/acp/` are written by
+  hand from the schema, each labelled with its spec section.
+
+Tests (`tests/acp_connector.rs`, 23 tests): the eight transcripts, each replayed
+with the agent's bytes split at every position and at every byte, with the same
+actions and states required; a table of 34 state transitions; the permission
+queue (never answered without an event; cancel answers all queued requests as
+`cancelled`; an unknown option is refused); unknown kinds kept as raw JSON; the
+8 MiB line cap, checked with a 8 MiB + 1 byte line in 1 MiB reads, and the exact
+limit with a 64-byte cap; invalid UTF-8, invalid JSON and CRLF; and the
+malformed-line rule (ten in a row, and nine).
 
 ## Prediction (milestone 8)
 
@@ -1734,7 +1856,7 @@ Looked up on 2026-10-31 (versions, licences and dates from crates.io; items
 marked UNVERIFIED were not checked in docs). All are MIT, Apache-2.0, 0BSD or
 CC0, compatible with rvim's licence. The design is threads plus an `mpsc`
 channel with no async runtime; every item below works that way, except
-possibly the ACP crate (check).
+possibly the ACP crate (not used; see the ACP row).
 
 | Need | Choice | Notes |
 |---|---|---|
@@ -1747,7 +1869,9 @@ possibly the ACP crate (check).
 | Syntax highlighting | `tree-sitter` 0.27 with per-language `tree-sitter-<lang>` crates | Needs a C compiler (also in CI); each grammar adds roughly 0.3-3 MB (UNVERIFIED), so bundle a small set (about 10) and keep a regex highlighter as fallback. `tree-sitter-language-pack` bundles 372 languages; too large, loading model UNVERIFIED |
 | Terminal pane | `portable-pty` 0.9 plus `vt100` 0.18 | ConPTY on Windows 10 1809+. `portable-pty` has had no release since February 2025; expect ConPTY quirks |
 | Prediction providers | blocking HTTP (`ureq`, version UNVERIFIED) with small `serde_json` request types per provider | FIM endpoints (Ollama `/api/generate` with `suffix`, llama.cpp `/infill`, Codestral `/v1/fim/completions`, OpenAI-style `/v1/completions` with `suffix`) are UNVERIFIED. LSP 3.18 `textDocument/inlineCompletion` is preview and `lsp-types` 0.97 (2024) lacks it; async LSP stacks need tokio. Defer LSP inline completion |
-| ACP | `agent-client-protocol` 3.6.0 | See above; footprint unchecked |
+| ACP | `agent-client-protocol` 3.6.0, not used | Its footprint was not checked. Step 5a writes the wire types with serde against the schema (`src/acp.rs`), so no async runtime is needed and the terminal-free core stays small. Revisit only if the schema outgrows the hand-written types |
+| serde 1.0.229 (`derive`; `default-features = false`, `std` on) | Published 2026-07-18 (crates.io). Used by `src/acp.rs` for the ACP wire types (milestone 7 step 5a) | New in the lockfile with `serde_core` 1.0.229 (2026-07-18), `serde_derive` 1.0.229 (proc-macro, 2026-07-18) and `syn` 3.0.9 (proc-macro, 2026-10-12, required by `serde_derive`; `syn` 2.0.119 was already locked for another crate). Also new: `itoa` 1.0.18 (2026-03-20), `memchr` 2.8.3 (2026-07-08) and `zmij` 1.0.23 (2026-07-13), which `serde_json` uses. Already locked: `proc-macro2` 1.0.107, `quote` 1.0.47 and `unicode-ident` 1.0.27. The config loader's `toml` would bring the same `serde_derive` |
+| serde_json 1.0.154 (`default-features = false`, `std` on) | Published 2026-10-11 (crates.io), the newest version at least two weeks before 2026-11-01 | Release binary (`cargo build --release`, Windows): 1,168,896 bytes before and after this step. The binary does not change because nothing in the binary calls the module yet; the new crates are compile-time only (`serde_derive` and `syn` run at build time) |
 | Lua (milestone 9) | `mlua` (version UNVERIFIED) with Lua 5.4 `vendored` (UNVERIFIED); LuaJIT is the alternative | See "Lua extensions". Lua runs on one worker thread, so the `send` feature (UNVERIFIED) is not needed; footprint and build time to be measured |
 | LSP (milestone 9) | JSON-RPC framing written in rvim, sharing code with the agent connectors; `lsp-types` optional (version UNVERIFIED) | See "Neovim-inspired features". Blocking I/O on a worker, as for agents |
 | TOML config (milestone 6) | `toml` 1.1.8 with `default-features = false, features = ["std", "serde", "parse"]` | Checked 2026-11-01 against the crates.io API: 1.1.8 was published 2026-10-09 (23 days old, so it passes the two-week rule); its parser crate `toml_parser` 1.1.5 on 2026-10-09; `toml_datetime` 1.1.2 and `serde_spanned` 1.1.2 on 2026-10-08; `serde_core` 1.0.229 on 2026-07-18; `winnow` 1.0.4 on 2026-07-13. MIT OR Apache-2.0. `Table` and `Value` exist only with the `serde` feature. Cost, measured with `cargo build --release` on Windows x64: the release binary grows from 1,168,896 to 1,434,112 bytes (+265,216, +22.7%), main 7dcd971 against the verified branch head (an earlier measurement, 1,157,120 to 1,421,824, was taken before the marks rebase). Compiled new crates: `toml`, `toml_parser`, `toml_datetime`, `serde_spanned`, `serde_core`, `winnow`. Cargo.lock gains 12 package entries, including `serde_derive` and `syn` 3.0.9. Those two are not compiled for any target: `serde_core` declares `serde_derive` under `cfg(any())`, which never holds; `cargo tree --target all` shows them, the host tree does not. The `display` feature was dropped (no measurable size change). Not done, for a decision: a walker over `toml_parser` events, or a hand-written parser for the subset, would drop the serde crates and most of the size; full TOML is needed later for the approvals file, the Lua plugin approvals and the agent tables, which is why the crate was chosen. A syntax error is reported by its byte span, which rvim turns into a line number |
@@ -2090,6 +2214,9 @@ plan, kept for the record; the files are the source of truth.
   `scroll_opt`. The query messages of `:setlocal` and `:setglobal` are checked
   against Vim's probes in unit tests, not by the differential harness, which
   sees no messages.
+- Agent protocol (milestone 7, not Vim behaviour): where ACP is silent, rvim's
+  choices (handshake timeout, malformed-line rule, the permission and cancel
+  rules) are listed under "ACP connector core". No Vim key changes.
   `tabstop`, `softtabstop` (negative = 'shiftwidth'), `smarttab` and
   `shiftround` work, but these Vim cases are not matched yet; they are kept
   as `#[ignore]`d `known_gap_*` tests in `tests/compat_options.rs` (run with
