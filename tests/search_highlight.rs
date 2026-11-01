@@ -308,3 +308,29 @@ fn an_answered_search_prompt_resets_the_desired_column_as_a_search_does() {
         assert_eq!(ed.cursor(), plain.cursor(), "{is}");
     }
 }
+
+/// The text cells of a row: the cells after the number column (`numberwidth`
+/// defaults to 4), which must not carry a search highlight.
+fn text_hl(ed: &Editor, r: usize) -> String {
+    let all = row_hl(ed, r);
+    assert!(
+        !all[..4].contains('S') && !all[..4].contains('I'),
+        "number column: {all}"
+    );
+    all[4..].to_string()
+}
+
+#[test]
+fn number_column_offsets_hlsearch_and_incsearch_cells() {
+    let mut ed = Editor::from_text(FOO);
+    ed.set_screen_size(20, 6);
+    ed.feed(":set nu<CR>:set hls<CR>/foo<CR>");
+    assert_eq!(text_hl(&ed, 0), exp("SSSNNNNNSSS", 16));
+    assert_eq!(text_hl(&ed, 1), exp("NSSS", 16));
+
+    let mut ed = Editor::from_text(FOO);
+    ed.set_screen_size(20, 6);
+    ed.feed(":set nu<CR>:set is<CR>/bar");
+    assert_eq!(ed.mode(), Mode::CmdLine);
+    assert_eq!(text_hl(&ed, 0), exp("NNNNIIINNNN", 16));
+}
