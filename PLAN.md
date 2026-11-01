@@ -55,6 +55,8 @@ entry is removed when its branch lands on main):
 
 - Config file loader: location, format, `-u NONE`, options applied like `:set` (milestone 6, shared with agent step 4; new `config.rs`, `cli.rs`, `main.rs` startup)
 - Agent integration, step 2b: file watcher worker thread, `filewatch` option (off by default), echo suppression (milestone 7; new `watch.rs`, `event.rs`, `main.rs`)
+- Agent integration, step 5a: ACP protocol core, pure framing and session state machine, recorded transcripts (milestone 7; new `acp.rs`, `serde`/`serde_json`)
+- Agent integration, step 4a: read-only agent detection core behind `:AgentScan` (milestone 7; new `agent_detect.rs`)
 
 **Suggested order for what is left:** (1) Document/Window split, (2) splits +
 buffers + scrolling, (3) milestone 7, in the step order of "Agent experience:
