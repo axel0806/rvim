@@ -106,8 +106,8 @@ fn visual_cells(ed: &Editor, line: usize, lay: &Layout) -> Vec<(usize, usize)> {
                 return out;
             }
             let ts = ed.opts.tabstop();
-            let (la, ra) = text::vcol_range(ed.doc().buf.line(a.line), a.col, ts);
-            let (lb, rb) = text::vcol_range(ed.doc().buf.line(b.line), b.col, ts);
+            let (la, ra) = text::vcol_range(ed.buf().line(a.line), a.col, ts);
+            let (lb, rb) = text::vcol_range(ed.buf().line(b.line), b.col, ts);
             let left = la.min(lb);
             let to_eol = ed.win().curswant == usize::MAX;
             let right = if to_eol { usize::MAX } else { ra.max(rb) };
@@ -233,8 +233,8 @@ pub fn frame(ed: &Editor) -> Frame {
     let mut hl = vec![vec![Hl::Normal; width]; text_height];
     let mut cursor = (0, 0);
     let mut line = ed.win().top;
-    while rows.len() < text_height && line < ed.doc().buf.line_count() {
-        let lay = layout(ed.doc().buf.line(line), width, ed.opts.tabstop());
+    while rows.len() < text_height && line < ed.buf().line_count() {
+        let lay = layout(ed.buf().line(line), width, ed.opts.tabstop());
         let need = rows_needed(&lay, width);
         if line != ed.win().top && rows.len() + need > text_height {
             while rows.len() < text_height {
@@ -246,7 +246,7 @@ pub fn frame(ed: &Editor) -> Frame {
         if line == ed.cursor().line {
             let col = ed.cursor().col.min(lay.starts.len() - 1);
             let mut cell = lay.starts[col];
-            let on_tab = ed.doc().buf.char_at(line, col) == Some('\t');
+            let on_tab = ed.buf().char_at(line, col) == Some('\t');
             if on_tab && ed.mode() != Mode::Insert {
                 cell += lay.widths[col] - 1;
             }
@@ -283,7 +283,7 @@ pub fn frame(ed: &Editor) -> Frame {
     }
 
     // `line` is now the first buffer line not fully shown.
-    let below = ed.doc().buf.line_count() - line;
+    let below = ed.buf().line_count() - line;
     let (status, status_is_error) = status_line(ed, width, &mut cursor, height, below);
     Frame {
         width,
@@ -330,7 +330,7 @@ fn status_line(
 /// Vim's ruler: `line,col[-vcol]` and the position in the file.
 fn ruler(ed: &Editor, below: usize) -> String {
     let cur = ed.cursor();
-    let line = ed.doc().buf.line(cur.line);
+    let line = ed.buf().line(cur.line);
     let col = if line.len_chars() == 0 {
         "0-1".to_string()
     } else {

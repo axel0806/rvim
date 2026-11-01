@@ -42,7 +42,7 @@ impl Editor {
     /// Screen rows of buffer line `l` (wrapped).
     fn line_rows(&self, l: usize) -> usize {
         view::line_height(
-            self.doc().buf.line(l),
+            self.buf().line(l),
             self.screen_cols,
             self.opts.tabstop(),
         )
@@ -61,7 +61,7 @@ impl Editor {
     /// Rows of lines `from..to`, stopping early once the sum exceeds `limit`.
     fn rows_upto(&self, from: usize, to: usize, limit: usize) -> usize {
         let mut sum = 0;
-        for l in from..to.min(self.doc().buf.line_count()) {
+        for l in from..to.min(self.buf().line_count()) {
             sum += self.line_rows(l);
             if sum > limit {
                 break;
@@ -74,7 +74,7 @@ impl Editor {
     fn rows_below(&self, cur: usize, so: usize) -> usize {
         let mut sum = 0;
         let mut l = cur + 1;
-        while l < self.doc().buf.line_count() && sum < so {
+        while l < self.buf().line_count() && sum < so {
             sum += self.line_rows(l);
             l += 1;
         }
@@ -85,7 +85,7 @@ impl Editor {
     /// at `top` (Vim's `w_botline`, exclusive). A line taller than the window
     /// counts as shown.
     pub(crate) fn bottom_of(&self, top: usize) -> usize {
-        let n = self.doc().buf.line_count();
+        let n = self.buf().line_count();
         let r = self.text_rows();
         let mut used = 0;
         let mut l = top;
@@ -117,7 +117,7 @@ impl Editor {
 
     /// Top line that puts `cur` at the bottom, with `so` rows below it.
     fn top_for_cursor_bottom(&self, cur: usize, so: usize) -> usize {
-        let n = self.doc().buf.line_count();
+        let n = self.buf().line_count();
         let r = self.text_rows();
         let mut used = self.line_rows(cur);
         let mut below = 0;
@@ -147,7 +147,7 @@ impl Editor {
     /// until the window is full (near the end of the file, lines above fill
     /// the rest).
     fn top_for_cursor_middle(&self, cur: usize) -> usize {
-        let n = self.doc().buf.line_count();
+        let n = self.buf().line_count();
         let r = self.text_rows();
         let mut top = cur;
         let mut bot = cur + 1;
@@ -178,7 +178,7 @@ impl Editor {
             return 0;
         }
         let so = self.so_rows();
-        let last = self.doc().buf.last_line();
+        let last = self.buf().last_line();
         let mut l = self.win().top;
         let mut acc = 0;
         while acc < so && l < last {
@@ -192,8 +192,8 @@ impl Editor {
     /// 'scrolloff' rows below it).
     pub(crate) fn last_visible(&self) -> usize {
         let bot = self.bottom_of(self.win().top);
-        if bot >= self.doc().buf.line_count() {
-            return self.doc().buf.last_line();
+        if bot >= self.buf().line_count() {
+            return self.buf().last_line();
         }
         let so = self.so_rows();
         let mut l = bot - 1;
@@ -216,7 +216,7 @@ impl Editor {
     /// 'scrolloff'. A cursor far outside the window is centred, a close one
     /// scrolls the minimum. Called after every key and on resize.
     pub(crate) fn update_topline(&mut self) {
-        let n = self.doc().buf.line_count();
+        let n = self.buf().line_count();
         let r = self.text_rows();
         let so = self.so_rows();
         let cur = self.win().cursor.line.min(n - 1);
@@ -277,7 +277,7 @@ impl Editor {
     fn page_up_top(&self) -> usize {
         let old = self.win().top;
         let r = self.text_rows();
-        let mut t = (old + 2).min(self.doc().buf.line_count());
+        let mut t = (old + 2).min(self.buf().line_count());
         let mut used = 0;
         while t > 0 {
             let h = self.line_rows(t - 1);
@@ -295,7 +295,7 @@ impl Editor {
     /// kept around the cursor as after any key, so a scroll that would take
     /// the match out of the window stops short of it.
     pub(crate) fn scroll_window_for_prompt(&mut self, down: bool) {
-        let n = self.doc().buf.line_count();
+        let n = self.buf().line_count();
         self.win_mut().top = if down {
             (self.win().top + 1).min(n - 1)
         } else {
@@ -307,7 +307,7 @@ impl Editor {
     /// Runs a scroll command with its count (Vim's `nv_scroll_line`,
     /// `nv_halfpage`, `nv_zet`, `pagescroll`).
     pub(crate) fn scroll_cmd(&mut self, cmd: ScrollCmd, count: Option<usize>) {
-        let n = self.doc().buf.line_count();
+        let n = self.buf().line_count();
         let count1 = count.unwrap_or(1).max(1);
         match cmd {
             ScrollCmd::LineDown => {
@@ -485,6 +485,6 @@ impl Editor {
     /// Moves to the first non-blank of the cursor line (Vim's `beginline`).
     fn cursor_fnb(&mut self) {
         self.win_mut().cursor.col =
-            crate::motion::first_non_blank(&self.doc().buf, self.win().cursor.line, true);
+            crate::motion::first_non_blank(self.buf(), self.win().cursor.line, true);
     }
 }

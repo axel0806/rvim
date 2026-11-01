@@ -460,9 +460,9 @@ impl Editor {
                 let mut left = off.off.abs();
                 while left > 0 {
                     let r = if off.off > 0 {
-                        decl(&self.doc().buf, &mut p)
+                        decl(self.buf(), &mut p)
                     } else {
-                        incl(&self.doc().buf, &mut p)
+                        incl(self.buf(), &mut p)
                     };
                     if r == -1 {
                         break;
@@ -487,7 +487,7 @@ impl Editor {
                 end: off.end,
                 wrapscan: self.opts.wrapscan(),
             };
-            let found = searchit(&self.doc().buf, &re, start, dirc == '/', count, &fl);
+            let found = searchit(self.buf(), &re, start, dirc == '/', count, &fl);
             let Some(f) = found else {
                 self.search_error(format!("E486: Pattern not found: {pattern}"));
                 return None;
@@ -498,18 +498,18 @@ impl Editor {
             echo = format!("{dirc}{pattern}");
             if off.line {
                 let l = pos.line as i64 + off.off;
-                pos.line = l.clamp(0, self.doc().buf.last_line() as i64) as usize;
+                pos.line = l.clamp(0, self.buf().last_line() as i64) as usize;
                 pos.col = 0;
                 retval_line = true;
             } else if off.off > 0 {
                 for _ in 0..off.off {
-                    if incl(&self.doc().buf, &mut pos) == -1 {
+                    if incl(self.buf(), &mut pos) == -1 {
                         break;
                     }
                 }
             } else if off.off < 0 {
                 for _ in 0..(-off.off) {
-                    if decl(&self.doc().buf, &mut pos) == -1 {
+                    if decl(self.buf(), &mut pos) == -1 {
                         break;
                     }
                 }
@@ -575,16 +575,16 @@ impl Editor {
         let mut pos = self.win().cursor;
         if visual {
             if forward {
-                incl(&self.doc().buf, &mut pos);
+                incl(self.buf(), &mut pos);
             } else {
-                decl(&self.doc().buf, &mut pos);
+                decl(self.buf(), &mut pos);
             }
         }
 
         // Is the pattern zero-width at the cursor? (Only matters for the
         // SEARCH_END search below.)
         let zero_width = match searchit(
-            &self.doc().buf,
+            self.buf(),
             &re,
             Start::At(self.win().cursor),
             true,
@@ -617,7 +617,7 @@ impl Editor {
                 wrapscan: i == 1 && self.opts.wrapscan(),
             };
             let cnt = if i == 1 { count.max(1) } else { 1 };
-            match searchit(&self.doc().buf, &re, from, dir_fwd, cnt, &fl) {
+            match searchit(self.buf(), &re, from, dir_fwd, cnt, &fl) {
                 Some(f) => {
                     pos = f.pos;
                     end_pos = f.other;
@@ -633,8 +633,8 @@ impl Editor {
                     if forward {
                         from = Start::Outside;
                     } else {
-                        let last = self.doc().buf.last_line();
-                        pos = Pos::new(last, self.doc().buf.line_len(last));
+                        let last = self.buf().last_line();
+                        pos = Pos::new(last, self.buf().line_len(last));
                         from = Start::At(pos);
                     }
                 }
@@ -665,9 +665,7 @@ impl Editor {
     /// The identifier or string under or after the cursor (Vim's
     /// `find_ident_under_cursor` with `FIND_IDENT|FIND_STRING`).
     pub(crate) fn ident_under_cursor(&self) -> Option<(usize, String)> {
-        let line: Vec<char> = self
-            .doc()
-            .buf
+        let line: Vec<char> = self.buf()
             .line(self.win().cursor.line)
             .chars()
             .collect();
