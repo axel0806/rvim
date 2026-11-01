@@ -529,15 +529,15 @@ pub fn scan(env: &dyn Env, os: Os) -> ScanReport {
         if s.out.found.iter().any(|f| std::ptr::eq(f.agent, agent)) {
             continue;
         }
-        let dirs: Vec<PathBuf> = agent
+        let dirs: Vec<String> = agent
             .config_dirs
             .iter()
             .filter_map(|loc| s.resolve(loc))
             .collect();
         let mut config_dir = None;
         for dir in dirs {
-            if s.spend() && env.exists(&dir) {
-                config_dir = Some(dir);
+            if s.spend() && env.exists(Path::new(&dir)) {
+                config_dir = Some(PathBuf::from(dir));
                 break;
             }
         }
@@ -579,7 +579,7 @@ impl Scanner<'_> {
             Os::Windows => ';',
         };
         let raw = self.env.var("PATH").unwrap_or_default();
-        let mut dirs_seen = HashSet::new();
+        let mut dirs_seen: HashSet<String> = HashSet::new();
         for (index, entry) in raw.split(sep).enumerate() {
             if index == MAX_PATH_ENTRIES {
                 self.out.warnings.push(format!(
@@ -597,14 +597,14 @@ impl Scanner<'_> {
                 ));
                 continue;
             }
-            let dir = PathBuf::from(entry);
+            let dir = entry.to_string();
             if dirs_seen.insert(dir.clone()) {
                 self.check_dir(&dir, How::OnPath, agents);
             }
         }
     }
 
-    fn check_dir(&mut self, dir: &Path, how: How, agents: &[usize]) {
+    fn check_dir(&mut self, dir: &str, how: How, agents: &[usize]) {
         for &i in agents {
             let agent: &'static AgentSpec = &AGENTS[i];
             for named in agent.executables {
@@ -612,26 +612,26 @@ impl Scanner<'_> {
                     if !self.spend() {
                         return;
                     }
-                    if !self.env.is_file(&candidate) {
+                    if !self.env.is_file(Path::new(&candidate)) {
                         continue;
                     }
                     if !self.spend() {
                         return;
                     }
-                    if !self.env.is_executable(&candidate) {
-                        self.out.warnings.push(format!(
-                            "{} exists but is not executable; ignored",
-                            candidate.display()
-                        ));
+                    if !self.env.is_executable(Path::new(&candidate)) {
+                        self.out
+                            .warnings
+                            .push(format!("{candidate} exists but is not executable; ignored"));
                         continue;
                     }
-                    let canon = self.env.canonical(&candidate);
+                    let canon = self.env.canonical(Path::new(&candidate));
+                    let canon_text = canon.to_string_lossy().into_owned();
                     if let Some(hint) = named.path_hint {
-                        let matches = contains_ci(&canon, hint) || contains_ci(&candidate, hint);
+                        let matches =
+                            contains_ci(&canon_text, hint) || contains_ci(&candidate, hint);
                         if !matches {
                             self.out.warnings.push(format!(
-                                "{} is not {}: its path has no \"{hint}\"; ignored",
-                                candidate.display(),
+                                "{candidate} is not {}: its path has no \"{hint}\"; ignored",
                                 agent.display
                             ));
                             continue;
@@ -640,7 +640,7 @@ impl Scanner<'_> {
                     if self.seen.insert((i, canon)) {
                         self.out.found.push(Found {
                             agent,
-                            path: candidate.clone(),
+                            path: PathBuf::from(&candidate),
                             how,
                         });
                     }
@@ -649,18 +649,18 @@ impl Scanner<'_> {
         }
     }
 
-    fn candidates(&self, dir: &Path, name: &str) -> Vec<PathBuf> {
+    fn candidates(&self, dir: &str, name: &str) -> Vec<String> {
         match self.os {
-            Os::Unix => vec![dir.join(name)],
+            Os::Unix => vec![join(self.os, dir, name)],
             Os::Windows => self
                 .exts
                 .iter()
-                .map(|ext| dir.join(format!("{name}{ext}")))
+                .map(|ext| join(self.os, dir, &format!("{name}{ext}")))
                 .collect(),
         }
     }
 
-    fn resolve(&self, loc: &Location) -> Option<PathBuf> {
+    fn resolve(&self, loc: &Location) -> Option<String> {
         if loc.os.is_some_and(|o| o != self.os) {
             return None;
         }
@@ -671,11 +671,37 @@ impl Scanner<'_> {
         if !is_absolute(self.os, &base) {
             return None;
         }
-        let mut path = PathBuf::from(base);
-        if !loc.rel.is_empty() {
-            path.push(loc.rel);
+        if loc.rel.is_empty() {
+            Some(base)
+        } else {
+            Some(join(self.os, &base, loc.rel))
         }
-        Some(path)
+    }
+}
+
+/// Joins `rel` (written with `/` in the table) onto `base` with the separator
+/// of `os`. The result depends only on `os`, not on the host, so a fake
+/// environment with `Os::Windows` sees backslash paths on any machine.
+fn join(os: Os, base: &str, rel: &str) -> String {
+    let sep = match os {
+        Os::Unix => '/',
+        Os::Windows => '\\',
+    };
+    let rel: String = rel
+        .chars()
+        .map(|c| {
+            if os == Os::Windows && c == '/' {
+                '\\'
+            } else {
+                c
+            }
+        })
+        .collect();
+    let base_has_sep = base.ends_with(sep) || (os == Os::Windows && base.ends_with('/'));
+    if base_has_sep {
+        format!("{base}{rel}")
+    } else {
+        format!("{base}{sep}{rel}")
     }
 }
 
@@ -725,8 +751,7 @@ fn has_pathext(path: &Path, exts: &[String]) -> bool {
     })
 }
 
-fn contains_ci(path: &Path, needle: &str) -> bool {
-    path.to_string_lossy()
-        .to_ascii_lowercase()
+fn contains_ci(text: &str, needle: &str) -> bool {
+    text.to_ascii_lowercase()
         .contains(&needle.to_ascii_lowercase())
 }

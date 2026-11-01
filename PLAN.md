@@ -727,8 +727,7 @@ not in the registry; it is only the model for how rvim should connect.
     address redirects there). Confirmed: the executable `claude`; the native
     install in `~/.local/bin/claude` and `%USERPROFILE%\.local\bin\claude.exe`;
     the config in `~/.claude` and `~/.claude.json`. Not on the page, so not
-    verified: `CLAUDE_CONFIG_DIR`, `~/.claude/local` and `%APPDATA%
-pm`
+    verified: `CLAUDE_CONFIG_DIR`, `~/.claude/local` and `%APPDATA%\npm`
     (kept as probes, marked `verified: false`).
   - Cursor CLI, `https://cursor.com/docs/cli/overview` and `https://cursor.com/docs/cli/acp`.
     Confirmed: the executable `agent`; install by `curl https://cursor.com/install`
@@ -765,10 +764,8 @@ pm`
 
   | id | Executable names | Install dirs probed | Config dirs probed | Protocols | ACP command |
   |---|---|---|---|---|---|
-  | `claude` | `claude` (V) | `~/.local/bin` (V); `~/.claude/local` (U); `%APPDATA%
-pm` (U) | `~/.claude` (V), `~/.claude.json` (V), `CLAUDE_CONFIG_DIR` (U) | acp-adapter (V); claude-ide (U); files-only | `npx @agentclientprotocol/claude-agent-acp@0.99.1` |
-  | `codex` | `codex` (V) | `%APPDATA%
-pm` (U) | `~/.codex` (U), `CODEX_HOME` (U) | acp-adapter (V); files-only | `npx @agentclientprotocol/codex-acp@2.5.0` |
+  | `claude` | `claude` (V) | `~/.local/bin` (V); `~/.claude/local` (U); `%APPDATA%\npm` (U) | `~/.claude` (V), `~/.claude.json` (V), `CLAUDE_CONFIG_DIR` (U) | acp-adapter (V); claude-ide (U); files-only | `npx @agentclientprotocol/claude-agent-acp@0.99.1` |
+  | `codex` | `codex` (V) | `%APPDATA%\npm` (U) | `~/.codex` (U), `CODEX_HOME` (U) | acp-adapter (V); files-only | `npx @agentclientprotocol/codex-acp@2.5.0` |
   | `cursor` | `agent` (V, path must contain "cursor"); `cursor-agent` (U, same rule) | `~/.local/bin` on Unix (U) | none known | acp (V); files-only | `agent acp` (V) |
   | `kimi` | `kimi` (V) | none (installer location not stated) | `KIMI_CODE_HOME` (V), `~/.kimi-code` (V), `~/.kimi` (V, legacy) | acp (V); files-only | `kimi acp` (V) |
 

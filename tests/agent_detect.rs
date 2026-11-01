@@ -427,8 +427,8 @@ fn lines_are_plain_data() {
     let r = scan(&env, Os::Unix);
     let lines = r.lines();
     assert_eq!(lines.len(), AGENTS.len(), "{lines:?}");
-    let claude = p("/usr/bin").join("claude");
-    let codex_dir = p("/home/u").join(".codex");
+    let claude = p("/usr/bin/claude");
+    let codex_dir = p("/home/u/.codex");
     assert!(
         lines[0].starts_with(&format!(
             "Claude Code: found {} (on PATH); protocols acp-adapter, claude-ide (unverified), files-only",
@@ -486,25 +486,281 @@ fn registry_matches_plan() {
     }
 }
 
+/// The `std` paths `src/agent_detect.rs` may name. Anything else under `std`
+/// (including `std::net`, `std::process`, `std::io` and `std::thread`) fails.
+const ALLOWED_STD_PATHS: &[&str] = &[
+    "std::collections::HashSet",
+    "std::fs",
+    "std::path",
+    "std::env::var_os",
+    "std::os::unix::fs::PermissionsExt",
+    "std::ptr::eq",
+];
+
+/// The `use` statements the module may contain, normalised (no spaces after commas).
+const ALLOWED_USE: &[&str] = &[
+    "std::collections::HashSet",
+    "std::fs",
+    "std::path::{Path,PathBuf}",
+    "std::os::unix::fs::PermissionsExt",
+];
+
+/// Members of `fs` the module may call: metadata and canonical paths only.
+const ALLOWED_FS_MEMBERS: &[&str] = &["metadata", "canonicalize"];
+
+/// Words that must not appear in code, even outside `std`: networking,
+/// process, file-content and crate names.
+const DENIED_WORDS: &[&str] = &[
+    "TcpStream",
+    "TcpListener",
+    "UdpSocket",
+    "Command",
+    "spawn",
+    "process",
+    "net",
+    "tokio",
+    "reqwest",
+    "ureq",
+    "hyper",
+    "mio",
+    "libc",
+    "nix",
+    "socket2",
+    "OpenOptions",
+    "File",
+    "read_to_string",
+    "read_to_end",
+    "read_line",
+    "read_dir",
+    "write_all",
+    "remove_file",
+    "create_dir",
+    "sleep",
+    "exec",
+    "stdin",
+    "stdout",
+    "stderr",
+    "extern",
+    "unsafe",
+];
+
+fn is_ident(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_'
+}
+
+/// The source with comments and the contents of string and char literals
+/// blanked (newlines kept), so words in documentation do not count as code.
+fn code_only(src: &str) -> String {
+    let chars: Vec<char> = src.chars().collect();
+    let mut out = String::with_capacity(src.len());
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '/' && chars.get(i + 1) == Some(&'/') {
+            while i < chars.len() && chars[i] != '\n' {
+                out.push(' ');
+                i += 1;
+            }
+        } else if c == '"' {
+            out.push(' ');
+            i += 1;
+            while i < chars.len() && chars[i] != '"' {
+                let skip = if chars[i] == '\\' { 2 } else { 1 };
+                for _ in 0..skip {
+                    if i < chars.len() {
+                        out.push(if chars[i] == '\n' { '\n' } else { ' ' });
+                        i += 1;
+                    }
+                }
+            }
+            if i < chars.len() {
+                out.push(' ');
+                i += 1;
+            }
+        } else if c == '\'' && chars.get(i + 1) == Some(&'\\') {
+            // An escaped char literal such as '\'' or '\\'.
+            out.push(' ');
+            i += 1;
+            while i < chars.len() && chars[i] != '\'' {
+                out.push(' ');
+                i += 1;
+            }
+            if i < chars.len() {
+                out.push(' ');
+                i += 1;
+            }
+        } else if c == '\'' && chars.get(i + 2) == Some(&'\'') {
+            out.push_str("   ");
+            i += 3;
+        } else {
+            out.push(c);
+            i += 1;
+        }
+    }
+    out
+}
+
+/// Every `std::...` path named in `code`, as written (e.g. `std::fs`).
+fn std_paths(code: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    let mut from = 0;
+    while let Some(pos) = code[from..].find("std::") {
+        let start = from + pos;
+        from = start + 5;
+        let preceded_by_ident = code[..start].chars().next_back().is_some_and(is_ident);
+        if preceded_by_ident {
+            continue;
+        }
+        let mut end = start;
+        let rest = &code[start..];
+        let mut len = 0;
+        let bytes: Vec<char> = rest.chars().collect();
+        // Identifiers joined by "::".
+        let mut j = 0;
+        while j < bytes.len() {
+            if is_ident(bytes[j]) {
+                j += 1;
+                len = j;
+            } else if bytes[j] == ':' && bytes.get(j + 1) == Some(&':') {
+                j += 2;
+            } else {
+                break;
+            }
+        }
+        end += rest.chars().take(len).map(char::len_utf8).sum::<usize>();
+        found.push(code[start..end].trim_end_matches(':').to_string());
+    }
+    found
+}
+
+/// The `use` statements in `code`, normalised (whitespace removed).
+fn use_statements(code: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut from = 0;
+    while let Some(pos) = code[from..].find("use ") {
+        let start = from + pos;
+        from = start + 4;
+        let boundary = code[..start]
+            .chars()
+            .next_back()
+            .is_none_or(|c| c.is_whitespace() || c == '{' || c == '}' || c == ';');
+        if !boundary {
+            continue;
+        }
+        let end = code[start..].find(';').map_or(code.len(), |e| start + e);
+        let stmt: String = code[start + 4..end]
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        out.push(stmt);
+    }
+    out
+}
+
+/// Checks a source file against the allow-list. Returns every violation.
+fn check_source(src: &str) -> Result<(), Vec<String>> {
+    let code = code_only(src);
+    let mut bad = Vec::new();
+
+    for stmt in use_statements(&code) {
+        if !ALLOWED_USE.contains(&stmt.as_str()) {
+            bad.push(format!("use statement not allowed: use {stmt};"));
+        }
+    }
+
+    let paths = std_paths(&code);
+    for path in &paths {
+        if !ALLOWED_STD_PATHS.contains(&path.as_str()) {
+            bad.push(format!("std path not allowed: {path}"));
+        }
+    }
+
+    // Blank the std paths, then look at `fs::member` calls on what is left.
+    let mut rest = code.clone();
+    for path in &paths {
+        rest = rest.replace(path.as_str(), &" ".repeat(path.len()));
+    }
+    let mut from = 0;
+    while let Some(pos) = rest[from..].find("fs::") {
+        let start = from + pos;
+        from = start + 4;
+        if rest[..start].chars().next_back().is_some_and(is_ident) {
+            continue;
+        }
+        let member: String = rest[start + 4..]
+            .chars()
+            .take_while(|c| is_ident(*c))
+            .collect();
+        if !ALLOWED_FS_MEMBERS.contains(&member.as_str()) {
+            bad.push(format!("fs::{member} is not allowed"));
+        }
+    }
+
+    for word in rest.split(|c: char| !is_ident(c)).filter(|w| !w.is_empty()) {
+        if DENIED_WORDS.contains(&word) {
+            bad.push(format!("denied word in code: {word}"));
+        }
+    }
+
+    if bad.is_empty() { Ok(()) } else { Err(bad) }
+}
+
 #[test]
-fn source_has_no_process_or_content_reads() {
-    // Detection must not run programs or read file contents. The module's
-    // only host access is the Env trait; this guards the source against a
-    // direct process or file-content call.
+fn source_uses_only_allowed_host_calls() {
     let src = include_str!("../src/agent_detect.rs");
-    for forbidden in [
-        "process::",
-        "Command::",
-        "read_to_string",
-        "fs::read(",
-        "File::open",
-        "read_dir",
-    ] {
-        assert!(
-            !src.contains(forbidden),
-            "agent_detect.rs contains {forbidden}"
+    if let Err(bad) = check_source(src) {
+        panic!(
+            "agent_detect.rs makes a host call outside the allow-list:\n{}",
+            bad.join("\n")
         );
     }
+}
+
+/// Code that a read-only detection module must never contain. Each is added
+/// to the real source, in a function, to prove the guard rejects it.
+const FORBIDDEN_SNIPPETS: &[&str] = &[
+    "let _ = std::net::TcpStream::connect(\"127.0.0.1:1\");",
+    "let _ = std::process::Command::new(\"claude\").output();",
+    "let _ = std::fs::read(\"x\");",
+    "let _ = std::fs::read_to_string(\"x\");",
+    "let _ = std::fs::write(\"x\", b\"\");",
+    "let _ = std::fs::read_dir(\".\");",
+    "let _ = std::fs::File::open(\"x\");",
+    "let _ = std::fs::OpenOptions::new();",
+    "std::thread::spawn(|| {});",
+    "let _ = std::net::UdpSocket::bind(\"127.0.0.1:0\");",
+    "let _ = std::io::stdin();",
+    "use std::process::Command;",
+    "use tokio::net::TcpStream;",
+    "let _ = reqwest::blocking::get(\"http://x\");",
+    "let _ = ureq::get(\"http://x\");",
+    "let _ = hyper::Client::new();",
+    "let _ = fs::read(\"x\");",
+    "let _ = fs::File::open(\"x\");",
+];
+
+#[test]
+fn guard_rejects_each_forbidden_call() {
+    let src = include_str!("../src/agent_detect.rs");
+    assert!(
+        check_source(src).is_ok(),
+        "the real source must pass the guard"
+    );
+    for snippet in FORBIDDEN_SNIPPETS {
+        let mutated = format!("{src}\nfn guard_mutant() {{\n    {snippet}\n}}\n");
+        assert!(
+            check_source(&mutated).is_err(),
+            "the guard accepted: {snippet}"
+        );
+    }
+    // Words in comments and literals do not count.
+    let harmless = format!(
+        "{src}\n// std::net::TcpStream and Command::new in a comment\nconst NOTE: &str = \"std::process::Command, read_to_string\";\n"
+    );
+    assert!(
+        check_source(&harmless).is_ok(),
+        "comments or literals were flagged"
+    );
 }
 
 /// Wraps the real host and overrides some variables, so a test can point
