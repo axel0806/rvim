@@ -13,7 +13,9 @@ make run ARGS=file.txt         # cargo run -- file.txt
 make help                      # list the targets
 ```
 
-The `Makefile` wraps cargo; each target is a thin cargo command. Needs a Rust
+The `Makefile` wraps cargo; each target is a thin cargo command. The packaging
+targets (`install` with `PREFIX`/`DESTDIR`, `uninstall`, `dist`) are for
+distribution packagers; see the "For packagers" section of INSTALL.md. Needs a Rust
 toolchain that supports edition 2024 (the minimum version is not recorded
 yet). On Windows with Git Bash, put `~/.cargo/bin` on `PATH` first. Plain
 `cargo` works too.

@@ -117,10 +117,15 @@ user-visible feature set lands together. Not for a small feature or a fix.
 
 - `INSTALL.md`, `CONTRIBUTING.md`, `AGENTS.md`, `SECURITY.md` and this file are
   in the repository (written 2026-11-01). The `Makefile` exists (`make help` lists
-  its targets; `make check` runs lint and the Vim tests). It has no `uninstall`,
-  `dist` or `PREFIX`/`DESTDIR` support yet.
+  its targets; `make check` runs lint and the Vim tests). `make install` takes
+  `PREFIX`, `DESTDIR` and `SKIP_BUILD`, `make uninstall` removes its files, and
+  `make dist` writes the source archive of `HEAD` (`git archive`, no tag, no
+  upload). Packager usage is in INSTALL.md, "For packagers". `make dist` leaves
+  an untracked `rvim-<version>-source.tar.gz` in the repository root; delete it
+  after use (`.gitignore` does not list it).
 - AUR packages are planned as `rvim` (from a tagged source archive) and
   `rvim-bin` (the Linux release binary). Nothing is published yet; see
-  `PLAN.md` "Future goals".
+  `PLAN.md` "Future goals". For a release, take the source archive of the tag
+  (`git archive --prefix=rvim-<version>/ <tag>`); `make dist` archives `HEAD`.
 - Keep `LICENSE*` in every archive and package. Do not change the
   `VERSION_MESSAGE` text in `src/lib.rs`; the Vim license requires it.

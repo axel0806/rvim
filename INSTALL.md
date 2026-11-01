@@ -48,14 +48,18 @@ With `make` (GNU make or BSD make on Linux and macOS; on Windows, install a
 make such as mingw32-make, or use `make` from Git Bash if it is installed):
 
 ```
-make build                # cargo build --release
-make install              # cargo install --path . --locked, into ~/.cargo/bin
+make build                # cargo build --release --locked (target/release/rvim)
+make cargo-install        # cargo install --path . --locked, into ~/.cargo/bin
+make install              # into /usr/local (see "For packagers"; needs root)
 make help                 # list all targets
 ```
 
-`make install` does not take `PREFIX` or `DESTDIR`; it installs with cargo, as
-the `cargo install` line above does. The `Makefile` also has `debug`, `test`,
-`test-vim`, `lint`, `fmt`, `check`, `run` and `clean` targets. See CONTRIBUTING.md.
+`make install` copies the release binary and the licence files into
+`$(PREFIX)/bin`, `$(PREFIX)/share/licenses/rvim` and `$(PREFIX)/share/doc/rvim`
+(PREFIX defaults to `/usr/local`). It is for Unix. To keep the older behaviour,
+use `make cargo-install`, which runs the `cargo install` line above. The
+`Makefile` also has `debug`, `test`, `test-vim`, `lint`, `fmt`, `check`, `run`,
+`clean`, `uninstall` and `dist` targets. See CONTRIBUTING.md.
 
 `cargo install --git https://github.com/axel0806/rvim` also works. There is no
 crates.io release yet.
@@ -63,6 +67,37 @@ crates.io release yet.
 Dependencies: `crossterm`, `ropey` and `unicode-width` (plus `tempfile` for
 tests). None builds C code, so no C compiler is needed today. The planned
 tree-sitter highlighting will need one (PLAN.md, "Dependency choices").
+
+## For packagers
+
+For Unix distribution packages (AUR, Homebrew, distro builds). Install into a
+staging directory with `DESTDIR`, under a `PREFIX`:
+
+```
+make install DESTDIR="$pkgdir" PREFIX=/usr
+```
+
+- Installs `$(DESTDIR)$(PREFIX)/bin/rvim` (mode 755),
+  `$(DESTDIR)$(PREFIX)/share/licenses/rvim/` (`LICENSE`, `LICENSE-VIM`,
+  `NOTICE`) and `$(DESTDIR)$(PREFIX)/share/doc/rvim/README.md`. `PREFIX`
+  defaults to `/usr/local` and `DESTDIR` to empty.
+- `install` runs `cargo build --release --locked` first. If the package builds
+  in its own step, pass `SKIP_BUILD=1` so that `install` only copies:
+  `make install SKIP_BUILD=1 DESTDIR="$pkgdir" PREFIX=/usr`. Without it the
+  binary must already exist.
+- `BIN=path` names another binary to copy (default `target/release/rvim`), for
+  example when `CARGO_TARGET_DIR` puts the build elsewhere.
+- `make uninstall` with the same `PREFIX` and `DESTDIR` removes those five files,
+  then removes `bin`, `share/licenses/rvim`, `share/doc/rvim`, `share/licenses`,
+  `share/doc` and `share` only if they are empty. `PREFIX` itself is never removed.
+- `make dist` writes `rvim-<version>-source.tar.gz` in the repository root. It
+  is `git archive` of `HEAD`, with the top folder `rvim-<version>/`. Uncommitted
+  changes are not in it. It creates no tag and uploads nothing. For a release,
+  package the archive of the tag (`git archive --prefix=rvim-<version>/ <tag>`),
+  not `HEAD`.
+- The targets use `install(1)`, `mkdir -p` and `rmdir`, so they run on Linux,
+  macOS and the BSDs. Windows packages use the release archive.
+- Keep the `LICENSE*` and `NOTICE` files with any copy of rvim you redistribute.
 
 ## Running
 
@@ -104,9 +139,11 @@ tests silently.
 
 - Prebuilt binary: delete the copied `rvim` (or `rvim.exe`) and the unpacked folder.
 - `cargo install`: `cargo uninstall rvim`.
+- `make install`: `make uninstall`, with the same `PREFIX` and `DESTDIR`.
 - Source build: delete the clone.
 
-rvim registers nothing with the system. There is no `make uninstall` yet.
+rvim registers nothing with the system. `make uninstall` removes only the files
+that `make install` copies.
 
 ## Files rvim writes
 
@@ -130,8 +167,8 @@ rvim registers nothing with the system. There is no `make uninstall` yet.
 
 - GitHub Releases: available (above).
 - AUR package: planned, not available yet (PLAN.md, "Future goals").
-- Makefile: present, with `build` and `install` (cargo wrappers, see above). No
-  `uninstall` target and no `PREFIX`/`DESTDIR` yet.
+- Makefile: `install` with `PREFIX`, `DESTDIR` and `SKIP_BUILD`, `uninstall`
+  and `dist` (see "For packagers"), plus the cargo wrappers.
 - crates.io, Homebrew, Windows installer or winget package: not available yet.
 
 ## Licence

@@ -7,7 +7,7 @@ a real Vim by the differential harness in `tests/common/mod.rs`.
 
 ## Status: read this first
 
-Last updated 2026-11-01 (CI first ran on GitHub; Linux builds Vim 9.1.1914 from source, and all three OS jobs require Vim; cell-level diff redraw in `redraw.rs`; kitty keyboard protocol, with `RVIM_NO_KITTY=1` to turn it off; SIGHUP/SIGTERM recovery on Unix, milestone 4). **rvim is an alpha, roughly 25-30% of this plan.**
+Last updated 2026-11-01 (CI first ran on GitHub; Linux builds Vim 9.1.1914 from source, and all three OS jobs require Vim; cell-level diff redraw in `redraw.rs`; kitty keyboard protocol, with `RVIM_NO_KITTY=1` to turn it off; SIGHUP/SIGTERM recovery on Unix, milestone 4; Makefile packaging targets `install` with `PREFIX`/`DESTDIR`, `uninstall` and `dist`). **rvim is an alpha, roughly 25-30% of this plan.**
 As of 2026-11-01 milestones 1-3 are done; 4 and 5 are partly done; 6 has the start menu only; 7-9 are plans.
 Released as `v0.1.0-alpha.1`, `v0.1.0-alpha.2` and `v0.1.0-alpha.3`. The next release is `v0.1.0-alpha.4`, not yet tagged. All tests pass against Vim 9.1 and clippy/fmt are
 clean at the last commit.
@@ -78,7 +78,7 @@ nothing listed here is built, and the milestone table above is unchanged.
 - Lua extension layer: see "Lua extensions" (milestone 9).
 - Neovim plugin compatibility, in stages: see "Neovim plugin compatibility"
   (milestone 9).
-- Makefile: done 2026-11-01 (`build`, `debug`, `test`, `test-vim`, `lint`, `fmt`, `check`, `run`, `install`, `clean`, `help`); see "Repository and packaging". `uninstall` and `release` are not in it.
+- Makefile: done 2026-11-01 (`build`, `debug`, `test`, `test-vim`, `lint`, `fmt`, `check`, `run`, `install` with `PREFIX`/`DESTDIR`/`SKIP_BUILD`, `uninstall`, `dist`, `cargo-install`, `clean`, `help`); see "Repository and packaging". `release` is not in it.
 - Repository documents (`SECURITY.md`, `CONTRIBUTING.md`, `AGENTS.md`,
   `MAINTAIN.md`, `INSTALL.md`): written 2026-11-01, done; see "Repository and
   packaging".
@@ -1831,7 +1831,7 @@ CONTRIBUTING.md have short names. `make help` lists the targets. Implemented:
 
 | Target | Runs |
 |---|---|
-| `build` | `cargo build --release` |
+| `build` | `cargo build --release --locked` (locked, so packagers build what `Cargo.lock` pins) |
 | `debug` | `cargo build` |
 | `test` | `cargo test` |
 | `test-vim` | `RVIM_REQUIRE_VIM=1 cargo test`, which fails when Vim is missing |
@@ -1839,15 +1839,21 @@ CONTRIBUTING.md have short names. `make help` lists the targets. Implemented:
 | `fmt` | `cargo fmt` |
 | `check` | `lint`, then `test-vim` (the pre-PR check) |
 | `run` | `cargo run -- $(ARGS)`, for example `make run ARGS=file.txt` |
-| `install` | `cargo install --path . --locked` (into `~/.cargo/bin`; no `PREFIX` or `DESTDIR`) |
+| `install` | `make build` first unless `SKIP_BUILD=1`, then copies `target/release/rvim` (or `BIN`) to `$(DESTDIR)$(PREFIX)/bin/rvim` (mode 755; `PREFIX` defaults to `/usr/local`, `DESTDIR` to empty), `LICENSE`, `LICENSE-VIM` and `NOTICE` to `share/licenses/rvim/`, and `README.md` to `share/doc/rvim/` |
+| `uninstall` | removes those five files under the same `PREFIX` and `DESTDIR`, then `rmdir` on the directories it made, which removes them only if empty |
+| `dist` | `git archive` of `HEAD` as `rvim-<version>-source.tar.gz` (version from `Cargo.toml`); no tag, no push, no upload |
+| `cargo-install` | `cargo install --path . --locked` (into `~/.cargo/bin`): the former `install` |
 | `clean` | `cargo clean` |
 | `help` | the default target; lists the `##` comments |
 
 Every target is `.PHONY`, and a failing command fails the target. The file
-uses only POSIX make syntax, and was run with mingw32-make on Windows (Git
-Bash has no `make` by default). Not planned for the Makefile: a release target.
-Not yet: `uninstall`, `dist`, and `PREFIX`/`DESTDIR` for `install`, which the
-original plan included. `make` does not replace CI, and `release.yml` stays the
+uses only POSIX make syntax (no `$(shell)` and no GNU conditionals), and was
+run with mingw32-make on Windows (Git Bash has no `make` by default). The
+install, uninstall and dist paths were run for real in WSL Ubuntu on
+2026-11-01: a staged install under `DESTDIR` with `PREFIX=/usr`, `--version` of
+the staged binary, an uninstall that left no files, and an archive containing
+`Cargo.toml`, `src/` and the licence files. Not planned for the Makefile: a
+release target. `make` does not replace CI, and `release.yml` stays the
 release path.
 
 **Release notes.** `release.yml` passes `.github/release-notes.md` to
@@ -1876,9 +1882,12 @@ plan, kept for the record; the files are the source of truth.
   `rvim-bin` repackages the Linux release binary, if one is published for the
   architecture. The PKGBUILDs live in the AUR repositories (keeping them in
   this repository too, under `packaging/arch/`, is undecided).
-- **Depends on** the release archives and checksums, `make install` with
-  `PREFIX` and `DESTDIR`, and `LICENSE*` being installed. It should not start
-  before the Makefile, `LICENSE-VIM` and `INSTALL.md` exist.
+- **Depends on** the release archives and checksums. The prerequisites are
+  done on 2026-11-01: `make install` with `PREFIX`, `DESTDIR` and `SKIP_BUILD`,
+  `make uninstall`, `LICENSE*` installed, and `INSTALL.md` ("For packagers").
+  Still open: `make dist` archives `HEAD`, not a tag, so the `rvim` PKGBUILD
+  must take the tag's archive; the tagged archive and its checksum are not
+  published yet.
 - **License field.** Matches "Licensing": `Apache-2.0 AND Vim` since
   2026-11-01. Whether the AUR accepts the identifier `Vim` is UNVERIFIED.
 - **Name check** (UNVERIFIED, not yet done). Search the AUR, crates.io, Homebrew
