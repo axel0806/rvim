@@ -51,7 +51,9 @@ this, `--help` opened a buffer named `--help`.
 **In progress** (as of 2026-11-01; maintained by the orchestrator, and an
 entry is removed when its branch lands on main):
 
-(none)
+- Cell-level diff redraw (milestone 4; `view.rs`, the draw code in `main.rs`)
+- Kitty keyboard protocol (milestone 4; key decoding in `main.rs`)
+- Recovery on terminal close, SIGHUP/SIGTERM on Unix (milestone 4; `recovery.rs`, `main.rs`)
 
 **Suggested order for what is left:** (1) Document/Window split, (2) splits +
 buffers + scrolling, (3) milestone 7, in the step order of "Agent experience:
