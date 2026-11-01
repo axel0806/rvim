@@ -330,10 +330,10 @@ fn keyword_class(c: char) -> u32 {
 impl Editor {
     pub(crate) fn re_opts(&self) -> Opts {
         Opts {
-            ignorecase: self.opts.ignorecase(),
-            smartcase: self.opts.smartcase(),
+            ignorecase: self.eff().ignorecase(),
+            smartcase: self.eff().smartcase(),
             last_sub: self.last_sub.clone(),
-            tabstop: self.opts.tabstop(),
+            tabstop: self.eff().tabstop(),
         }
     }
 
@@ -485,7 +485,7 @@ impl Editor {
             let fl = SearchFlags {
                 start: false,
                 end: off.end,
-                wrapscan: self.opts.wrapscan(),
+                wrapscan: self.eff().wrapscan(),
             };
             let found = searchit(self.buf(), &re, start, dirc == '/', count, &fl);
             let Some(f) = found else {
@@ -614,7 +614,7 @@ impl Editor {
                 // it skips a match that contains the cursor.
                 end: !dir_fwd && !zero_width,
                 // No wrapping in the first search, as in Vim.
-                wrapscan: i == 1 && self.opts.wrapscan(),
+                wrapscan: i == 1 && self.eff().wrapscan(),
             };
             let cnt = if i == 1 { count.max(1) } else { 1 };
             match searchit(self.buf(), &re, from, dir_fwd, cnt, &fl) {

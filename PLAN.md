@@ -7,7 +7,7 @@ a real Vim by the differential harness in `tests/common/mod.rs`.
 
 ## Status: read this first
 
-Last updated 2026-11-01 (Document/Window/Editor split steps 1 to 3 of milestone 4 (ids, collections, accessors, version counter, marks, `buf_mut()`, window size); CI first ran on GitHub; Linux builds Vim 9.1.1914 from source, and all three OS jobs require Vim; cell-level diff redraw in `redraw.rs`, with its escape sequences tested in `main.rs`; kitty keyboard protocol, with `RVIM_NO_KITTY=1` to turn it off and no support query when `TERM` is unset, empty or `dumb`; SIGHUP/SIGTERM recovery on Unix, milestone 4; Makefile packaging targets `install` with `PREFIX`/`DESTDIR`, `uninstall` and `dist`). **rvim is an alpha, roughly 25-30% of this plan.**
+Last updated 2026-11-01 (milestone 4 option scopes: `:setlocal` and `:setglobal`, buffer-local, window-local and global-local values, see "Options registry"; Document/Window/Editor split steps 1 to 3 of milestone 4 (ids, collections, accessors, version counter, marks, `buf_mut()`, window size); CI first ran on GitHub; Linux builds Vim 9.1.1914 from source, and all three OS jobs require Vim; cell-level diff redraw in `redraw.rs`, with its escape sequences tested in `main.rs`; kitty keyboard protocol, with `RVIM_NO_KITTY=1` to turn it off and no support query when `TERM` is unset, empty or `dumb`; SIGHUP/SIGTERM recovery on Unix, milestone 4; Makefile packaging targets `install` with `PREFIX`/`DESTDIR`, `uninstall` and `dist`). **rvim is an alpha, roughly 25-30% of this plan.**
 As of 2026-11-01 milestones 1-3 are done; 4 and 5 are partly done; 6 has the start menu only; 7-9 are plans.
 Released as `v0.1.0-alpha.1`, `v0.1.0-alpha.2` and `v0.1.0-alpha.3`. The next release is `v0.1.0-alpha.4`, not yet tagged. All tests pass against Vim 9.1 and clippy/fmt are
 clean at the last commit.
@@ -16,7 +16,7 @@ clean at the last commit.
 |---|---|
 | 1 Core, 2 Vim grammar | Done |
 | 3 Search and Ex | 100%. `:s` `\=` expressions done as the subset in `src/expr.rs` (see Known differences) |
-| 4 Foundation | ~78%. The Document/Window/Editor split: steps 1 to 3 done (one document and one window, with `DocId`/`WinId` collections and window size from the screen; see "Foundation"). Foundation is complete; the rest is milestone 5 (layout and splits). Left: several documents and windows in use, and the fields still in `Editor` listed there, real local/global option scopes (`:setlocal`/`:setglobal` semantics; `:setlocal` is accepted as an alias of `:set`, `:setglobal` does not exist) |
+| 4 Foundation | 100%. The Document/Window/Editor split: steps 1 to 3 done (one document and one window, with `DocId`/`WinId` collections and window size from the screen; see "Foundation"). Option scopes done: `:setlocal`, `:setglobal`, buffer-, window- and global-local values (see "Options registry"). Foundation is complete; the rest is milestone 5 (layout and splits, several documents and windows in use) |
 | 5 Windows and buffers | ~30%. Done: macros (`q`, `@`, `@@`, `@:`), lowercase marks (`m{a-z}`, `'a`, `` `a ``, `:k`, `:mark`, `'a` addresses), the jumplist (`<C-o>`, `<Tab>` with counts, `:jumps`) and the context mark (`''`, `` `` ``, `m'`, `` m` ``), scrolling (`<C-e> <C-y> <C-f> <C-b> <C-d> <C-u> zt zz zb z<CR> z. z- H M L`, counts, `scrolloff`, wrapped lines). Left: splits, buffer list, the other marks (uppercase, `'[`/`']`, `'<`/`'>` motions), swap files |
 | 6 Modern editing experience | Started, not near done. Landed: the start menu (opt-in `--start-menu`, `startmenu` option). Left: hlsearch, incsearch, syntax, line numbers, config file, palette, mouse, `:Start`, the start menu's recent files, Config and agent entries, and its modern-profile default (see "Start menu") |
 | 7 Agent integration | 0%. Not started (file-change reload as an undo step, diff view, ACP connector, agent detection). Research is in "Detecting and connecting to agents" |
@@ -252,7 +252,7 @@ What the revised milestones fix, as the code stands today:
    match (`scroll::scroll_window_for_prompt`; tests in `tests/confirm_prompt.rs`,
    not probed in Vim: `-es` does not show the window).
    Marks in Ex addresses (`'a`) are done with the marks (milestone 5).
-4. **Foundation (in progress).** Done: bracketed paste, Alt/F-keys/Insert/Shift-Tab, kitty keyboard protocol, Visual area drawn via highlight groups, cell-level diff redraw (`redraw.rs`), options registry (`autoindent`, `expandtab`, `shiftwidth`), panic recovery files, SIGHUP/SIGTERM recovery files on Unix, channel-based event loop with an input thread. Left: real option scopes (`:setlocal`/`:setglobal`; `:setlocal` is only an alias of `:set` for now). Original description: Restructure before adding more features, because windows,
+4. **Foundation (done).** Done: bracketed paste, Alt/F-keys/Insert/Shift-Tab, kitty keyboard protocol, Visual area drawn via highlight groups, cell-level diff redraw (`redraw.rs`), options registry with option scopes (`:setlocal`, `:setglobal`; see "Options registry"; `autoindent`, `expandtab`, `shiftwidth` and the others), panic recovery files, SIGHUP/SIGTERM recovery files on Unix, channel-based event loop with an input thread, the Document/Window/Editor split. Original description: Restructure before adding more features, because windows,
    agents and prediction all depend on it. Order, each step landing with the
    differential tests green: (a) Document/Window/Editor split, (b) internal
    event loop, (c) styled frame with the Visual area drawn, (d) diff redraw,
@@ -394,6 +394,58 @@ Vim's `-N` defaults; rvim's friendlier defaults live in the default config
 file (milestone 6), not in the table, so the differential tests are
 unaffected. The harness learns to set an option in both rvim and Vim before a
 case runs.
+
+**Scopes (done).** The scope table in `src/options.rs` (`TABLE`) is Vim
+9.1's, from `:help local-options`, and the unit test `scope_table_matches_vim`
+checks every row:
+
+| Scope | Options (short name) |
+|---|---|
+| global | `ignorecase` (`ic`), `smartcase` (`scs`), `wrapscan` (`ws`), `smarttab` (`sta`), `shiftround` (`sr`), `hlsearch` (`hls`), `incsearch` (`is`); `startmenu` is rvim-only |
+| buffer-local | `autoindent` (`ai`), `expandtab` (`et`), `shiftwidth` (`sw`), `tabstop` (`ts`), `softtabstop` (`sts`) |
+| global-local to buffer | `autoread` (`ar`) |
+| global-local to window | `scrolloff` (`so`) |
+| window-local | `number` (`nu`), `relativenumber` (`rnu`), `wrap` |
+
+Storage: the global values are in `Editor`'s `Options`. A document has its
+buffer-local values (`Document::local`, a `Local`), and a window has its
+window-local values (`Window::local`). A buffer-local or window-local value is
+always set: a new document or window copies the global values when it is
+made (so a later `:setglobal` does not change an existing buffer's copy). A
+global-local value is unset (`None`) until a command sets it, and the global
+value is used while it is unset. Every read goes through `Editor::eff()`, the
+effective value for the current document and window (the local value if set,
+else the global one). With one document and one window the behaviour of the
+existing tests is unchanged.
+
+What the commands write (probed with `vim -N -u NONE -es` on 2026-11-01):
+
+- `:set opt=val`, `opt`, `noopt`, `invopt`, `opt!`, `opt&`: the global value,
+  and the local value too for a buffer-local, window-local or global-local
+  option. `:set opt&` makes both the default. `:set opt<` copies the global
+  value to the local value (for a global-local option too).
+- `:setlocal`: the local value only. For a global-only option, which has one
+  value, it sets that value. `:setlocal opt<` copies the global value to the
+  local one, or unsets the local value of a global-local option. `:setlocal
+  opt&` sets the local value to the default.
+- `:setglobal`: the global value only. The local value does not change, so
+  the current buffer keeps its `shiftwidth` after `:setglobal sw=4`.
+  `:setglobal opt<` changes nothing.
+- `+=`, `-=` and `^=` start from the effective value, or from the global value
+  for `:setglobal`. A negative value is E487 for every option except
+  `softtabstop` and `scrolloff`, which Vim accepts.
+- Queries: `:set opt?` shows the effective value; `:setlocal opt?` the local
+  value, shown as `--opt` for a boolean that is unset and `opt=-1` for a
+  number that is unset (Vim's `-1`); `:setglobal opt?` the global value.
+- Errors are Vim's: E518 (the item as typed), E474 (`noopt` of a number,
+  `opt=` for a boolean), E521 (a number after `=` is missing or not a number),
+  E487 (negative).
+
+Tests: `tests/compat_option_scopes.rs` (differential cases with `:setl`,
+`:setg` and their long forms, the three commands in the same keys as `:set`,
+and message and error checks against Vim's messages, which the harness cannot
+compare), and the unit tests in `options.rs` (the scope table, two documents
+and two windows in one `Editor`, and the write, reset and query rules).
 
 ### Recovery
 
@@ -1928,10 +1980,18 @@ plan, kept for the record; the files are the source of truth.
   before.
 - Emoji use approximate block ranges instead of Vim's full `emoji_all` table
   for word motions; composing characters are separate characters.
-- Options come from the registry in `options.rs` (all global for now).
-  `:setlocal` is accepted as an alias of `:set`; `:setglobal` does not exist.
-  Real local and global option scopes (`:setlocal`/`:setglobal` semantics) are
-  still to do.
+- Option scopes (`options.rs`, "Options registry" in this file) follow Vim
+  for the options listed there. Not done: `:set all`, `:setlocal all` and
+  `:setglobal all` (show all values), the `!` argument of `:setlocal` and
+  `:setglobal` (not probed); the window-local values are kept per window only,
+  while Vim also keeps them per buffer (an `:e` back to a buffer restores the
+  window options it had there) and gives each window a global value for its
+  window-local options; a new window copies the global values, while Vim's
+  `:split` copies the current window's local values. The `scroll` option is
+  not in the registry (window-local in Vim); it is still `Editor`'s
+  `scroll_opt`. The query messages of `:setlocal` and `:setglobal` are checked
+  against Vim's probes in unit tests, not by the differential harness, which
+  sees no messages.
   `tabstop`, `softtabstop` (negative = 'shiftwidth'), `smarttab` and
   `shiftround` work, but these Vim cases are not matched yet; they are kept
   as `#[ignore]`d `known_gap_*` tests in `tests/compat_options.rs` (run with

@@ -200,12 +200,10 @@ impl Editor {
     }
 
     pub fn with_buffer(buf: Buffer) -> Self {
+        let opts = Options::default();
         let mut ed = Self {
-            documents: vec![Document::new(buf)],
-            windows: vec![Window {
-                doc: DocId(0),
-                ..Window::default()
-            }],
+            documents: vec![Document::new(buf, &opts)],
+            windows: vec![Window::new(DocId(0), &opts)],
             cur_win: WinId(0),
             mode: Mode::Normal,
             pending: Vec::new(),
@@ -225,7 +223,7 @@ impl Editor {
             sub_flags: Default::default(),
             sub: None,
             ex_tasks: Vec::new(),
-            opts: Options::default(),
+            opts,
             did_ai: false,
             inserted_space: false,
             global_busy: false,
@@ -559,7 +557,7 @@ impl Editor {
             self.buf().line(self.win().cursor.line),
             self.win().cursor.col,
             matches!(self.mode, Mode::Insert | Mode::Replace),
-            self.opts.tabstop(),
+            self.eff().tabstop(),
         )
     }
 
@@ -805,10 +803,10 @@ impl Editor {
     /// Gives line `new` the indent of line `from` when 'autoindent' is on
     /// (the start of Vim's `open_line()`), leaving the cursor after it.
     pub(crate) fn auto_indent(&mut self, new: usize, from: usize) {
-        if !self.opts.autoindent() {
+        if !self.eff().autoindent() {
             return;
         }
-        let ind = Self::get_indent(&self.line_vec(from), self.opts.tabstop());
+        let ind = Self::get_indent(&self.line_vec(from), self.eff().tabstop());
         if ind > 0 {
             self.set_indent(new, ind);
             let w = self
@@ -917,10 +915,10 @@ impl Editor {
             Key::Enter | Key::Ctrl('j') => {
                 self.u_save_cursor();
                 self.doc_mut().uline = None;
-                let ai = self.opts.autoindent();
+                let ai = self.eff().autoindent();
                 let ind = if ai {
                     // Only the indent before the cursor is copied.
-                    Self::get_indent(&self.line_vec(line)[..col], self.opts.tabstop())
+                    Self::get_indent(&self.line_vec(line)[..col], self.eff().tabstop())
                 } else {
                     0
                 };
@@ -1042,11 +1040,11 @@ impl Editor {
     /// Returns false when the Tab is an ordinary character.
     fn ins_tab(&mut self) -> bool {
         let Pos { line, col } = self.win().cursor;
-        let ts = self.opts.tabstop();
-        let sw = self.opts.shiftwidth();
-        let sts = self.opts.softtabstop();
-        let et = self.opts.expandtab();
-        let sta = self.opts.smarttab();
+        let ts = self.eff().tabstop();
+        let sw = self.eff().shiftwidth();
+        let sts = self.eff().softtabstop();
+        let et = self.eff().expandtab();
+        let sta = self.eff().smarttab();
         let ind = self.in_indent();
         if !et && !(sta && ind && sw != ts) && sts == 0 {
             return false;
@@ -1082,7 +1080,7 @@ impl Editor {
     /// written with Tabs wherever a Tab stop is reached within it.
     fn tabify_before_cursor(&mut self) {
         let Pos { line, col } = self.win().cursor;
-        let ts = self.opts.tabstop();
+        let ts = self.eff().tabstop();
         let v = self.line_vec(line);
         let mut start = col;
         while start > 0 && matches!(v[start - 1], ' ' | '\t') {
@@ -1115,11 +1113,11 @@ impl Editor {
         if col == 0 {
             return false;
         }
-        if self.opts.smarttab() && self.in_indent() {
+        if self.eff().smarttab() && self.in_indent() {
             return true;
         }
         let prev = self.buf().char_at(line, col - 1);
-        self.opts.softtabstop() != 0
+        self.eff().softtabstop() != 0
             && (prev == Some('\t') || (prev == Some(' ') && !self.inserted_space))
     }
 
@@ -1127,11 +1125,11 @@ impl Editor {
     /// space back to the previous stop, then fills up to it with spaces.
     fn ins_bs_sts(&mut self) {
         let Pos { line, mut col } = self.win().cursor;
-        let ts = self.opts.tabstop();
-        let step = if self.opts.smarttab() && self.in_indent() {
-            self.opts.shiftwidth()
+        let ts = self.eff().tabstop();
+        let step = if self.eff().smarttab() && self.in_indent() {
+            self.eff().shiftwidth()
         } else {
-            self.opts.softtabstop()
+            self.eff().softtabstop()
         };
         self.u_save_cursor();
         let vcol_at = |buf: &crate::buffer::Buffer, col: usize| {

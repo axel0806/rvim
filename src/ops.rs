@@ -175,7 +175,7 @@ impl Editor {
         let Some(mut vmode) = self.visual_mode() else {
             return;
         };
-        let ts = self.opts.tabstop();
+        let ts = self.eff().tabstop();
         // Vim's v_visop / nv_subst / nv_Replace.
         match key {
             'S' | 'R' => vmode = VisualMode::Line,
@@ -282,7 +282,7 @@ impl Editor {
 
     /// Vim's `get_op_vcol()` for a block.
     fn get_op_vcol(&mut self, oa: &mut OpArg, replay: Option<VisualRedo>) {
-        let ts = self.opts.tabstop();
+        let ts = self.eff().tabstop();
         oa.block = true;
         let (s, e) = vcol_range(self.buf().line(oa.start.line), oa.start.col, ts);
         oa.start_vcol = s;
@@ -511,7 +511,7 @@ impl Editor {
                     self.win_mut().cursor.line = line;
                 }
                 self.u_save_cursor();
-                if self.opts.autoindent() {
+                if self.eff().autoindent() {
                     // Keep the indent; it is removed again if nothing is typed.
                     let line = self.line_vec(self.win().cursor.line);
                     let w = line
@@ -660,7 +660,7 @@ impl Editor {
         let mut i = 0;
         let mut prev_pstart = 0;
         while vcol < oa.start_vcol && i < line.len() {
-            incr = char_width(line[i], vcol, self.opts.tabstop());
+            incr = char_width(line[i], vcol, self.eff().tabstop());
             vcol += incr;
             if line[i] == ' ' || line[i] == '\t' {
                 bd.pre_whitesp += incr;
@@ -707,7 +707,7 @@ impl Editor {
                 let mut prev_pend = pend;
                 while v <= oa.end_vcol && pend < line.len() {
                     prev_pend = pend;
-                    incr = char_width(line[pend], v, self.opts.tabstop());
+                    incr = char_width(line[pend], v, self.eff().tabstop());
                     v += incr;
                     pend += 1;
                 }
@@ -762,10 +762,10 @@ impl Editor {
             .iter()
             .position(|&c| c != ' ' && c != '\t')
             .unwrap_or(line.len());
-        let (tabs, spaces) = if self.opts.expandtab() {
+        let (tabs, spaces) = if self.eff().expandtab() {
             (0, size)
         } else {
-            let ts = self.opts.tabstop();
+            let ts = self.eff().tabstop();
             (size / ts, size % ts)
         };
         let mut new: Vec<char> = std::iter::repeat_n('\t', tabs).collect();
@@ -780,9 +780,9 @@ impl Editor {
     /// 'shiftround' the indent is first rounded to a multiple of
     /// 'shiftwidth' (a left shift of a partial step counts as one step).
     fn shift_line(&mut self, l: usize, left: bool, amount: usize) {
-        let sw = self.opts.shiftwidth();
-        let count = Self::get_indent(&self.line_vec(l), self.opts.tabstop());
-        let new = if self.opts.shiftround() {
+        let sw = self.eff().shiftwidth();
+        let count = Self::get_indent(&self.line_vec(l), self.eff().tabstop());
+        let new = if self.eff().shiftround() {
             let mut i = (count / sw) as i64;
             let mut amount = amount as i64;
             if !count.is_multiple_of(sw) && left {
@@ -844,7 +844,7 @@ impl Editor {
             return;
         }
         let line = self.line_vec(l);
-        let total0 = amount * self.opts.shiftwidth();
+        let total0 = amount * self.eff().shiftwidth();
         let mut textstart = bd.textcol;
         if oa.op == Op::RShift {
             let mut total = total0 + bd.pre_whitesp;
@@ -854,13 +854,13 @@ impl Editor {
             }
             let mut vcol = bd.start_vcol;
             while textstart < line.len() && (line[textstart] == ' ' || line[textstart] == '\t') {
-                let incr = char_width(line[textstart], vcol, self.opts.tabstop());
+                let incr = char_width(line[textstart], vcol, self.eff().tabstop());
                 total += incr;
                 vcol += incr;
                 textstart += 1;
             }
-            let ts = self.opts.tabstop();
-            let tabs = if self.opts.expandtab() {
+            let ts = self.eff().tabstop();
+            let tabs = if self.eff().expandtab() {
                 0
             } else {
                 ((ws_vcol % ts) + total) / ts
@@ -883,7 +883,7 @@ impl Editor {
             }
             let mut non_white_col = bd.start_vcol;
             while non_white < line.len() && (line[non_white] == ' ' || line[non_white] == '\t') {
-                non_white_col += char_width(line[non_white], non_white_col, self.opts.tabstop());
+                non_white_col += char_width(line[non_white], non_white_col, self.eff().tabstop());
                 non_white += 1;
             }
             let block_space_width = non_white_col - oa.start_vcol;
@@ -895,7 +895,7 @@ impl Editor {
             }
             let mut end = textstart;
             while vw < destination && end < line.len() {
-                let incr = char_width(line[end], vw, self.opts.tabstop());
+                let incr = char_width(line[end], vw, self.eff().tabstop());
                 if vw + incr > destination {
                     break;
                 }
@@ -1360,7 +1360,7 @@ impl Editor {
                 colv = vcol_range(
                     self.buf().line(lnum),
                     self.win().cursor.col,
-                    self.opts.tabstop(),
+                    self.eff().tabstop(),
                 )
                 .1;
                 self.win_mut().cursor.col += 1;
@@ -1369,7 +1369,7 @@ impl Editor {
                 colv = vcol_range(
                     self.buf().line(lnum),
                     self.win().cursor.col,
-                    self.opts.tabstop(),
+                    self.eff().tabstop(),
                 )
                 .0;
             }
@@ -1386,7 +1386,7 @@ impl Editor {
                 let mut p = 0;
                 let mut incr = 0;
                 while vcol < colv && p < old.len() {
-                    incr = char_width(old[p], vcol, self.opts.tabstop());
+                    incr = char_width(old[p], vcol, self.eff().tabstop());
                     vcol += incr;
                     p += 1;
                 }
@@ -1409,7 +1409,7 @@ impl Editor {
                 }
                 let mut spaces = (y_width + 1) as i64;
                 for &ch in yl {
-                    spaces -= char_width(ch, 0, self.opts.tabstop()) as i64;
+                    spaces -= char_width(ch, 0, self.eff().tabstop()) as i64;
                 }
                 let spaces = spaces.max(0) as usize;
                 totlen = count * (yl.len() + spaces) + startspaces + endspaces;
@@ -1463,7 +1463,7 @@ impl Editor {
             if ytype == RegType::Char && y_size == 1 {
                 let start_lnum = lnum;
                 let end_lnum = visual_block_end.unwrap_or(lnum).max(lnum);
-                let vcol = vcol_range(self.buf().line(lnum), col, self.opts.tabstop()).0;
+                let vcol = vcol_range(self.buf().line(lnum), col, self.eff().tabstop()).0;
                 let mut l = lnum;
                 let mut totlen = 0;
                 if count > 0 && yanklen > 0 {
@@ -1472,7 +1472,7 @@ impl Editor {
                         let old = self.line_vec(l);
                         let mut c = col;
                         if l > start_lnum {
-                            c = text_col_at_vcol(&old, vcol, self.opts.tabstop())
+                            c = text_col_at_vcol(&old, vcol, self.eff().tabstop())
                                 .unwrap_or(usize::MAX);
                         }
                         if visual_block_end.is_some() && c > old.len() {

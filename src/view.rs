@@ -105,7 +105,7 @@ fn visual_cells(ed: &Editor, line: usize, lay: &Layout) -> Vec<(usize, usize)> {
             if line < a.line.min(b.line) || line > a.line.max(b.line) {
                 return out;
             }
-            let ts = ed.opts.tabstop();
+            let ts = ed.eff().tabstop();
             let (la, ra) = text::vcol_range(ed.buf().line(a.line), a.col, ts);
             let (lb, rb) = text::vcol_range(ed.buf().line(b.line), b.col, ts);
             let left = la.min(lb);
@@ -234,7 +234,7 @@ pub fn frame(ed: &Editor) -> Frame {
     let mut cursor = (0, 0);
     let mut line = ed.win().top;
     while rows.len() < text_height && line < ed.buf().line_count() {
-        let lay = layout(ed.buf().line(line), width, ed.opts.tabstop());
+        let lay = layout(ed.buf().line(line), width, ed.eff().tabstop());
         let need = rows_needed(&lay, width);
         if line != ed.win().top && rows.len() + need > text_height {
             while rows.len() < text_height {
@@ -309,7 +309,7 @@ fn status_line(
     if let Some(text) = typed {
         // The cursor sits at the edit position of the command line.
         let upto = 1 + ed.cmdline_pos();
-        let ts = ed.opts.tabstop();
+        let ts = ed.eff().tabstop();
         let used: usize = text.chars().take(upto).map(|c| char_width(c, 0, ts)).sum();
         *cursor = (used.min(width - 1), bottom);
         return (pad(truncate(&text, width), width), false);

@@ -7,12 +7,12 @@
 use crate::document::DocId;
 use crate::jumplist::JumpList;
 use crate::motion::Pos;
+use crate::options::{Local, Options};
 
 /// Index of a window in `Editor::windows`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub(crate) struct WinId(pub(crate) usize);
 
-#[derive(Default)]
 pub(crate) struct Window {
     /// The document this window shows (Vim's `w_buffer`).
     pub(crate) doc: DocId,
@@ -30,4 +30,25 @@ pub(crate) struct Window {
     /// line is not part of it). Set by `Editor::fit_windows`.
     pub(crate) width: usize,
     pub(crate) height: usize,
+    /// The window-local option values (`'number'`, `'wrap'`, `'scrolloff'`,
+    /// ...). A new window copies the global values, see `options.rs`.
+    pub(crate) local: Local,
+}
+
+impl Window {
+    /// A window on `doc`, with window-local options copied from `opts`.
+    pub(crate) fn new(doc: DocId, opts: &Options) -> Self {
+        Self {
+            doc,
+            cursor: Pos::default(),
+            curswant: 0,
+            keep_curswant: false,
+            vstart: Pos::default(),
+            jumps: JumpList::default(),
+            top: 0,
+            width: 0,
+            height: 0,
+            local: Local::new(opts),
+        }
+    }
 }

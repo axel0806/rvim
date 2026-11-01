@@ -235,7 +235,7 @@ impl Editor {
     /// is not, the caller shows the intro message as before.
     pub fn show_start_menu(&mut self) -> bool {
         let empty = self.buf().line_count() == 1 && self.buf().line_len(0) == 0;
-        if !self.opts.startmenu() || self.buf().path.is_some() || self.buf().modified || !empty {
+        if !self.eff().startmenu() || self.buf().path.is_some() || self.buf().modified || !empty {
             return false;
         }
         self.start_menu = Some(StartMenu::new());

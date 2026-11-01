@@ -855,7 +855,7 @@ impl Editor {
             self.buf().line(self.win().cursor.line),
             want,
             allow_end,
-            self.opts.tabstop(),
+            self.eff().tabstop(),
         );
     }
 
@@ -1873,7 +1873,7 @@ impl Editor {
 
     /// Leftmost and rightmost virtual columns of two positions (`getvcols`).
     pub(crate) fn vcols_of(&self, a: Pos, b: Pos) -> (usize, usize) {
-        let ts = self.opts.tabstop();
+        let ts = self.eff().tabstop();
         let (s1, e1) = text::vcol_range(self.buf().line(a.line), a.col, ts);
         let (s2, e2) = text::vcol_range(self.buf().line(b.line), b.col, ts);
         (s1.min(s2), e1.max(e2))

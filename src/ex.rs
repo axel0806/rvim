@@ -12,6 +12,7 @@ use crate::key::Key;
 use crate::motion::{Pos, first_non_blank};
 use crate::normal::Op;
 use crate::ops::OpArg;
+use crate::options::Target;
 use crate::regex::{Match, Regex};
 use crate::search::{SearchFlags, Start, searchit};
 use std::fs;
@@ -396,8 +397,12 @@ impl Editor {
                 range.line2
             };
             self.info(l.to_string());
-        } else if abbrev(n, "set", 2) || abbrev(n, "setlocal", 6) {
-            self.ex_set(arg_trim)?;
+        } else if abbrev(n, "set", 2) {
+            self.ex_set(arg_trim, Target::Both)?;
+        } else if abbrev(n, "setlocal", 4) {
+            self.ex_set(arg_trim, Target::Local)?;
+        } else if abbrev(n, "setglobal", 4) {
+            self.ex_set(arg_trim, Target::Global)?;
         } else if abbrev(n, "silent", 3) {
             return self.execute_one(p.arg);
         } else {
@@ -658,7 +663,7 @@ impl Editor {
         let fl = SearchFlags {
             start: false,
             end: false,
-            wrapscan: self.opts.wrapscan(),
+            wrapscan: self.eff().wrapscan(),
         };
         match searchit(self.buf(), &re, Start::At(start), fwd, 1, &fl) {
             Some(f) => Ok(f.pos.line + 1),
@@ -1154,19 +1159,21 @@ impl Editor {
         Ok(())
     }
 
-    // ---- :set -----------------------------------------------------------
+    // ---- :set, :setlocal, :setglobal -------------------------------------
 
-    fn ex_set(&mut self, arg: &str) -> ExRes<()> {
+    fn ex_set(&mut self, arg: &str, target: Target) -> ExRes<()> {
         for item in arg.split_whitespace() {
-            self.set_one(item)?;
+            self.set_one(item, target)?;
         }
         Ok(())
     }
 
-    /// One `:set` argument: `opt`, `noopt`, `invopt`, `opt!`, `opt?`, `opt&`,
-    /// `opt=val`, `opt:val`, `opt+=val`, `opt-=val`, `opt^=val`.
-    fn set_one(&mut self, item: &str) -> ExRes<()> {
-        use crate::options::{INERT, Options, Val, describe};
+    /// One argument of `:set`, `:setlocal` or `:setglobal`: `opt`, `noopt`,
+    /// `invopt`, `opt!`, `opt?`, `opt&`, `opt<`, `opt=val`, `opt:val`,
+    /// `opt+=val`, `opt-=val`, `opt^=val`. The target says which value a
+    /// change writes (`options.rs`).
+    fn set_one(&mut self, item: &str, target: Target) -> ExRes<()> {
+        use crate::options::{INERT, Options, TABLE, Val};
         let name_end = item
             .find(|c: char| !c.is_ascii_alphabetic())
             .unwrap_or(item.len());
@@ -1191,73 +1198,82 @@ impl Editor {
             }
         }
         let Some(i) = Options::find(name) else {
-            return Err(format!("E518: Unknown option: {name}"));
+            return Err(format!("E518: Unknown option: {item}"));
         };
         let bad = || format!("E474: Invalid argument: {item}");
-        let new = match self.opts.get(i).clone() {
-            Val::Bool(cur) => match (prefix, rest) {
-                ("no", "") => Val::Bool(false),
-                ("inv", "") | ("", "!") => Val::Bool(!cur),
-                ("", "") => Val::Bool(true),
-                ("", "?") => {
-                    let text = describe(i, self.opts.get(i));
-                    self.info(text);
-                    return Ok(());
-                }
-                ("", "&" | "&vim") => crate::options::TABLE[i].default.clone(),
+        let is_bool = matches!(TABLE[i].default, Val::Bool(_));
+        // `opt` alone shows a number; `noopt` for a number is an error.
+        if rest == "?" || (rest.is_empty() && !is_bool && prefix.is_empty()) {
+            let text = self.option_shown(i, target);
+            self.info(text);
+            return Ok(());
+        }
+        if rest == "<" {
+            self.reset_option(i, target);
+            return Ok(());
+        }
+        if is_bool {
+            let cur = matches!(self.option_base(i, target), Val::Bool(true));
+            let new = match (prefix, rest) {
+                ("no", "") => false,
+                ("inv", "") | ("", "!") => !cur,
+                ("", "") => true,
+                ("", "&" | "&vim") => match TABLE[i].default {
+                    Val::Bool(d) => d,
+                    _ => false,
+                },
                 _ => return Err(bad()),
-            },
-            Val::Num(cur) => {
-                if !prefix.is_empty() {
-                    return Err(bad());
-                }
-                let (op, val) = if let Some(v) = rest.strip_prefix("+=") {
-                    ('+', v)
-                } else if let Some(v) = rest.strip_prefix("-=") {
-                    ('-', v)
-                } else if let Some(v) = rest.strip_prefix("^=") {
-                    ('^', v)
-                } else if let Some(v) = rest.strip_prefix(['=', ':']) {
-                    ('=', v)
-                } else if rest.is_empty() || rest == "?" {
-                    let text = describe(i, self.opts.get(i));
-                    self.info(text);
-                    return Ok(());
-                } else if rest == "&" || rest == "&vim" {
-                    ('&', "")
-                } else {
-                    return Err(bad());
-                };
-                let n = if op == '&' {
-                    match crate::options::TABLE[i].default {
-                        Val::Num(d) => d,
-                        _ => 0,
-                    }
-                } else {
-                    let v: i64 = val
-                        .parse()
-                        .map_err(|_| format!("E521: Number required after =: {item}"))?;
-                    match op {
-                        '+' => cur + v,
-                        '-' => cur - v,
-                        '^' => cur * v,
-                        _ => v,
-                    }
-                };
-                let def = &crate::options::TABLE[i];
-                if def.name == "tabstop" && n < 1 {
-                    // Vim falls back to the default instead of keeping the value.
-                    self.opts.set(i, Val::Num(8));
-                    return Err(format!("E487: Argument must be positive: {item}"));
-                }
-                // 'softtabstop' may be negative (use 'shiftwidth').
-                if n < 0 && def.name != "softtabstop" {
-                    return Err(format!("E487: Argument must be positive: {item}"));
-                }
-                Val::Num(n)
+            };
+            self.write_option(i, target, Val::Bool(new));
+            return Ok(());
+        }
+        if !prefix.is_empty() {
+            return Err(bad());
+        }
+        let Val::Num(cur) = self.option_base(i, target) else {
+            return Err(bad());
+        };
+        let (op, val) = if let Some(v) = rest.strip_prefix("+=") {
+            ('+', v)
+        } else if let Some(v) = rest.strip_prefix("-=") {
+            ('-', v)
+        } else if let Some(v) = rest.strip_prefix("^=") {
+            ('^', v)
+        } else if let Some(v) = rest.strip_prefix(['=', ':']) {
+            ('=', v)
+        } else if rest == "&" || rest == "&vim" {
+            ('&', "")
+        } else {
+            return Err(bad());
+        };
+        let n = if op == '&' {
+            match TABLE[i].default {
+                Val::Num(d) => d,
+                _ => 0,
+            }
+        } else {
+            let v: i64 = val
+                .parse()
+                .map_err(|_| format!("E521: Number required after =: {item}"))?;
+            match op {
+                '+' => cur + v,
+                '-' => cur - v,
+                '^' => cur * v,
+                _ => v,
             }
         };
-        self.opts.set(i, new);
+        let def_name = TABLE[i].name;
+        if def_name == "tabstop" && n < 1 {
+            // Vim falls back to the default instead of keeping the value.
+            self.write_option(i, target, Val::Num(8));
+            return Err(format!("E487: Argument must be positive: {item}"));
+        }
+        // 'softtabstop' and 'scrolloff' may be negative (Vim accepts them);
+        // a negative 'softtabstop' means 'shiftwidth'.
+        if n < 0 && !matches!(def_name, "softtabstop" | "scrolloff") {
+            return Err(format!("E487: Argument must be positive: {item}"));
+        }
+        self.write_option(i, target, Val::Num(n));
         Ok(())
     }
 
@@ -1768,7 +1784,7 @@ impl Editor {
             line: lnum as i64 + 1,
             col: col as i64,
             last_line: self.buf().line_count() as i64,
-            ignorecase: self.opts.ignorecase(),
+            ignorecase: self.eff().ignorecase(),
         };
         crate::expr::eval_text(&expr.iter().collect::<String>(), &env)
     }
@@ -2046,7 +2062,16 @@ fn is_known_long(name: &str) -> bool {
             | "versi"
             | "versio"
             | "setlocal"
+            | "setloca"
+            | "setloc"
+            | "setlo"
             | "setl"
+            | "setglobal"
+            | "setgloba"
+            | "setglob"
+            | "setglo"
+            | "setgl"
+            | "setg"
             | "vg"
             | "gl"
             | "glo"

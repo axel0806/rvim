@@ -8,6 +8,7 @@
 use crate::buffer::Buffer;
 use crate::editor::LastVisual;
 use crate::motion::Pos;
+use crate::options::{Local, Options};
 use crate::undo::UndoTree;
 
 /// The line `U` restores (Vim's `b_u_line_*`).
@@ -36,10 +37,18 @@ pub(crate) struct Document {
     /// `b_op_start` and `b_op_end`).
     pub(crate) op_start: Pos,
     pub(crate) op_end: Pos,
+    /// The buffer-local option values (`'autoindent'`, `'shiftwidth'`, ...).
+    /// A new document copies the global values, see `options.rs`.
+    pub(crate) local: Local,
 }
 
 impl Document {
-    pub(crate) fn new(buf: Buffer) -> Self {
+    /// A document for `buf`, with buffer-local options copied from `opts`.
+    pub(crate) fn new(buf: Buffer, opts: &Options) -> Self {
+        Self::with_local(buf, Local::new(opts))
+    }
+
+    fn with_local(buf: Buffer, local: Local) -> Self {
         let undo = UndoTree::new(buf.snapshot());
         Self {
             buf,
@@ -49,6 +58,7 @@ impl Document {
             version_base: 0,
             op_start: Pos::default(),
             op_end: Pos::default(),
+            local,
         }
     }
 
@@ -66,14 +76,15 @@ impl Document {
     /// counting up, so a result for the old text is never taken as current.
     pub(crate) fn reload(&mut self, buf: Buffer) {
         let version_base = self.version() + 1;
-        // The `'[` and `']` marks survive a reload, as they did when they
-        // were kept in the editor.
+        // The `'[` and `']` marks and the buffer-local options survive a
+        // reload, as they did when they were kept in the editor.
         let (op_start, op_end) = (self.op_start, self.op_end);
+        let local = self.local.clone();
         *self = Self {
             version_base,
             op_start,
             op_end,
-            ..Self::new(buf)
+            ..Self::with_local(buf, local)
         };
     }
 }

@@ -43,7 +43,7 @@ Prebuilt binaries for Windows, Linux and macOS are attached to the
 - Search: `/ ? n N * # g* g# gn gN` with offsets and `;`, on a Vim-compatible regex
   engine (`\v \m \M \V`, `\{}`, look-around, `\zs`, `\_x`, collections, ...).
 - Ex commands: ranges (`%`, `.`, `$`, `'<,'>`, `'a`, `/pat/`, `;`, offsets), `:d :y
-  :pu :m :t :j :> :< :k :mark :s :g :v :normal :undo :redo :set :r :w :q :wq :x :e`.
+  :pu :m :t :j :> :< :k :mark :s :g :v :normal :undo :redo :set :setl :setg :r :w :q :wq :x :e`.
 - Lowercase marks `a`-`z` (`m{a-z}`, `'a`, `` `a ``).
 - Jumplist and context mark: `<C-o>` and `<Tab>` with counts, `''`, `` `` ``,
   `m'`, `` m` ``, and `:jumps` (a one-line message). `G`, `gg`, `/`, `?`, `n`,
@@ -77,17 +77,22 @@ use:
   completion.
 - No syntax highlighting, `hlsearch`, `incsearch`, or line numbers. The
   Visual area is drawn (reverse video).
-- Few options. `:set` supports `ignorecase`, `smartcase`, `wrapscan`,
-  `autoindent`, `expandtab`, `shiftwidth`, `tabstop`, `softtabstop`,
-  `smarttab` and `shiftround`, and stores `hlsearch`, `incsearch`, `number`,
-  `relativenumber`, `wrap` and `autoread` without using them yet
-  (`scrolloff` works). Tab handling is Vim's for the common cases, but some
+- Few options. `:set`, `:setlocal` and `:setglobal` (`:setl`, `:setg`) support
+  `ignorecase`, `smartcase`, `wrapscan`, `autoindent`, `expandtab`,
+  `shiftwidth`, `tabstop`, `softtabstop`, `smarttab`, `shiftround` and
+  `scrolloff`, and store `hlsearch`, `incsearch`, `number`, `relativenumber`,
+  `wrap` and `autoread` without using them yet. Each option has Vim's scope:
+  `autoindent`, `expandtab`, `shiftwidth`, `tabstop` and `softtabstop` are
+  buffer-local, `scrolloff` and `autoread` are global-local, `number`,
+  `relativenumber` and `wrap` are window-local, the rest are global. Tab
+  handling is Vim's for the common cases, but some
   combinations with `softtabstop` and `tabstop` 2 or 4, Replace-mode Tab with
   `softtabstop`, and block `<` or block put with tabs still differ from Vim
   (see PLAN.md, "Known differences"). `smartindent` does not exist, and
   `backspace=indent,eol,start`, `whichwrap=b,s` and `startofline` are
-  fixed. Options are global: `:setglobal` does not exist, and `:setlocal` is only an
-  alias for `:set`.
+  fixed. `:setglobal` leaves the current buffer's and window's local values
+  alone; `:setlocal opt<` and `:set opt<` are supported, and `:setglobal opt<`
+  does nothing, as in Vim.
 - No config file (`vimrc`), plugins, Vimscript, `:help`, folds, completion,
   spell checking, `:terminal`, or `:!` shell commands.
 - `:s`: `\=` expressions are a subset (no floats, dictionaries, user functions
