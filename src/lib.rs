@@ -3,6 +3,7 @@
 //! dependency; `main.rs` is the crossterm front end.
 
 pub mod acp;
+pub mod agent_detect;
 pub mod buffer;
 pub mod cli;
 mod cmdline;

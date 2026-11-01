@@ -7,8 +7,8 @@ a real Vim by the differential harness in `tests/common/mod.rs`.
 
 ## Status: read this first
 
-Last updated 2026-11-01 (milestone 7 step 5a: the ACP connector core in `src/acp.rs`, pure with no process or UI: newline-delimited JSON-RPC framing with an 8 MiB line cap, typed ACP v1 messages, and the `Conn` session state machine driven by a fake clock; recorded transcripts in `tests/fixtures/acp/` replayed by `tests/acp_connector.rs`; `serde` and `serde_json` added, see "ACP connector core" and "Dependency choices"; the modified-Vim notice on the message line is the short `NOTICE_SHORT` (39 characters, fits 80 columns) for the intro and `:version`, with the config note `[N config warnings]`; the full `VERSION_MESSAGE` stays in `--version` and the start menu; see "Licensing" and "Known differences"; milestone 6 config file loader: `config.toml` read once at startup, `[options]`, `[start] menu`, raw `[agent]`, `-u NONE`, `--clean`, `-N`, `:ConfigWarnings`; see "Config" under "Editing experience"; the non-file marks: `'[` `']` `'<` `'>` `'"` as motions, operator targets and Ex addresses, `m[ m] m< m>`, the `'[`/`']` marks set by each command, `:marks` and `:delmarks`; milestone 7 step 2b: the file watcher thread (`src/watch.rs`) with the option `filewatch`, off by default: `FileChanged`, `FileDeleted` and `FileTooLarge` events, echo suppression by hash, reads capped at 64 MiB, one decision shared with `:checktime` (`Editor::check_disk`), and the change applied in Normal mode only; milestone 7 step 2b: the file watcher thread (`src/watch.rs`) with the option `filewatch`, off by default, echo suppression by hash, reads capped at 64 MiB; milestone 7 step 2a: undo steps record their source, the disk state per document with a hash, `:checktime`, and the reload of an unmodified buffer as one undo step with cursor and scroll mapping; milestone 4 option scopes: `:setlocal` and `:setglobal`, buffer-local, window-local and global-local values, see "Options registry"; Document/Window/Editor split steps 1 to 3 of milestone 4 (ids, collections, accessors, version counter, marks, `buf_mut()`, window size); CI first ran on GitHub; Linux builds Vim 9.1.1914 from source, and all three OS jobs require Vim; cell-level diff redraw in `redraw.rs`, with its escape sequences tested in `main.rs`; kitty keyboard protocol, with `RVIM_NO_KITTY=1` to turn it off and no support query when `TERM` is unset, empty or `dumb`; SIGHUP/SIGTERM recovery on Unix, milestone 4; Makefile packaging targets `install` with `PREFIX`/`DESTDIR`, `uninstall` and `dist`). **rvim is an alpha, roughly 25-30% of this plan.**
-As of 2026-11-01 milestones 1-3 are done; 4 and 5 are partly done; 6 has the start menu and the config loader; 7 has its file reload and file watcher (2a, 2b) and the ACP protocol core (5a), 8-9 are plans.
+Last updated 2026-11-01 (milestone 7 step 4a: the agent registry and the read-only detection core in `src/agent_detect.rs`, with the registry checked against the agents' own docs and the ACP registry, see "Detecting and connecting to agents"; milestone 7 step 5a: the ACP connector core in `src/acp.rs`, pure with no process or UI: newline-delimited JSON-RPC framing with an 8 MiB line cap, typed ACP v1 messages, and the `Conn` session state machine driven by a fake clock; recorded transcripts in `tests/fixtures/acp/` replayed by `tests/acp_connector.rs`; `serde` and `serde_json` added, see "ACP connector core" and "Dependency choices"; the modified-Vim notice on the message line is the short `NOTICE_SHORT` (39 characters, fits 80 columns) for the intro and `:version`, with the config note `[N config warnings]`; the full `VERSION_MESSAGE` stays in `--version` and the start menu; see "Licensing" and "Known differences"; milestone 6 config file loader: `config.toml` read once at startup, `[options]`, `[start] menu`, raw `[agent]`, `-u NONE`, `--clean`, `-N`, `:ConfigWarnings`; see "Config" under "Editing experience"; the non-file marks: `'[` `']` `'<` `'>` `'"` as motions, operator targets and Ex addresses, `m[ m] m< m>`, the `'[`/`']` marks set by each command, `:marks` and `:delmarks`; milestone 7 step 2b: the file watcher thread (`src/watch.rs`) with the option `filewatch`, off by default: `FileChanged`, `FileDeleted` and `FileTooLarge` events, echo suppression by hash, reads capped at 64 MiB, one decision shared with `:checktime` (`Editor::check_disk`), and the change applied in Normal mode only; milestone 7 step 2b: the file watcher thread (`src/watch.rs`) with the option `filewatch`, off by default, echo suppression by hash, reads capped at 64 MiB; milestone 7 step 2a: undo steps record their source, the disk state per document with a hash, `:checktime`, and the reload of an unmodified buffer as one undo step with cursor and scroll mapping; milestone 4 option scopes: `:setlocal` and `:setglobal`, buffer-local, window-local and global-local values, see "Options registry"; Document/Window/Editor split steps 1 to 3 of milestone 4 (ids, collections, accessors, version counter, marks, `buf_mut()`, window size); CI first ran on GitHub; Linux builds Vim 9.1.1914 from source, and all three OS jobs require Vim; cell-level diff redraw in `redraw.rs`, with its escape sequences tested in `main.rs`; kitty keyboard protocol, with `RVIM_NO_KITTY=1` to turn it off and no support query when `TERM` is unset, empty or `dumb`; SIGHUP/SIGTERM recovery on Unix, milestone 4; Makefile packaging targets `install` with `PREFIX`/`DESTDIR`, `uninstall` and `dist`). **rvim is an alpha, roughly 25-30% of this plan.**
+As of 2026-11-01 milestones 1-3 are done; 4 and 5 are partly done; 6 has the start menu and the config loader; 7 has its file reload and file watcher (2a, 2b) and the ACP protocol core (5a) and agent detection (4a), 8-9 are plans.
 Released as `v0.1.0-alpha.1`, `v0.1.0-alpha.2` and `v0.1.0-alpha.3`. The next release is `v0.1.0-alpha.4`, not yet tagged. All tests pass against Vim 9.1 and clippy/fmt are
 clean at the last commit.
 
@@ -19,7 +19,7 @@ clean at the last commit.
 | 4 Foundation | 100%. The Document/Window/Editor split: steps 1 to 3 done (one document and one window, with `DocId`/`WinId` collections and window size from the screen; see "Foundation"). Option scopes done: `:setlocal`, `:setglobal`, buffer-, window- and global-local values (see "Options registry"). Foundation is complete; the rest is milestone 5 (layout and splits, several documents and windows in use) |
 | 5 Windows and buffers | ~30%. Done: macros (`q`, `@`, `@@`, `@:`), lowercase marks (`m{a-z}`, `'a`, `` `a ``, `:k`, `:mark`, `'a` addresses), the other marks (`'[` `']` `` `[ `] `` as motions, operator targets and Ex addresses, set by yank, delete, change, insert, put, shifts, `J`, `~` `g~` `gu` `gU`, `:s`, `:d`, `:m`, `:t`, `:pu`, undo and redo; `'<` `'>` and `'"`; `m[ m] m< m>`; `:marks`, `:delmarks`; `src/marks.rs`), the jumplist (`<C-o>`, `<Tab>` with counts, `:jumps`) and the context mark (`''`, `` `` ``, `m'`, `` m` ``), scrolling (`<C-e> <C-y> <C-f> <C-b> <C-d> <C-u> zt zz zb z<CR> z. z- H M L`, counts, `scrolloff`, wrapped lines). Left: splits, buffer list, uppercase (file) marks, swap files |
 | 6 Modern editing experience | Started, not near done. Landed: the start menu (opt-in `--start-menu`, `startmenu` option); the config file loader (`config.toml`: `[options]`, `[start] menu`, `[agent]` kept raw; `-u NONE`, `--clean`; `:ConfigWarnings`; see "Config"). Left: hlsearch, incsearch, syntax, line numbers, palette, mouse, `:Start`, the start menu's recent files, Config and agent entries, its modern-profile default (see "Start menu"), and the config's `[profile]`, mappings and theme |
-| 7 Agent integration | ~15%. Step 5a done (2026-11-01): the ACP protocol core, pure (`src/acp.rs`, see "ACP connector core"). Step 2a done (2026-11-01): undo steps record their source (`UndoSource`), the disk state per document (`DiskState`, FNV-1a hash, mtime and size, taken by `:e`, `:w` and `:checktime`), `:checktime` with W11, W12, W13 and E211, and a changed file reloaded when unmodified and `autoread` is on, as one undo step tagged `external` with the cursor and scroll mapped (`src/reload.rs`, `Editor::apply_external_change`). Step 2b done (2026-11-01): the file watcher thread (`src/watch.rs`, option `filewatch`, off by default; `FileChanged`, `FileDeleted` and `FileTooLarge` events, echo suppression by hash, reads capped at 64 MiB, see "Files changed under rvim"). Step 2 is complete; the conflict prompt is step 3. The connector's process, consent, approvals and `:Agent` commands (step 5b) are not started. Not started: the diff view, agent detection (research is in "Detecting and connecting to agents") |
+| 7 Agent integration | ~15%. Step 4a done (2026-11-01): the agent registry and the read-only detection core (`src/agent_detect.rs`, see "Detecting and connecting to agents"); 4b (`:AgentScan`, the status indicator, the opt-in config table) is left. Step 5a done (2026-11-01): the ACP protocol core, pure (`src/acp.rs`, see "ACP connector core"). Step 2a done (2026-11-01): undo steps record their source (`UndoSource`), the disk state per document (`DiskState`, FNV-1a hash, mtime and size, taken by `:e`, `:w` and `:checktime`), `:checktime` with W11, W12, W13 and E211, and a changed file reloaded when unmodified and `autoread` is on, as one undo step tagged `external` with the cursor and scroll mapped (`src/reload.rs`, `Editor::apply_external_change`). Step 2b done (2026-11-01): the file watcher thread (`src/watch.rs`, option `filewatch`, off by default; `FileChanged`, `FileDeleted` and `FileTooLarge` events, echo suppression by hash, reads capped at 64 MiB, see "Files changed under rvim"). Step 2 is complete; the conflict prompt is step 3. The connector's process, consent, approvals and `:Agent` commands (step 5b) are not started. Not started: the diff view. |
 | 8 Prediction | 0%. Not started |
 | 9 Extras | 0%. Not started |
 
@@ -53,7 +53,7 @@ this, `--help` opened a buffer named `--help`.
 **In progress** (as of 2026-11-01; maintained by the orchestrator, and an
 entry is removed when its branch lands on main):
 
-- Agent integration, step 4a: read-only agent detection core behind `:AgentScan` (milestone 7; new `agent_detect.rs`)
+- Agent integration, step 4b: `:AgentScan`, the status indicator and the opt-in config table (milestone 7; the detection core is in `agent_detect.rs`)
 
 **Suggested order for what is left:** (1) Document/Window split, (2) splits +
 buffers + scrolling, (3) milestone 7, in the step order of "Agent experience:
@@ -721,6 +721,63 @@ not in the registry; it is only the model for how rvim should connect.
   | Kimi Code | `kimi`; new CLI `kimi-code` (config `~/.kimi-code`, `KIMI_CODE_HOME`); legacy `kimi-cli` (config `~/.kimi`, archived September 2026) | Native ACP: `kimi acp` (user must `/login` first) | Windows needs Git for Windows. `kimi -p` is headless but auto-approves tool calls (opt-in only). `kimi web` is a local server on 127.0.0.1:58627 (API UNVERIFIED). Detect both config directories. |
   | Others via the ACP registry | per entry | ACP | An ACP agent registry exists (`https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json`, about 58 agents including Gemini CLI `gemini --acp`, Goose, OpenCode, Qwen Code, Copilot CLI). Detection can read it, so new agents need no code. |
 
+- **Verification, 2026-11-01 (step 4a; the registry in `src/agent_detect.rs` follows it).**
+  The sources were read with a web fetch, official docs and the ACP registry only:
+  - Claude Code setup, `https://code.claude.com/docs/en/setup` (the `docs.anthropic.com`
+    address redirects there). Confirmed: the executable `claude`; the native
+    install in `~/.local/bin/claude` and `%USERPROFILE%\.local\bin\claude.exe`;
+    the config in `~/.claude` and `~/.claude.json`. Not on the page, so not
+    verified: `CLAUDE_CONFIG_DIR`, `~/.claude/local` and `%APPDATA%
+pm`
+    (kept as probes, marked `verified: false`).
+  - Cursor CLI, `https://cursor.com/docs/cli/overview` and `https://cursor.com/docs/cli/acp`.
+    Confirmed: the executable `agent`; install by `curl https://cursor.com/install`
+    or `irm 'https://cursor.com/install?win32=true' | iex`; `agent acp` with
+    newline-delimited JSON-RPC on stdio; auth method `cursor_login` (`agent login`,
+    `CURSOR_API_KEY`, `CURSOR_AUTH_TOKEN`); blocking extension methods
+    `cursor/ask_question` and `cursor/create_plan`; notifications `cursor/update_todos`,
+    `cursor/task` and `cursor/generate_image`. Not verified: `cursor-agent` as a
+    PATH name, and the Unix install location `~/.local/bin/agent` (the page gives neither).
+  - Codex CLI, `https://learn.chatgpt.com/docs/codex/cli` (the `developers.openai.com`
+    address redirects there). Confirmed: the executable `codex`; `codex exec`
+    for scripts; an app server exists, with no launch command given. Not verified:
+    `~/.codex` and `CODEX_HOME` (the page does not name a config directory), and
+    the app-server launch command.
+  - Kimi Code CLI, `http://www.kimi.com/code/docs/en/kimi-code-cli/guides/getting-started`
+    (redirected from the older `kimi.com/code/docs/en/kimi-cli` address) and
+    `https://github.com/MoonshotAI/kimi-cli`, which was archived 2026-09-23.
+    Confirmed: the executable `kimi`; install from `code.kimi.com/kimi-code/install.sh`
+    and `install.ps1` or `npm install -g @moonshot-ai/kimi-code`; the config in
+    `~/.kimi-code/` or under `KIMI_CODE_HOME`; the legacy `~/.kimi`, which the
+    kimi-cli migration reads; `kimi acp`; login by `/login` in the UI.
+    Correction: `kimi-code` is the npm package, not the executable. Not verified:
+    whether `kimi -p` auto-approves (it is not used), and the installer location
+    (no install directory is probed).
+  - ACP registry, `https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json`
+    (version 1.0.0, 43 entries), and `https://agentclientprotocol.com/get-started/agents`.
+    `claude-acp` is `@agentclientprotocol/claude-agent-acp@0.99.1`; `codex-acp` is
+    `@agentclientprotocol/codex-acp@2.5.0`; `kimi` runs `kimi acp`; `cursor` runs
+    `cursor-agent acp` from its package (a package path, not a PATH name); `gemini`
+    runs `@google/gemini-cli@0.66.0 --acp`. Correction: the `@zed-industries`
+    adapter names in the table above are the older names.
+
+  The registry as built (`AGENTS` in `src/agent_detect.rs`; V = verified, U = unverified):
+
+  | id | Executable names | Install dirs probed | Config dirs probed | Protocols | ACP command |
+  |---|---|---|---|---|---|
+  | `claude` | `claude` (V) | `~/.local/bin` (V); `~/.claude/local` (U); `%APPDATA%
+pm` (U) | `~/.claude` (V), `~/.claude.json` (V), `CLAUDE_CONFIG_DIR` (U) | acp-adapter (V); claude-ide (U); files-only | `npx @agentclientprotocol/claude-agent-acp@0.99.1` |
+  | `codex` | `codex` (V) | `%APPDATA%
+pm` (U) | `~/.codex` (U), `CODEX_HOME` (U) | acp-adapter (V); files-only | `npx @agentclientprotocol/codex-acp@2.5.0` |
+  | `cursor` | `agent` (V, path must contain "cursor"); `cursor-agent` (U, same rule) | `~/.local/bin` on Unix (U) | none known | acp (V); files-only | `agent acp` (V) |
+  | `kimi` | `kimi` (V) | none (installer location not stated) | `KIMI_CODE_HOME` (V), `~/.kimi-code` (V), `~/.kimi` (V, legacy) | acp (V); files-only | `kimi acp` (V) |
+
+  Still UNVERIFIED after this check: the Claude Code IDE protocol (lock file,
+  WebSocket, tool names, which come from a third-party write-up; checked against a
+  real install in step 8), the Codex config directory and app-server command,
+  `cursor-agent` as a PATH name, the Cursor and Kimi install locations, and whether
+  `kimi -p` auto-approves. Others in the ACP registry (about 40 more entries) are
+  not in the static table; reading the registry at run time is a later step.
 - **ACP is the first connector.** Every agent above except Claude Code's IDE
   mode can be reached over ACP, so one connector covers most of the list.
   What an ACP client (rvim) has to do, from the protocol docs
@@ -1432,7 +1489,7 @@ needs no splits. Splits gate step 7 alone.
 | 1 | Document/Window split (milestone 4, item (a)) | none | Existing compat suite unchanged. Unit: two windows on one document share undo and marks, keep their own cursors |
 | 2 | **2a done (2026-11-01):** undo step source and hash, `checktime`, `autoread`, reload as one undo step with cursor and scroll mapping (`reload.rs`, `Editor::apply_external_change`), echo suppression by hash and by the stat taken after `:w`. **2b done (2026-11-01):** file watcher (`src/watch.rs`: worker thread, stat polling every 750 ms, `WatchSet` and `poll` pure over a `FileSystem` trait), `FileChanged`, `FileDeleted` and `FileTooLarge` events, echo suppression by hash, the watched set sent by `Editor::take_watch_commands` (empty unless `filewatch` is on), resync when an event is dropped, and the option `filewatch`. Step 2 is complete | 1 (per-document version) | Unit: mapping table (equal, inserted above, deleted under cursor, replaced, deleted top line); `u` and `<C-r>` after reload. Scripted watcher with fake clock and fake file contents. Echo: a `:w` does not reload itself. Differential: `autoread` value and `:checktime` with no change. Add the cursor-placement difference to "Known differences" |
 | 3 | Conflict prompt (`l k d m`) with the opt-in, baseline (`[base]` scratch) and gutter, `:w` W11/W12 guard, deleted file, `:AgentChanges`, merge with markers (marker refusal of `:w` with the opt-in only) | 2 | Unit: each conflict key on a fixed state; merge (clean, conflicting, identical); Frame golden of the gutter and of the prompt line. With no opt-in: a modified buffer is not reloaded and `:w` gives W11. No differential (messages) |
-| 4 | Opt-in config table, registry, detection, `:AgentScan`, status-line states without connection | minimal config loader (shared with milestone 6), options | Detection with a temporary fake home and `PATH`: found, not found, found under the config dir only. Frame golden for each indicator. Golden with no opt-in and no Agent command: no indicator, identical to Vim's frame. Golden after `:AgentScan` with no opt-in: indicator shown |
+| 4 | **4a done (2026-11-01): the registry and the detection core (`src/agent_detect.rs`; tests in `tests/agent_detect.rs`). 4b left:** opt-in config table, `:AgentScan`, status-line states without connection | minimal config loader (shared with milestone 6), options | Detection with a temporary fake home and `PATH`: found, not found, found under the config dir only. Frame golden for each indicator. Golden with no opt-in and no Agent command: no indicator, identical to Vim's frame. Golden after `:AgentScan` with no opt-in: indicator shown |
 | 5 | **5a done (2026-11-01): the pure protocol core, see "ACP connector core". 5b, the connector itself, is left.** ACP connector: consent, approval store, `:Agent`, `:AgentConnect`, `:AgentUse`, `:AgentCancel`, `:AgentDisconnect`, agent log document, `\a` and `\al`, lifecycle and backoff, `Editor::prediction_allowed` (returns false) | 4 | Fake agent (test helper binary) replays recorded JSON-RPC transcripts both ways: success, auth failure, reply timeout, EOF mid-turn, malformed line. Pure transition table test. Fake timer for backoff. Approval store round trip and unreadable file. Consent keys. `:AgentUse` with two fake agents: listing, switching, and the choice prompt when several are found and none is active. Cases: `:Agent` without opt-in still works, keys stay unbound |
 | 6 | Permissions and served file calls: queue, prompt keys, session grants, `:AgentForget`, `:AgentGrants`, write intent and the tagging rule, `AgentWritten`, `fs/*` limited to shareable paths | 5, 3 | Transcripts with a permission queue of two; never-answered-without-key test (no reply sent until a key); a session grant (`a`) answers the next matching request of that kind and scope only, and nothing is written to `agent-approvals.toml`; forget removes it; cancel answers as cancelled; a served write is applied once, tagged `agent:<id>`, and the watcher's later event for the same hash is ignored; `fs/read_text_file` returns unsaved text; a path outside shareable gets an error |
 | 7 | Splits-dependent UI: agent log split, side-by-side diff view, `:AgentChanges` jump, terminal pane (PTY) with its gating, `<C-\><C-n>` routing | milestone 5 splits, buffer list, PTY | Frame goldens with a split, status and agent log. Differential, scratch buffers with `:diffthis`: `]c [c do dp` on the same text in Vim and rvim (UNVERIFIED that the harness can drive two diff buffers; check first). Desired column, as CLAUDE.md requires: `lllljXj`-style cases for `]c`, `[c`, `dp`, `do` and the `<CR>` jump of `:AgentChanges`, each stating the column the command leaves and the column after a following `j`; expected values from Vim where the harness can express the case, otherwise from the CLAUDE.md rule and marked so. Terminal: key routing test with a fake child that echoes; no child is spawned without approval |
@@ -2208,6 +2265,19 @@ plan, kept for the record; the files are the source of truth.
   ruler on narrow terminals: the file-info message and `:ConfigWarnings`
   (the list of warnings, joined with ` | `); a long file name can push the
   file-info message past the cut too.
+- Agent detection (step 4a, `src/agent_detect.rs`; not Vim behaviour, recorded
+  here so the later steps keep them): `Found` has no `version` yet (the
+  package-manifest read is a later step, and the binary is never run). Registry
+  ids are per CLI (`claude`, `codex`, `cursor`, `kimi`), while the approval
+  example in "Agent experience" uses per-connection ids (`claude-acp`,
+  `claude-ide`); the split is decided with the connector (step 5), and approvals
+  will map to it. A config directory without an executable is reported as not
+  found with a config note; the `Found` state of the status line (which covers
+  it) is step 4b. Detection searches only absolute `PATH` entries (a relative
+  one gives a warning), stops after 256 `PATH` entries and 4096 probes with a
+  warning, and treats Cursor's generic `agent` as Cursor's only when "cursor" is
+  in its path or in the path it resolves to. The scan is synchronous; it runs on
+  the worker once `:AgentScan` lands.
 - Emoji use approximate block ranges instead of Vim's full `emoji_all` table
   for word motions; composing characters are separate characters.
 - Option scopes (`options.rs`, "Options registry" in this file) follow Vim
