@@ -1248,7 +1248,7 @@ impl Editor {
     pub(crate) fn edit_file(&mut self, path: &Path) {
         match Buffer::load(path) {
             Ok((buf, stats)) => {
-                *self.doc_mut() = Document::new(buf);
+                self.doc_mut().reload(buf);
                 self.win_mut().cursor = Pos::default();
                 self.win_mut().curswant = 0;
                 self.win_mut().keep_curswant = false;
