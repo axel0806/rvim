@@ -344,6 +344,10 @@ impl Editor {
                 return Err("E37: No write since last change (add ! to override)".into());
             }
             self.quit = true;
+        } else if n == "ConfigWarnings" {
+            // rvim only (capital letter, as CLAUDE.md asks): the problems
+            // the config file had at startup.
+            self.show_config_warnings();
         } else if abbrev(n, "version", 2) {
             self.info(crate::VERSION_MESSAGE);
         } else if abbrev(n, "edit", 1) {

@@ -187,6 +187,9 @@ pub struct Editor {
     pub(crate) cmd_paste: Option<crate::cmdline::PasteState>,
     /// The start menu, while it is shown (see startmenu.rs).
     pub(crate) start_menu: Option<crate::startmenu::StartMenu>,
+    /// Problems found in the config file at startup (see `config.rs`), for
+    /// `:ConfigWarnings`.
+    pub(crate) config_warnings: Vec<String>,
     pub(crate) message: Option<Message>,
     pub(crate) quit: bool,
     bell: bool,
@@ -259,6 +262,7 @@ impl Editor {
             hist_prefix: String::new(),
             cmd_paste: None,
             start_menu: None,
+            config_warnings: Vec::new(),
             message: None,
             quit: false,
             bell: false,

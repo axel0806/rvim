@@ -37,10 +37,11 @@ fn start_with_text(args: &[&str], xdg: &std::path::Path, text: &str) -> (Editor,
     let mut problems = config.warnings.clone();
     let mut ed = Editor::from_text(text);
     problems.extend(ed.apply_config(&config, inv.start_menu));
+    ed.set_config_warnings(problems.clone());
     if !ed.show_start_menu() {
         ed.show_intro();
     }
-    ed.show_config_warnings(&problems);
+    ed.show_config_notice();
     (ed, problems)
 }
 
@@ -106,9 +107,16 @@ fn a_syntax_error_names_the_line_and_keeps_the_defaults() {
     let (mut ed, problems) = start(&[], dir.path());
     assert_eq!(problems.len(), 1, "{problems:?}");
     assert!(problems[0].starts_with("config: line 3: "), "{problems:?}");
-    // The message line shows the problem (the intro message is replaced).
+    // The notice keeps the intro text and points at `:ConfigWarnings`.
     let shown = ed.message().expect("a message").text.clone();
-    assert!(shown.starts_with("config: line 3: "), "{shown}");
+    assert!(shown.starts_with(rvim::VERSION_MESSAGE), "{shown}");
+    assert!(
+        shown.ends_with("[config: 1 warning, see :ConfigWarnings]"),
+        "{shown}"
+    );
+    ed.feed(":ConfigWarnings<CR>");
+    let listed = ed.message().expect("a message").text.clone();
+    assert!(listed.starts_with("config: line 3: "), "{listed}");
     // Defaults: no shiftwidth change, so `>>` uses a tab.
     ed.feed(">>");
     assert_eq!(ed.buf().text(), "\tabc\n");
@@ -170,4 +178,111 @@ fn bad_u_value_is_a_usage_error() {
         cli::parse(["-u", "other.vim"].iter().map(OsString::from)),
         Action::Usage(_)
     ));
+}
+
+fn msg(ed: &Editor) -> String {
+    ed.message().map(|m| m.text.clone()).unwrap_or_default()
+}
+
+const NOTE: &str = "[config: 1 warning, see :ConfigWarnings]";
+
+#[test]
+fn the_modified_vim_notice_survives_config_warnings() {
+    let dir = tempfile::tempdir().unwrap();
+    write_config(dir.path(), "colour = 1\n");
+
+    // No start menu: the intro message keeps the notice, then the note.
+    let (ed, problems) = start(&[], dir.path());
+    assert_eq!(problems.len(), 1);
+    let shown = msg(&ed);
+    assert!(shown.starts_with(rvim::VERSION_MESSAGE), "{shown}");
+    assert!(shown.ends_with(NOTE), "{shown}");
+
+    // Start menu: the menu draws the notice in full; the message is the note.
+    let (ed, _) = start_with_text(&["--start-menu"], dir.path(), "");
+    assert!(ed.start_menu_shown());
+    assert_eq!(msg(&ed), NOTE);
+    let f = rvim::view::frame(&ed);
+    let text = f
+        .rows
+        .iter()
+        .map(|r| r.trim())
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(text.contains(rvim::VERSION_MESSAGE), "{text}");
+}
+
+#[test]
+fn no_config_problems_means_the_plain_intro_message() {
+    let dir = tempfile::tempdir().unwrap();
+    let (ed, problems) = start(&[], dir.path());
+    assert!(problems.is_empty());
+    assert_eq!(msg(&ed), rvim::VERSION_MESSAGE);
+}
+
+#[test]
+fn config_warnings_command_lists_the_problems() {
+    let dir = tempfile::tempdir().unwrap();
+    write_config(dir.path(), "colour = 1\n[options]\nbogus = 2\n");
+    let (mut ed, _) = start(&[], dir.path());
+    ed.feed(":ConfigWarnings<CR>");
+    let listed = msg(&ed);
+    assert_eq!(listed.matches(" | ").count(), 1, "{listed}");
+    assert!(listed.contains("unknown key \"colour\""), "{listed}");
+    assert!(listed.contains("unknown option \"bogus\""), "{listed}");
+
+    let dir = tempfile::tempdir().unwrap();
+    let (mut ed, _) = start(&[], dir.path());
+    ed.feed(":ConfigWarnings<CR>");
+    assert_eq!(msg(&ed), "No config warnings");
+}
+
+#[cfg(unix)]
+mod symlinks {
+    use super::*;
+    use std::os::unix::fs::symlink;
+
+    /// The config path is a symlink. Pinned: a symlink to a readable file is
+    /// followed (the file is read as if it were at the link's place); a
+    /// dangling symlink reads as a missing file, with no warning, because
+    /// the open reports NotFound; a symlink loop cannot be opened and gives
+    /// one warning.
+    #[test]
+    fn a_symlink_to_a_file_is_followed() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("elsewhere.toml");
+        fs::write(&real, "[options]\nshiftwidth = 2\nexpandtab = true\n").unwrap();
+        let link_dir = dir.path().join("rvim");
+        fs::create_dir_all(&link_dir).unwrap();
+        symlink(&real, link_dir.join("config.toml")).unwrap();
+
+        let (mut ed, problems) = start(&[], dir.path());
+        assert!(problems.is_empty(), "{problems:?}");
+        ed.feed(">>");
+        assert_eq!(ed.buf().text(), "  abc\n");
+    }
+
+    #[test]
+    fn a_dangling_symlink_is_a_missing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let link_dir = dir.path().join("rvim");
+        fs::create_dir_all(&link_dir).unwrap();
+        symlink(dir.path().join("gone.toml"), link_dir.join("config.toml")).unwrap();
+
+        let (ed, problems) = start(&[], dir.path());
+        assert!(problems.is_empty(), "{problems:?}");
+        assert_eq!(msg(&ed), rvim::VERSION_MESSAGE);
+    }
+
+    #[test]
+    fn a_symlink_loop_gives_one_warning() {
+        let dir = tempfile::tempdir().unwrap();
+        let link_dir = dir.path().join("rvim");
+        fs::create_dir_all(&link_dir).unwrap();
+        symlink(link_dir.join("config.toml"), link_dir.join("config.toml")).unwrap();
+
+        let (_, problems) = start(&[], dir.path());
+        assert_eq!(problems.len(), 1, "{problems:?}");
+        assert!(problems[0].contains("cannot be read"), "{problems:?}");
+    }
 }

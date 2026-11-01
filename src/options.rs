@@ -463,18 +463,44 @@ impl Editor {
             .collect()
     }
 
-    /// Shows the config's problems on the message line, as one line: the
-    /// first one, and how many more there are. Does nothing when there are
-    /// none. Call it after the intro message, so it takes the message line.
-    pub fn show_config_warnings(&mut self, warnings: &[String]) {
-        let Some((first, rest)) = warnings.split_first() else {
+    /// Keeps the config's problems for `:ConfigWarnings`. Call it before the
+    /// start menu or intro message is set, so that [`Self::show_config_notice`]
+    /// can add to them.
+    pub fn set_config_warnings(&mut self, warnings: Vec<String>) {
+        self.config_warnings = warnings;
+    }
+
+    /// Adds `[config: N warnings, see :ConfigWarnings]` to the startup message
+    /// when the config had problems. The message is the intro (the modified-
+    /// version notice, which the Vim license asks for) or the file's info
+    /// message; the note is appended, so the notice text is never replaced.
+    /// With the start menu shown there is no message, and the note is the
+    /// message. Does nothing when there are no problems.
+    pub fn show_config_notice(&mut self) {
+        let n = self.config_warnings.len();
+        if n == 0 {
             return;
-        };
-        let text = match rest.len() {
-            0 => first.clone(),
-            n => format!("{first} (+{n} more)"),
+        }
+        let note = format!(
+            "[config: {n} warning{}, see :ConfigWarnings]",
+            if n == 1 { "" } else { "s" }
+        );
+        let text = match self.message() {
+            Some(m) => format!("{} {note}", m.text),
+            None => note,
         };
         self.info(text);
+    }
+
+    /// `:ConfigWarnings`: every problem found in the config file at startup,
+    /// joined with ` | ` (as `:jumps` joins its items).
+    pub fn show_config_warnings(&mut self) {
+        if self.config_warnings.is_empty() {
+            self.info("No config warnings");
+        } else {
+            let text = self.config_warnings.join(" | ");
+            self.info(text);
+        }
     }
 }
 

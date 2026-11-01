@@ -55,10 +55,11 @@ fn main() -> io::Result<()> {
     };
     let mut problems = config.warnings.clone();
     problems.extend(ed.apply_config(&config, inv.start_menu));
+    ed.set_config_warnings(problems);
     if !ed.show_start_menu() {
         ed.show_intro();
     }
-    ed.show_config_warnings(&problems);
+    ed.show_config_notice();
 
     terminal::enable_raw_mode()?;
     execute!(io::stdout(), EnterAlternateScreen, EnableBracketedPaste)?;

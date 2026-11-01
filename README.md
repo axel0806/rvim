@@ -170,8 +170,9 @@ menu = true         # the start menu when no --start-menu/--no-start-menu flag i
 ```
 
 Problems never stop rvim: an unknown key or option, or a value of the wrong
-type, is skipped and reported on the message line, and the rest of the file
-still applies. A syntax error reports its line and leaves the defaults in
+type, is skipped and reported, and the rest of the file still applies. The
+start message then ends with `[config: N warnings, see :ConfigWarnings]`;
+`:ConfigWarnings` lists them all. A syntax error reports its line and leaves the defaults in
 place. Files over 256 KiB are not read. Not yet read: `[profile]` and `[lua]`
 (reserved, reported as not supported), mappings and themes. See
 [PLAN.md](PLAN.md) ("Config") for the full rules.

@@ -525,10 +525,18 @@ and two windows in one `Editor`, and the write, reset and query rules).
     `:set` does (global and local value, `Target::Both`), so a document made
     later copies them. Then `--start-menu` or `--no-start-menu`, when given,
     overrides `[start] menu`. The file is not watched or reloaded.
-  - Warnings: shown on the message line after startup, as the first warning
-    and `(+N more)`. They replace the intro message, as a file name's info
-    message does. The modified-version notice stays in `:version`, `--version`
-    and the start menu. A message history for all warnings is not built.
+  - Warnings: kept in the editor (`Editor::set_config_warnings`). The startup
+    message is the intro (the modified-version notice, which the Vim license
+    asks to keep in the intro screen) with `[config: N warnings, see
+    :ConfigWarnings]` appended, so the notice is never replaced. With the
+    start menu on, the menu draws the notice in full and the message line
+    shows only the note. A file given on the command line keeps its info
+    message and gets the note too. `:ConfigWarnings` (rvim only, capital
+    letter) lists every warning on the message line, joined with ` | `, or
+    says `No config warnings`. There is no general message history. On a
+    terminal narrower than about 80 columns the message line is cut at the
+    ruler, so the note may not show; the notice itself is cut there too,
+    which is an existing limit of the intro message, not added by this.
   - Flags: `-u NONE` and `--clean` skip the file. `-N` is accepted and does
     nothing (rvim is always Vim's `-N`). Any other `-u` value is a usage error
     (exit 2), since rvim reads no other vimrc. `--config <file>` is not added:
@@ -1744,7 +1752,7 @@ possibly the ACP crate (check).
 | ACP | `agent-client-protocol` 3.6.0 | See above; footprint unchecked |
 | Lua (milestone 9) | `mlua` (version UNVERIFIED) with Lua 5.4 `vendored` (UNVERIFIED); LuaJIT is the alternative | See "Lua extensions". Lua runs on one worker thread, so the `send` feature (UNVERIFIED) is not needed; footprint and build time to be measured |
 | LSP (milestone 9) | JSON-RPC framing written in rvim, sharing code with the agent connectors; `lsp-types` optional (version UNVERIFIED) | See "Neovim-inspired features". Blocking I/O on a worker, as for agents |
-| TOML config (milestone 6) | `toml` 1.1.8, default features | Looked up 2026-11-01 on crates.io: 1.1.8 was published 2026-10-09, so it is older than two weeks; MIT OR Apache-2.0. The default `serde` feature is needed because `Table` and `Value` depend on it; it adds `serde_core` (no derive macros). Parsing gives the line and column of a syntax error (`Error::span`). The built crates are `toml`, `toml_parser`, `toml_datetime`, `toml_writer`, `serde_spanned`, `serde_core` and `winnow`. `Cargo.lock` also lists `indexmap`, `hashbrown`, `serde_derive` and `syn`, which are not built (`cargo tree -e normal` does not show them). A hand-written parser was rejected: the approvals file, the Lua plugin approvals and the agent tables need the full TOML syntax (quoted and dotted keys, arrays of tables) |
+| TOML config (milestone 6) | `toml` 1.1.8 with `default-features = false, features = ["std", "serde", "parse"]` | Checked 2026-11-01 against the crates.io API: 1.1.8 was published 2026-10-09 (23 days old, so it passes the two-week rule); its parser crate `toml_parser` 1.1.5 on 2026-10-09; `toml_datetime` 1.1.2 and `serde_spanned` 1.1.2 on 2026-10-08; `serde_core` 1.0.229 on 2026-07-18; `winnow` 1.0.4 on 2026-07-13. MIT OR Apache-2.0. `Table` and `Value` exist only with the `serde` feature. Cost, measured with `cargo build --release` on Windows x64: the release binary grows from 1,157,120 to 1,421,824 bytes (+264,704, +22.9%), main e8a7962 against this branch. Compiled new crates: `toml`, `toml_parser`, `toml_datetime`, `serde_spanned`, `serde_core`, `winnow`. Cargo.lock gains 12 package entries, including `serde_derive` and `syn` 3.0.9. Those two are not compiled for any target: `serde_core` declares `serde_derive` under `cfg(any())`, which never holds; `cargo tree --target all` shows them, the host tree does not. The `display` feature was dropped (no measurable size change). Not done, for a decision: a walker over `toml_parser` events, or a hand-written parser for the subset, would drop the serde crates and most of the size; full TOML is needed later for the approvals file, the Lua plugin approvals and the agent tables, which is why the crate was chosen. A syntax error is reported by its byte span, which rvim turns into a line number |
 
 Waking the UI from a worker: have workers send into the one event channel
 and let the input thread, not a poll timeout, own the wait (a small
