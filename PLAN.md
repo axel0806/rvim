@@ -1986,12 +1986,11 @@ plan, kept for the record; the files are the source of truth.
   mode 0600 and `create_new`, so an existing name or link is never written
   through (`src/recovery.rs`). On Windows the default directory is under the
   per-user `%LOCALAPPDATA%` and no permissions are set; that is the only Windows
-  protection. **Unverified (2026-11-01):** the Unix code compiles and passes
-  clippy for `x86_64-unknown-linux-gnu` and `aarch64-apple-darwin`, but its
-  five `cfg(unix)` tests (modes, symlinked directory, planted symlink) have
-  never run, because the development machine is Windows. Run
-  `cargo test --lib recovery` on Linux or macOS (or in WSL with Rust) before
-  trusting it; the release workflow has no test step, so this is a to-do.
+  protection. **Linux verified (2026-11-01):** in WSL (Ubuntu, Vim 9.1 patches up to 2141, run as a
+  normal user) `RVIM_REQUIRE_VIM=1 cargo test` passed in full, including the six
+  `recovery` tests (modes, symlinked directory, planted symlink), and clippy with
+  `-D warnings` was clean. **macOS is still unverified**: the code compiles for
+  `aarch64-apple-darwin` but its tests have never run there (the CI macOS job will).
 - CI (`.github/workflows/ci.yml`) has never run on GitHub. Its first run is
   also the first execution of the Unix recovery-file tests (`cfg(unix)` in
   `src/recovery.rs`), on the Linux and macOS runners. A failure there is a real
