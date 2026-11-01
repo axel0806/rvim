@@ -17,12 +17,28 @@ use std::sync::mpsc;
 use std::time::Instant;
 
 fn main() -> io::Result<()> {
-    let mut args = std::env::args_os().skip(1);
-    let mut ed = match args.next() {
+    // `--start-menu` turns the start menu on; `--no-start-menu` is the
+    // default. The first other argument is the file to open.
+    let mut start_menu = false;
+    let mut path = None;
+    for arg in std::env::args_os().skip(1) {
+        match arg.to_str() {
+            Some("--start-menu") => start_menu = true,
+            Some("--no-start-menu") => start_menu = false,
+            _ if path.is_none() => path = Some(arg),
+            _ => {}
+        }
+    }
+    let mut ed = match path {
         Some(path) => Editor::open(&PathBuf::from(path)),
         None => Editor::new(),
     };
-    ed.show_intro();
+    if start_menu {
+        ed.enable_start_menu();
+    }
+    if !ed.show_start_menu() {
+        ed.show_intro();
+    }
 
     terminal::enable_raw_mode()?;
     execute!(io::stdout(), EnterAlternateScreen, EnableBracketedPaste)?;
@@ -160,6 +176,8 @@ fn set_hl(out: &mut impl Write, hl: Hl) -> io::Result<()> {
             SetForegroundColor(Color::Black),
             crossterm::style::SetBackgroundColor(Color::Yellow)
         ),
+        Hl::MenuSelected => queue!(out, SetAttribute(Attribute::Reverse)),
+        Hl::Dimmed => queue!(out, SetForegroundColor(Color::DarkGrey)),
     }
 }
 

@@ -60,6 +60,9 @@ pub const TABLE: &[Def] = &[
     b("relativenumber", "rnu", Scope::Window, false),
     b("wrap", "wrap", Scope::Window, true),
     b("autoread", "ar", Scope::Global, false),
+    // Not a Vim option: turns on the start menu (see startmenu.rs). Off by
+    // default, so `:set` behaves as in Vim while it is off.
+    b("startmenu", "startmenu", Scope::Global, false),
 ];
 
 /// Options Vim has that rvim accepts in `:set` and ignores.
@@ -164,6 +167,9 @@ impl Options {
     }
     pub fn shiftround(&self) -> bool {
         self.bool_of("shiftround")
+    }
+    pub fn startmenu(&self) -> bool {
+        self.bool_of("startmenu")
     }
 }
 

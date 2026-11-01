@@ -195,6 +195,8 @@ pub struct Editor {
     pub(crate) hist_idx: Option<usize>,
     pub(crate) hist_prefix: String,
     pub(crate) cmd_paste: Option<crate::cmdline::PasteState>,
+    /// The start menu, while it is shown (see startmenu.rs).
+    pub(crate) start_menu: Option<crate::startmenu::StartMenu>,
     pub(crate) message: Option<Message>,
     pub(crate) quit: bool,
     bell: bool,
@@ -274,6 +276,7 @@ impl Editor {
             hist_idx: None,
             hist_prefix: String::new(),
             cmd_paste: None,
+            start_menu: None,
             message: None,
             quit: false,
             bell: false,
@@ -382,6 +385,11 @@ impl Editor {
     }
 
     pub fn handle_key(&mut self, key: Key) {
+        // The start menu takes its own keys; any other key closes it and is
+        // handled below as usual.
+        if self.start_menu_key(key) {
+            return;
+        }
         // Recording: the `q` that ends it is not part of the macro; keys
         // replayed from a register are not recorded again.
         if self.depth == 0 && self.replaying == 0 && self.recording.is_some() {
@@ -451,6 +459,7 @@ impl Editor {
     /// in Visual mode it replaces the selection, and on the command line it
     /// is appended without newlines.
     pub fn paste(&mut self, text: &str) {
+        self.close_start_menu();
         let text = text.replace("\r\n", "\n").replace('\r', "\n");
         let keys = text.chars().filter_map(|c| match c {
             '\n' => Some(Key::Enter),

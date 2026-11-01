@@ -19,6 +19,7 @@ pub mod regex;
 pub mod register;
 mod scroll;
 mod search;
+mod startmenu;
 pub mod text;
 pub mod textobject;
 mod undo;

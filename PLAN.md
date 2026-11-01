@@ -18,7 +18,7 @@ clean at the last commit.
 | 3 Search and Ex | ~98%. Left: `:s` `\=` expressions |
 | 4 Foundation | ~70%. Left: the Document/Window/Editor split (the biggest item; see "Foundation"), kitty keyboard protocol, cell-level diff redraw, `:setlocal`/`:setglobal`, recovery on terminal close (SIGHUP) |
 | 5 Windows and buffers | ~30%. Done: macros (`q`, `@`, `@@`, `@:`), lowercase marks (`m{a-z}`, `'a`, `` `a ``, `:k`, `:mark`, `'a` addresses), the jumplist (`<C-o>`, `<Tab>` with counts, `:jumps`) and the context mark (`''`, `` `` ``, `m'`, `` m` ``), scrolling (`<C-e> <C-y> <C-f> <C-b> <C-d> <C-u> zt zz zb z<CR> z. z- H M L`, counts, `scrolloff`, wrapped lines). Left: splits, buffer list, the other marks (uppercase, `'[`/`']`, `'<`/`'>` motions), swap files |
-| 6 Modern editing experience | 0%. Not started (hlsearch, incsearch, syntax, line numbers, config file, palette, mouse) |
+| 6 Modern editing experience | Started, not near done. Landed: the start menu (opt-in `--start-menu`, `startmenu` option). Left: hlsearch, incsearch, syntax, line numbers, config file, palette, mouse, `:Start`, the start menu's recent files, Config and agent entries, and its modern-profile default (see "Start menu") |
 | 7 Agent integration | 0%. Not started (file-change reload as an undo step, diff view, ACP connector, agent detection). Research is in "Detecting and connecting to agents" |
 | 8 Prediction | 0%. Not started |
 | 9 Extras | 0%. Not started |
@@ -43,8 +43,6 @@ entry is removed when its branch lands on main):
 
 - `:s` `\=` expressions (two agents, split from one): the expression module
   and `\=` in `:s` remain. Last open item of milestone 3.
-- Start menu (opt-in `--start-menu`, a `Frame` overlay shown when rvim starts
-  with no file): being built by a Haiku agent (branch name pending).
 
 **Suggested order for what is left:** (1) Document/Window split, (2) splits +
 buffers + scrolling, (3) milestone 7, in the step order of "Agent experience:
@@ -470,8 +468,9 @@ writes nothing for it.
 
 - Frame golden screens: the menu at 80x24, at 40x20 (logo hidden), with an
   agent line, and with one item selected (the style of the selected row is
-  checked, not only its text). Golden files go under `tests/golden/`
-  (planned; format decided when built).
+  checked, not only its text). Done in `tests/start_menu.rs` as structural
+  assertions on the rows and styles (not golden files); the agent line is
+  not built yet.
 - Dismissal table: for every key class (letters, digits, `:`, `<Esc>`,
   arrows, `<CR>`, Ctrl keys, function keys) a unit test runs the sequence with
   the menu on and with the menu off. For keys outside the menu's set it
@@ -482,6 +481,30 @@ writes nothing for it.
   with no config and no flag.
 - Recent-file list: unit tests for write on open, missing files and the
   maximum count, using a temporary state directory.
+
+**Status (implemented 2026-11-01, branch `worktree-agent-a4f51c1b0784be30f`).**
+
+- Done: the `--start-menu` flag (and `--no-start-menu`, which is the default)
+  sets the option `startmenu`, a Global bool that is off by default. It is not
+  a Vim option, so `:set startmenu` is accepted here and gives E518 in Vim.
+  `Editor::show_start_menu` shows the menu only with the option on, no file
+  argument, an empty unnamed buffer and no changes; otherwise the intro
+  message is shown as before. Content: the logo (hidden below 60x20), the
+  `VERSION_MESSAGE` (always shown, word-wrapped), entries New file, Open file,
+  Help (dimmed, skipped by the selection), Quit, and the hint line. Keys and
+  dismissal follow the tables above; `startmenu.rs` holds the state, the
+  layout and the key handling, and `view::frame` draws it through
+  `Hl::MenuSelected` and `Hl::Dimmed`. A paste closes the menu. A resize keeps
+  it open. Tests: `tests/start_menu.rs`.
+- Entry actions: New file closes the menu (at startup the buffer already is
+  the empty unnamed one). Open file puts `:e ` on the command line. Quit runs
+  `:q`.
+- Still to do: `:Start` (needs `ex.rs`, not touched yet); `:enew`, so New file
+  can open a new buffer after startup; the recent-files list and its state
+  file `$XDG_STATE_HOME/rvim/recent`; the Config entry and the config switch
+  `start.menu` (no config file exists yet); the modern-profile default (menu on
+  with `--modern`); the agent line (milestone 7); `:help`, which enables the
+  Help entry; the logo (the word `rvim` in a box stands in for it).
 
 ## Agent integration (milestone 7)
 

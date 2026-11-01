@@ -36,6 +36,10 @@ pub enum Hl {
     NonText,
     /// The match a `:s` `c` flag prompt asks about (Vim's IncSearch).
     IncSearch,
+    /// The selected entry of the start menu.
+    MenuSelected,
+    /// A start menu entry that is not available yet.
+    Dimmed,
 }
 
 /// Linear cell ranges on `line` covered by the match a `c` flag prompt asks
@@ -209,6 +213,19 @@ pub fn frame(ed: &Editor) -> Frame {
     let width = ed.screen_cols.max(1);
     let height = ed.screen_rows;
     let text_height = height.saturating_sub(1).max(1);
+    if let Some(menu) = &ed.start_menu {
+        let mf = crate::startmenu::layout(menu, width, height);
+        let mut cursor = mf.cursor;
+        let (status, status_is_error) = status_line(ed, width, &mut cursor, height, 0);
+        return Frame {
+            rows: mf.rows,
+            status,
+            status_is_error,
+            hl: mf.hl,
+            filler_from: text_height,
+            cursor,
+        };
+    }
     let mut rows = Vec::with_capacity(text_height);
     let mut hl = vec![vec![Hl::Normal; width]; text_height];
     let mut cursor = (0, 0);
@@ -370,6 +387,8 @@ mod tests {
                         Hl::Visual => 'V',
                         Hl::NonText => '~',
                         Hl::IncSearch => 'I',
+                        Hl::MenuSelected => 'M',
+                        Hl::Dimmed => 'd',
                         Hl::Normal => '.',
                     })
                     .collect()
