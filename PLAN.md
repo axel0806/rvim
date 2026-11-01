@@ -9,8 +9,7 @@ a real Vim by the differential harness in `tests/common/mod.rs`.
 
 Last updated 2026-11-01. **rvim is an alpha, roughly 25-30% of this plan.**
 As of 2026-11-01 milestones 1-3 are done; 4 and 5 are partly done; 6 has the start menu only; 7-9 are plans.
-Released as `v0.1.0-alpha.1` and `v0.1.0-alpha.2` (alpha.1 predates everything below the
-"Since the alpha" line). The next release is `v0.1.0-alpha.3`, not yet tagged. All tests pass against Vim 9.1 and clippy/fmt are
+Released as `v0.1.0-alpha.1`, `v0.1.0-alpha.2` and `v0.1.0-alpha.3`. The next release is `v0.1.0-alpha.4`, not yet tagged. All tests pass against Vim 9.1 and clippy/fmt are
 clean at the last commit.
 
 | Milestone | State |
@@ -48,7 +47,9 @@ restored by undo in `undo.rs`), and the scrolling commands with `scrolloff`
 **In progress** (as of 2026-11-01; maintained by the orchestrator, and an
 entry is removed when its branch lands on main):
 
-(none)
+- CI workflow: tests, clippy and fmt on Linux, macOS and Windows (`.github/workflows/ci.yml`)
+- Makefile with build, test, lint, install and release-check targets
+- `--help` and `--version` command-line flags (`src/main.rs`)
 
 **Suggested order for what is left:** (1) Document/Window split, (2) splits +
 buffers + scrolling, (3) milestone 7, in the step order of "Agent experience:
