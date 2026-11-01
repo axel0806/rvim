@@ -109,6 +109,7 @@ jobs:
           fi
           vim --version > vim-version.txt
           head -n 2 vim-version.txt
+          grep -q 'Included patches' vim-version.txt || echo "(this build prints no 'Included patches' line)"
           if [ "$RUNNER_OS" = "Linux" ] && ! grep -q 'Included patches: 1-1914' vim-version.txt; then
             echo "::error::expected Vim 9.1.1914 on Linux"
             exit 1
