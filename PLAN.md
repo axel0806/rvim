@@ -53,7 +53,7 @@ this, `--help` opened a buffer named `--help`.
 **In progress** (as of 2026-11-01; maintained by the orchestrator, and an
 entry is removed when its branch lands on main):
 
-- Recovery on terminal close, SIGHUP/SIGTERM on Unix (milestone 4; `recovery.rs`, `main.rs`)
+(none)
 
 **Suggested order for what is left:** (1) Document/Window split, (2) splits +
 buffers + scrolling, (3) milestone 7, in the step order of "Agent experience:
@@ -2002,7 +2002,12 @@ plan, kept for the record; the files are the source of truth.
   signal. The tests raise SIGHUP and SIGTERM inside the test process
   (`signals.rs`); no test runs the real binary under a terminal, so the full
   terminal-close path (a pseudo-terminal closed by the emulator) needs a
-  manual check on Linux and macOS.
+  manual check on Linux and macOS. A verifier ran the binary under a pseudo-terminal
+  in WSL on 2026-11-01: SIGHUP gave exit 129 and SIGTERM exit 143, each with a 0600
+  recovery file in a 0700 directory holding the edited text and the path printed after
+  the terminal was restored; an unmodified buffer wrote no file. Known gap: a signal
+  that arrives before `signals::spawn` runs at startup (a few hundred milliseconds)
+  takes the default action and writes no recovery file; nothing has been typed then.
 - Recovery files are created owner-only on Unix: the directory with mode 0700
   (an existing directory the user owns is tightened to 0700; a symbolic link or
   a directory of another owner is not used, and the file goes to a fresh private
