@@ -47,6 +47,10 @@ Prebuilt binaries for Windows, Linux and macOS are attached to the
 - Jumplist and context mark: `<C-o>` and `<Tab>` with counts, `''`, `` `` ``,
   `m'`, `` m` ``, and `:jumps` (a one-line message). `G`, `gg`, `/`, `?`, `n`,
   `N`, `%`, `{`, `}`, `(`, `)`, marks, `:N`, `:s`, `:g` and undo set the mark.
+- Scrolling: `<C-e> <C-y> <C-f> <C-b> <C-d> <C-u> zt zz zb z<CR> z. z- H M L`,
+  with counts and `scrolloff`.
+- `:s` with the `c` flag (confirm each match) and with `\=` expressions (a
+  subset of Vim's expression language; see Known differences in PLAN.md).
 - Wrapping display, ruler, bracketed paste.
 
 ## Where rvim differs from Vim

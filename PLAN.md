@@ -8,15 +8,16 @@ a real Vim by the differential harness in `tests/common/mod.rs`.
 ## Status: read this first
 
 Last updated 2026-11-01. **rvim is an alpha, roughly 25-30% of this plan.**
-Released as `v0.1.0-alpha.1` (that release predates everything below the
-"Since the alpha" line). All tests pass against Vim 9.1 and clippy/fmt are
+As of 2026-11-01 milestones 1-3 are done; 4 and 5 are partly done; 6 has the start menu only; 7-9 are plans.
+Released as `v0.1.0-alpha.1` and `v0.1.0-alpha.2` (alpha.1 predates everything below the
+"Since the alpha" line). The next release is `v0.1.0-alpha.3`, not yet tagged. All tests pass against Vim 9.1 and clippy/fmt are
 clean at the last commit.
 
 | Milestone | State |
 |---|---|
 | 1 Core, 2 Vim grammar | Done |
 | 3 Search and Ex | 100%. `:s` `\=` expressions done as the subset in `src/expr.rs` (see Known differences) |
-| 4 Foundation | ~70%. Left: the Document/Window/Editor split (the biggest item; see "Foundation"), kitty keyboard protocol, cell-level diff redraw, `:setlocal`/`:setglobal`, recovery on terminal close (SIGHUP) |
+| 4 Foundation | ~70%. Left: the Document/Window/Editor split (the biggest item; see "Foundation"), kitty keyboard protocol, cell-level diff redraw, real local/global option scopes (`:setlocal`/`:setglobal` semantics; `:setlocal` is accepted as an alias of `:set`, `:setglobal` does not exist), recovery on terminal close (SIGHUP) |
 | 5 Windows and buffers | ~30%. Done: macros (`q`, `@`, `@@`, `@:`), lowercase marks (`m{a-z}`, `'a`, `` `a ``, `:k`, `:mark`, `'a` addresses), the jumplist (`<C-o>`, `<Tab>` with counts, `:jumps`) and the context mark (`''`, `` `` ``, `m'`, `` m` ``), scrolling (`<C-e> <C-y> <C-f> <C-b> <C-d> <C-u> zt zz zb z<CR> z. z- H M L`, counts, `scrolloff`, wrapped lines). Left: splits, buffer list, the other marks (uppercase, `'[`/`']`, `'<`/`'>` motions), swap files |
 | 6 Modern editing experience | Started, not near done. Landed: the start menu (opt-in `--start-menu`, `startmenu` option). Left: hlsearch, incsearch, syntax, line numbers, config file, palette, mouse, `:Start`, the start menu's recent files, Config and agent entries, and its modern-profile default (see "Start menu") |
 | 7 Agent integration | 0%. Not started (file-change reload as an undo step, diff view, ACP connector, agent detection). Research is in "Detecting and connecting to agents" |
@@ -244,7 +245,7 @@ What the revised milestones fix, as the code stands today:
    match (`scroll::scroll_window_for_prompt`; tests in `tests/confirm_prompt.rs`,
    not probed in Vim: `-es` does not show the window).
    Marks in Ex addresses (`'a`) are done with the marks (milestone 5).
-4. **Foundation (in progress).** Done: bracketed paste, Alt/F-keys/Insert/Shift-Tab, Visual area drawn via highlight groups, row-level diff redraw, options registry (`autoindent`, `expandtab`, `shiftwidth`), panic recovery files, channel-based event loop with an input thread. Left: the Document/Window/Editor split, kitty keyboard protocol, cell-level diff, `:setlocal`, SIGHUP recovery. Original description: Restructure before adding more features, because windows,
+4. **Foundation (in progress).** Done: bracketed paste, Alt/F-keys/Insert/Shift-Tab, Visual area drawn via highlight groups, row-level diff redraw, options registry (`autoindent`, `expandtab`, `shiftwidth`), panic recovery files, channel-based event loop with an input thread. Left: the Document/Window/Editor split, kitty keyboard protocol, cell-level diff, real option scopes (`:setlocal`/`:setglobal`; `:setlocal` is only an alias of `:set` for now), SIGHUP recovery. Original description: Restructure before adding more features, because windows,
    agents and prediction all depend on it. Order, each step landing with the
    differential tests green: (a) Document/Window/Editor split, (b) internal
    event loop, (c) styled frame with the Visual area drawn, (d) diff redraw,
@@ -1885,6 +1886,9 @@ plan, kept for the record; the files are the source of truth.
 - Emoji use approximate block ranges instead of Vim's full `emoji_all` table
   for word motions; composing characters are separate characters.
 - Options come from the registry in `options.rs` (all global for now).
+  `:setlocal` is accepted as an alias of `:set`; `:setglobal` does not exist.
+  Real local and global option scopes (`:setlocal`/`:setglobal` semantics) are
+  still to do.
   `tabstop`, `softtabstop` (negative = 'shiftwidth'), `smarttab` and
   `shiftround` work, but these Vim cases are not matched yet; they are kept
   as `#[ignore]`d `known_gap_*` tests in `tests/compat_options.rs` (run with
@@ -1909,6 +1913,10 @@ plan, kept for the record; the files are the source of truth.
   larger than the window for `H`/`L` (clamped, which Vim agrees with on a
   fresh window). Not implemented: `z+ z^ z{height}<CR>`, `smoothscroll`,
   `<PageUp>`/`<PageDown>`/`<S-Up>`/`<S-Down>`, and `:set scroll`.
+- An Ex line with a very large number of `|` separators (thousands) is slow:
+  the cost is quadratic, because each chained command re-parses the rest of
+  the line (measured in a debug build: 0.19 s at 2,000 bars, 3.2 s at 8,000;
+  not compared with the older code). Fix idea: split the line once.
 - An error does not flush pending typeahead (only matters for pasted key
   sequences).
 - `n` after `/pat/e+1` when the cursor is on the last char of the buffer
@@ -1940,6 +1948,10 @@ plan, kept for the record; the files are the source of truth.
   arithmetic clamps a negative one to the smallest (`'-9...9' + 0`), as Vim
   does. `substitute()` checks the projected size before each match is
   appended, so a size error comes early.
+  When an expression error occurs (any error, including E1169 "too recursive",
+  which rvim reports at its 100-level nesting limit where Vim allows 200), the
+  match is replaced by nothing and the `:s` continues, as Vim does for
+  expression errors.
   Speed: `split()` and `substitute()` take time linear in the matches; a `.`
   chain appends in place, so long chains are linear here, where Vim copies the
   left side on each `.`. The `c` flag with `\=` evaluates the expression
