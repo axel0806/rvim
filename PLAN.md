@@ -53,7 +53,6 @@ this, `--help` opened a buffer named `--help`.
 **In progress** (as of 2026-11-01; maintained by the orchestrator, and an
 entry is removed when its branch lands on main):
 
-- Real option scopes: `:setlocal`, `:setglobal`, buffer- and window-local values (milestone 4; `options.rs`, `ex.rs`; based on the step 2 branch)
 - Marks: `'[` `']` `'<` `'>` motions, mark setting per command, `:marks`, `:delmarks` (milestone 5; `normal.rs`, `document.rs`, a new Ex function)
 - Agent integration, step 2a: undo step source, disk state and hash, external change applied as one undo step with cursor mapping, `:checktime` (milestone 7; new `reload.rs`, `undo.rs`, `document.rs`)
 
