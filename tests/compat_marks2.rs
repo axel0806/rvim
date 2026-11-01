@@ -349,6 +349,36 @@ fn delmarks_and_marks_with_errors() {
     check(&cross(TEXTS, &keys));
 }
 
+/// Visual mode on a TAB: the desired column after leaving Visual is the
+/// Normal-mode one (the end of the TAB), while a vertical motion inside
+/// Visual uses the column stored before it.
+#[test]
+fn visual_on_a_tab_keeps_the_desired_column() {
+    const TAB_TEXTS: &[&str] = &[
+        "\tabc\n12345678901234567890",
+        "ab\tcd\n12345678901234567890\n\tq",
+        "\tabc\tdef\n1234\n\t",
+    ];
+    let keys = [
+        "vk<Esc>jix<Esc>",
+        "V<Esc>jix<Esc>",
+        "llvoj<Esc>ix<Esc>",
+        "vjd",
+        "jvkd",
+        "vjj<Esc>jix<Esc>",
+        "vjy`>ix<Esc>",
+        "ll<C-v>jjy`>ix<Esc>",
+        "vj<Esc>jix<Esc>",
+        "lvj<Esc>jix<Esc>",
+        "vjjj<Esc>kix<Esc>",
+        "vl<Esc>jix<Esc>",
+        "v$<Esc>jix<Esc>",
+        "vlld3vd",
+        "lv$<Esc>jix<Esc>",
+    ];
+    check(&cross(TAB_TEXTS, &keys));
+}
+
 /// Known difference: Vim moves the ends of a Visual area with the lines an
 /// edit changes (mark_adjust()); rvim keeps them where they were.
 #[test]

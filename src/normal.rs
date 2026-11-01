@@ -1565,6 +1565,8 @@ impl Editor {
             Simple::UndoLine => self.undo_line(),
             Simple::Dot => self.dot(count),
             Simple::Visual(m) => {
+                // Vim does not change the desired column when Visual starts.
+                self.win_mut().keep_curswant = true;
                 self.win_mut().vstart = self.win_mut().cursor;
                 self.message = None;
                 if let (Some(c), Some(r)) = (count, self.resel) {
@@ -1645,7 +1647,11 @@ impl Editor {
                     self.beep();
                 }
             }
-            Simple::VisOther { horiz } => self.visual_other(horiz),
+            Simple::VisOther { horiz } => {
+                // Swapping the ends does not change the desired column (Vim).
+                self.win_mut().keep_curswant = true;
+                self.visual_other(horiz);
+            }
             Simple::Gn { fwd } => {
                 if !self.current_search(count1, fwd) {
                     self.beep();
@@ -1790,6 +1796,14 @@ impl Editor {
                 curswant: self.win().curswant,
             });
             self.mode = Mode::Normal;
+            // The cursor is put on a character first (Vim's check_cursor_col),
+            // then the desired column is the Normal-mode one (a TAB at its
+            // end), as Vim sets w_set_curswant when Visual ends.
+            let len = self.buf().line_len(self.win().cursor.line);
+            if self.win().cursor.col >= len {
+                self.win_mut().cursor.col = len.saturating_sub(1);
+            }
+            self.win_mut().curswant = self.cursor_vcol_as_normal();
         }
     }
 

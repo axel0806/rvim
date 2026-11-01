@@ -2163,7 +2163,14 @@ plan, kept for the record; the files are the source of truth.
   row per line. `:delmarks` treats `<` and `>` as one Visual area (deleting
   either drops both), and `m<`/`m>` with no area yet set both ends to the
   cursor, where Vim leaves the other end unset. `'"` is always line 1, column
-  0, since rvim has one buffer. The Visual area does not follow line edits
+  0, since rvim has one buffer. At startup Vim sets the context mark to line
+  1 (its window setup); rvim starts with none, as the differential harness
+  does (it clears the mark before each case). So `:marks` has no `'` row and
+  `:marks '` is E283 until a jump, where Vim shows `' 1 0`. Probes, `vim -N
+  -u NONE -i NONE -es`: an empty buffer with `setline()` lists `' 1 0`; a
+  three-line file given on the command line lists `' 3 0` (its cursor starts
+  on the last line), and `normal! G` then `setpos("''", [0,0,0,0])` lists no
+  `'` row. The Visual area does not follow line edits
   (Vim moves its ends with `mark_adjust()`; the ignored test
   `visual_marks_after_a_line_edit` in `compat_marks2.rs` shows it). After
   `<C-r>` of a linewise `p`, `']` is one line short of Vim's (the ignored
