@@ -11,6 +11,8 @@ use ropey::RopeSlice;
 use unicode_width::UnicodeWidthChar;
 
 pub struct Frame {
+    /// Width of every row, in cells.
+    pub width: usize,
     /// `height - 1` text rows, each exactly `width` cells wide.
     pub rows: Vec<String>,
     /// Bottom row (command line, messages, ruler), `width` cells wide.
@@ -218,6 +220,7 @@ pub fn frame(ed: &Editor) -> Frame {
         let mut cursor = mf.cursor;
         let (status, status_is_error) = status_line(ed, width, &mut cursor, height, 0);
         return Frame {
+            width,
             rows: mf.rows,
             status,
             status_is_error,
@@ -283,6 +286,7 @@ pub fn frame(ed: &Editor) -> Frame {
     let below = ed.buf.line_count() - line;
     let (status, status_is_error) = status_line(ed, width, &mut cursor, height, below);
     Frame {
+        width,
         rows,
         status,
         status_is_error,

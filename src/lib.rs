@@ -17,6 +17,7 @@ mod normal;
 mod ops;
 pub mod options;
 pub mod recovery;
+pub mod redraw;
 pub mod regex;
 pub mod register;
 mod scroll;

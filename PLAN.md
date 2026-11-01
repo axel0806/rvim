@@ -7,7 +7,7 @@ a real Vim by the differential harness in `tests/common/mod.rs`.
 
 ## Status: read this first
 
-Last updated 2026-11-01 (CI first ran on GitHub; Linux builds Vim 9.1.1914 from source, and all three OS jobs require Vim). **rvim is an alpha, roughly 25-30% of this plan.**
+Last updated 2026-11-01 (CI first ran on GitHub; Linux builds Vim 9.1.1914 from source, and all three OS jobs require Vim; cell-level diff redraw in `redraw.rs` on branch `worktree-agent-a63a7c6205c158718`, not yet merged). **rvim is an alpha, roughly 25-30% of this plan.**
 As of 2026-11-01 milestones 1-3 are done; 4 and 5 are partly done; 6 has the start menu only; 7-9 are plans.
 Released as `v0.1.0-alpha.1`, `v0.1.0-alpha.2` and `v0.1.0-alpha.3`. The next release is `v0.1.0-alpha.4`, not yet tagged. All tests pass against Vim 9.1 and clippy/fmt are
 clean at the last commit.
@@ -16,7 +16,7 @@ clean at the last commit.
 |---|---|
 | 1 Core, 2 Vim grammar | Done |
 | 3 Search and Ex | 100%. `:s` `\=` expressions done as the subset in `src/expr.rs` (see Known differences) |
-| 4 Foundation | ~70%. Left: the Document/Window/Editor split (the biggest item; see "Foundation"), kitty keyboard protocol, cell-level diff redraw, real local/global option scopes (`:setlocal`/`:setglobal` semantics; `:setlocal` is accepted as an alias of `:set`, `:setglobal` does not exist), recovery on terminal close (SIGHUP) |
+| 4 Foundation | ~75%. Left: the Document/Window/Editor split (the biggest item; see "Foundation"), kitty keyboard protocol, real local/global option scopes (`:setlocal`/`:setglobal` semantics; `:setlocal` is accepted as an alias of `:set`, `:setglobal` does not exist), recovery on terminal close (SIGHUP) |
 | 5 Windows and buffers | ~30%. Done: macros (`q`, `@`, `@@`, `@:`), lowercase marks (`m{a-z}`, `'a`, `` `a ``, `:k`, `:mark`, `'a` addresses), the jumplist (`<C-o>`, `<Tab>` with counts, `:jumps`) and the context mark (`''`, `` `` ``, `m'`, `` m` ``), scrolling (`<C-e> <C-y> <C-f> <C-b> <C-d> <C-u> zt zz zb z<CR> z. z- H M L`, counts, `scrolloff`, wrapped lines). Left: splits, buffer list, the other marks (uppercase, `'[`/`']`, `'<`/`'>` motions), swap files |
 | 6 Modern editing experience | Started, not near done. Landed: the start menu (opt-in `--start-menu`, `startmenu` option). Left: hlsearch, incsearch, syntax, line numbers, config file, palette, mouse, `:Start`, the start menu's recent files, Config and agent entries, and its modern-profile default (see "Start menu") |
 | 7 Agent integration | 0%. Not started (file-change reload as an undo step, diff view, ACP connector, agent detection). Research is in "Detecting and connecting to agents" |
@@ -27,7 +27,9 @@ Since the alpha (all committed and pushed): `:s/pat/\=expr/` with the
 expression subset in `src/expr.rs` (numbers, strings, lists, operators, `?:`,
 indexing and slicing, the common built-in functions, Vim's error messages;
 differential cases in `tests/compat_m3_expr.rs`), bracketed paste, Alt/F-keys/Insert/
-Shift-Tab, Visual area drawn through `view::Hl` groups, row-level diff redraw,
+Shift-Tab, Visual area drawn through `view::Hl` groups, cell-level diff redraw
+(`redraw.rs`: runs of changed cells with one style, wide characters, cleared
+row tails, a full repaint on resize and the first draw),
 the options registry (`options.rs`: `autoindent`, `expandtab`, `shiftwidth`,
 `tabstop`, `softtabstop`, `smarttab`, `shiftround` work; `text.rs` takes the
 tabstop as a parameter, Insert Tab and BS follow `ins_tab()`/`ins_bs()` for
@@ -189,6 +191,7 @@ pattern, but the Vim contract still decides what happens without an opt-in.
 | `search.rs` | Port of `searchit()` / `do_search()` (offsets, `;`, `cpo-c`, wrapscan), `*`/`#` word lookup |
 | `scroll.rs` | The window's top line and size (in `Editor`), `update_topline` with 'scrolloff' and wrapped lines, and the scroll commands (`CTRL-E/Y/F/B/D/U`, `z` commands, `H M L`) |
 | `view.rs` | Layout as a pure function of the editor (`frame`): wrapping, `~`/`@` rows, message line and ruler as plain strings |
+| `redraw.rs` | The cell grid of a `Frame` and `diff` between two grids, which returns `DrawOp`s (terminal-free; `main.rs` writes them) |
 | `main.rs` | crossterm terminal front end (only file that touches the terminal) |
 
 The library has no terminal dependency: tests drive `Editor::feed("keys")`.
@@ -218,7 +221,6 @@ What the revised milestones fix, as the code stands today:
 - `event::read()` blocks, so nothing can happen except on a key press: no
   timers (`timeoutlen`), no file watching, no background results.
 - `Options` is three fixed booleans (`ignorecase`, `smartcase`, `wrapscan`).
-- `draw()` repaints every row on every key.
 
 ## Milestones
 
@@ -250,7 +252,7 @@ What the revised milestones fix, as the code stands today:
    match (`scroll::scroll_window_for_prompt`; tests in `tests/confirm_prompt.rs`,
    not probed in Vim: `-es` does not show the window).
    Marks in Ex addresses (`'a`) are done with the marks (milestone 5).
-4. **Foundation (in progress).** Done: bracketed paste, Alt/F-keys/Insert/Shift-Tab, Visual area drawn via highlight groups, row-level diff redraw, options registry (`autoindent`, `expandtab`, `shiftwidth`), panic recovery files, channel-based event loop with an input thread. Left: the Document/Window/Editor split, kitty keyboard protocol, cell-level diff, real option scopes (`:setlocal`/`:setglobal`; `:setlocal` is only an alias of `:set` for now), SIGHUP recovery. Original description: Restructure before adding more features, because windows,
+4. **Foundation (in progress).** Done: bracketed paste, Alt/F-keys/Insert/Shift-Tab, Visual area drawn via highlight groups, cell-level diff redraw (`redraw.rs`), options registry (`autoindent`, `expandtab`, `shiftwidth`), panic recovery files, channel-based event loop with an input thread. Left: the Document/Window/Editor split, kitty keyboard protocol, real option scopes (`:setlocal`/`:setglobal`; `:setlocal` is only an alias of `:set` for now), SIGHUP recovery. Original description: Restructure before adding more features, because windows,
    agents and prediction all depend on it. Order, each step landing with the
    differential tests green: (a) Document/Window/Editor split, (b) internal
    event loop, (c) styled frame with the Visual area drawn, (d) diff redraw,
