@@ -7,7 +7,7 @@
 # The Vim version each runner uses is printed in the "Vim present?" step.
 #   Linux:   Vim 9.1.1914 built from the pinned tag, the version the tests are
 #            written against. Built from source because distro packages lag
-#            (Ubuntu's apt Vim is 9.1.0016, which differs on ''-after-:N).
+#            (Ubuntu's apt Vim, "9.1 (2024 Jan 02)", differs on ''-after-:N).
 #            Cached under ~/vim-9.1.1914 by runner image.
 #   macOS:   Homebrew's current Vim (9.2.x).
 #   Windows: Chocolatey's current Vim (9.2.x), found by the PATH step.
