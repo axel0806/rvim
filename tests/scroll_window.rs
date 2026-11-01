@@ -164,7 +164,7 @@ fn scrolloff_is_capped_at_half_the_window() {
 fn wrapped_lines_count_their_screen_rows() {
     // 30 lines of three rows each: 23 rows show seven whole lines.
     let mut ed = wrapped(30, 190);
-    assert_eq!(rvim::view::line_height(ed.buf.line(0), 80), 3);
+    assert_eq!(rvim::view::line_height(ed.buf.line(0), 80, 8), 3);
     ed.feed("M");
     assert_eq!(ed.cursor().line, 3);
     ed.feed("L");

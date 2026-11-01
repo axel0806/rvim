@@ -35,6 +35,8 @@ pub struct Opts {
     pub smartcase: bool,
     /// The previous substitute string, for `~`.
     pub last_sub: String,
+    /// 'tabstop', for `\%v` (0 is taken as 1).
+    pub tabstop: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -862,11 +864,13 @@ pub struct Match {
 pub struct Regex {
     prog: Node,
     ic: bool,
+    ts: usize,
 }
 
 struct Matcher<'a> {
     src: &'a dyn Lines,
     ic: bool,
+    ts: usize,
     cache: RefCell<HashMap<usize, Rc<Vec<char>>>>,
     steps: Cell<usize>,
 }
@@ -901,7 +905,11 @@ impl Regex {
                         }))
             }
         };
-        Ok(Regex { prog, ic })
+        Ok(Regex {
+            prog,
+            ic,
+            ts: opts.tabstop.max(1),
+        })
     }
 
     /// The first match in `lnum` whose attempt starts at char column `col`
@@ -910,6 +918,7 @@ impl Regex {
         let m = Matcher {
             src,
             ic: self.ic,
+            ts: self.ts,
             cache: RefCell::new(HashMap::new()),
             steps: Cell::new(0),
         };
@@ -1105,7 +1114,7 @@ impl<'a> Matcher<'a> {
                 let line = self.line(p.0);
                 let mut vc = 0;
                 for &c in line.iter().take(p.1) {
-                    vc += crate::text::char_width(c, vc);
+                    vc += crate::text::char_width(c, vc, self.ts);
                 }
                 cmp_ok(vc + 1, *v, cmp) && k(p, st)
             }

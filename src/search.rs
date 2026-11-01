@@ -330,6 +330,7 @@ impl Editor {
             ignorecase: self.opts.ignorecase(),
             smartcase: self.opts.smartcase(),
             last_sub: self.last_sub.clone(),
+            tabstop: self.opts.tabstop(),
         }
     }
 

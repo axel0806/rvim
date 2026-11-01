@@ -6,7 +6,7 @@ use crate::editor::{Editor, InsertKind, LastVisual, Mode, PostInsert, VisualMode
 use crate::motion::{self, Pos, dec, first_non_blank, gchar, inc, inindent};
 use crate::normal::{MInfo, Op};
 use crate::register::{RegType, Register};
-use crate::text::{TABSTOP, char_width, vcol_range};
+use crate::text::{char_width, vcol_range};
 
 /// Vim's `oparg_T`: the area an operator works on.
 #[derive(Clone, Copy, Debug)]
@@ -172,6 +172,7 @@ impl Editor {
         let Some(mut vmode) = self.visual_mode() else {
             return;
         };
+        let ts = self.opts.tabstop();
         // Vim's v_visop / nv_subst / nv_Replace.
         match key {
             'S' | 'R' => vmode = VisualMode::Line,
@@ -229,9 +230,9 @@ impl Editor {
             } else if vmode == VisualMode::Block {
                 oa.end_vcol - oa.start_vcol + 1
             } else {
-                let end_vcol = vcol_range(self.buf.line(oa.end.line), oa.end.col).1;
+                let end_vcol = vcol_range(self.buf.line(oa.end.line), oa.end.col, ts).1;
                 if oa.line_count <= 1 {
-                    let start_vcol = vcol_range(self.buf.line(oa.start.line), oa.start.col).0;
+                    let start_vcol = vcol_range(self.buf.line(oa.start.line), oa.start.col, ts).0;
                     end_vcol - start_vcol + 1
                 } else {
                     end_vcol
@@ -251,10 +252,10 @@ impl Editor {
             }
         }
         if vmode != VisualMode::Block && op != Op::Yank && oa.line_count <= 1 {
-            oa.start_vcol = vcol_range(self.buf.line(oa.start.line), oa.start.col).0;
+            oa.start_vcol = vcol_range(self.buf.line(oa.start.line), oa.start.col, ts).0;
         }
         if vmode != VisualMode::Block {
-            oa.end_vcol = vcol_range(self.buf.line(oa.end.line), oa.end.col).1;
+            oa.end_vcol = vcol_range(self.buf.line(oa.end.line), oa.end.col, ts).1;
         }
 
         oa.linewise = vmode == VisualMode::Line;
@@ -278,12 +279,13 @@ impl Editor {
 
     /// Vim's `get_op_vcol()` for a block.
     fn get_op_vcol(&mut self, oa: &mut OpArg, replay: Option<VisualRedo>) {
+        let ts = self.opts.tabstop();
         oa.block = true;
-        let (s, e) = vcol_range(self.buf.line(oa.start.line), oa.start.col);
+        let (s, e) = vcol_range(self.buf.line(oa.start.line), oa.start.col, ts);
         oa.start_vcol = s;
         oa.end_vcol = e;
         if replay.is_none() {
-            let (s2, e2) = vcol_range(self.buf.line(oa.end.line), oa.end.col);
+            let (s2, e2) = vcol_range(self.buf.line(oa.end.line), oa.end.col, ts);
             oa.start_vcol = oa.start_vcol.min(s2);
             oa.end_vcol = oa.end_vcol.max(e2);
         }
@@ -291,7 +293,7 @@ impl Editor {
             oa.end_vcol = 0;
             for l in oa.start.line..=oa.end.line {
                 let line = self.buf.line(l);
-                let (_, e) = vcol_range(line, line.len_chars());
+                let (_, e) = vcol_range(line, line.len_chars(), ts);
                 oa.end_vcol = oa.end_vcol.max(e);
             }
         } else if let Some(r) = replay {
@@ -649,7 +651,7 @@ impl Editor {
         let mut i = 0;
         let mut prev_pstart = 0;
         while vcol < oa.start_vcol && i < line.len() {
-            incr = char_width(line[i], vcol);
+            incr = char_width(line[i], vcol, self.opts.tabstop());
             vcol += incr;
             if line[i] == ' ' || line[i] == '\t' {
                 bd.pre_whitesp += incr;
@@ -696,7 +698,7 @@ impl Editor {
                 let mut prev_pend = pend;
                 while v <= oa.end_vcol && pend < line.len() {
                     prev_pend = pend;
-                    incr = char_width(line[pend], v);
+                    incr = char_width(line[pend], v, self.opts.tabstop());
                     v += incr;
                     pend += 1;
                 }
@@ -732,13 +734,13 @@ impl Editor {
 
     // ---- shift --------------------------------------------------------------
 
-    pub(crate) fn get_indent(line: &[char]) -> usize {
+    pub(crate) fn get_indent(line: &[char], ts: usize) -> usize {
         let mut vcol = 0;
         for &c in line {
             if c != ' ' && c != '\t' {
                 break;
             }
-            vcol += char_width(c, vcol);
+            vcol += char_width(c, vcol, ts);
         }
         vcol
     }
@@ -754,7 +756,8 @@ impl Editor {
         let (tabs, spaces) = if self.opts.expandtab() {
             (0, size)
         } else {
-            (size / TABSTOP, size % TABSTOP)
+            let ts = self.opts.tabstop();
+            (size / ts, size % ts)
         };
         let mut new: Vec<char> = std::iter::repeat_n('\t', tabs).collect();
         new.extend(std::iter::repeat_n(' ', spaces));
@@ -762,6 +765,32 @@ impl Editor {
         if new != line {
             self.set_line_vec(l, &new);
         }
+    }
+
+    /// Vim's `shift_line()`: moves line `l` by `amount` shiftwidths. With
+    /// 'shiftround' the indent is first rounded to a multiple of
+    /// 'shiftwidth' (a left shift of a partial step counts as one step).
+    fn shift_line(&mut self, l: usize, left: bool, amount: usize) {
+        let sw = self.opts.shiftwidth();
+        let count = Self::get_indent(&self.line_vec(l), self.opts.tabstop());
+        let new = if self.opts.shiftround() {
+            let mut i = (count / sw) as i64;
+            let mut amount = amount as i64;
+            if !count.is_multiple_of(sw) && left {
+                amount -= 1;
+            }
+            if left {
+                i = (i - amount).max(0);
+            } else {
+                i += amount;
+            }
+            i as usize * sw
+        } else if left {
+            count.saturating_sub(sw * amount)
+        } else {
+            count + sw * amount
+        };
+        self.set_indent(l, new);
     }
 
     /// Vim's `op_shift()`.
@@ -776,14 +805,7 @@ impl Editor {
             if oa.block {
                 self.shift_block(oa, l, amount);
             } else {
-                let line = self.line_vec(l);
-                let ind = Self::get_indent(&line);
-                let new = if left {
-                    ind.saturating_sub(self.opts.shiftwidth() * amount)
-                } else {
-                    ind + self.opts.shiftwidth() * amount
-                };
-                self.set_indent(l, new);
+                self.shift_line(l, left, amount);
             }
         }
         // Vim calls changed_lines() even if no line changed.
@@ -823,18 +845,19 @@ impl Editor {
             }
             let mut vcol = bd.start_vcol;
             while textstart < line.len() && (line[textstart] == ' ' || line[textstart] == '\t') {
-                let incr = char_width(line[textstart], vcol);
+                let incr = char_width(line[textstart], vcol, self.opts.tabstop());
                 total += incr;
                 vcol += incr;
                 textstart += 1;
             }
+            let ts = self.opts.tabstop();
             let tabs = if self.opts.expandtab() {
                 0
             } else {
-                ((ws_vcol % TABSTOP) + total) / TABSTOP
+                ((ws_vcol % ts) + total) / ts
             };
             let spaces = if tabs > 0 {
-                ((ws_vcol % TABSTOP) + total) % TABSTOP
+                ((ws_vcol % ts) + total) % ts
             } else {
                 total
             };
@@ -851,7 +874,7 @@ impl Editor {
             }
             let mut non_white_col = bd.start_vcol;
             while non_white < line.len() && (line[non_white] == ' ' || line[non_white] == '\t') {
-                non_white_col += char_width(line[non_white], non_white_col);
+                non_white_col += char_width(line[non_white], non_white_col, self.opts.tabstop());
                 non_white += 1;
             }
             let block_space_width = non_white_col - oa.start_vcol;
@@ -863,7 +886,7 @@ impl Editor {
             }
             let mut end = textstart;
             while vw < destination && end < line.len() {
-                let incr = char_width(line[end], vw);
+                let incr = char_width(line[end], vw, self.opts.tabstop());
                 if vw + incr > destination {
                     break;
                 }
@@ -1321,11 +1344,11 @@ impl Editor {
             let c = gchar(&self.buf, self.cursor);
             let mut colv;
             if fwd && c.is_some() {
-                colv = vcol_range(self.buf.line(lnum), self.cursor.col).1;
+                colv = vcol_range(self.buf.line(lnum), self.cursor.col, self.opts.tabstop()).1;
                 self.cursor.col += 1;
                 colv += 1;
             } else {
-                colv = vcol_range(self.buf.line(lnum), self.cursor.col).0;
+                colv = vcol_range(self.buf.line(lnum), self.cursor.col, self.opts.tabstop()).0;
             }
             let mut textcol = 0;
             let mut totlen = 0;
@@ -1339,7 +1362,7 @@ impl Editor {
                 let mut p = 0;
                 let mut incr = 0;
                 while vcol < colv && p < old.len() {
-                    incr = char_width(old[p], vcol);
+                    incr = char_width(old[p], vcol, self.opts.tabstop());
                     vcol += incr;
                     p += 1;
                 }
@@ -1362,7 +1385,7 @@ impl Editor {
                 }
                 let mut spaces = (y_width + 1) as i64;
                 for &ch in yl {
-                    spaces -= char_width(ch, 0) as i64;
+                    spaces -= char_width(ch, 0, self.opts.tabstop()) as i64;
                 }
                 let spaces = spaces.max(0) as usize;
                 totlen = count * (yl.len() + spaces) + startspaces + endspaces;
@@ -1413,7 +1436,7 @@ impl Editor {
             if ytype == RegType::Char && y_size == 1 {
                 let start_lnum = lnum;
                 let end_lnum = visual_block_end.unwrap_or(lnum).max(lnum);
-                let vcol = vcol_range(self.buf.line(lnum), col).0;
+                let vcol = vcol_range(self.buf.line(lnum), col, self.opts.tabstop()).0;
                 let mut l = lnum;
                 let mut totlen = 0;
                 if count > 0 && yanklen > 0 {
@@ -1422,7 +1445,8 @@ impl Editor {
                         let old = self.line_vec(l);
                         let mut c = col;
                         if l > start_lnum {
-                            c = text_col_at_vcol(&old, vcol).unwrap_or(usize::MAX);
+                            c = text_col_at_vcol(&old, vcol, self.opts.tabstop())
+                                .unwrap_or(usize::MAX);
                         }
                         if visual_block_end.is_some() && c > old.len() {
                             l += 1;
@@ -1620,10 +1644,10 @@ impl Editor {
 
 /// Char index whose cells cover virtual column `vcol` (Vim's `getvpos`),
 /// or `None` if the line is shorter.
-fn text_col_at_vcol(line: &[char], vcol: usize) -> Option<usize> {
+fn text_col_at_vcol(line: &[char], vcol: usize, ts: usize) -> Option<usize> {
     let mut v = 0;
     for (i, &c) in line.iter().enumerate() {
-        let w = char_width(c, v);
+        let w = char_width(c, v, ts);
         if v + w > vcol {
             return Some(i);
         }

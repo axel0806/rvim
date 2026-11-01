@@ -148,6 +148,9 @@ pub struct Editor {
     pub(crate) opts: Options,
     /// The current line holds only an automatic indent (Vim's `did_ai`).
     pub(crate) did_ai: bool,
+    /// A space was typed in this insert (Vim's `inserted_space`): with
+    /// 'softtabstop', BS then deletes one typed space at a time.
+    pub(crate) inserted_space: bool,
     pub(crate) global_busy: bool,
     pub(crate) cmd_literal: bool,
     pub(crate) global_need_beginline: bool,
@@ -237,6 +240,7 @@ impl Editor {
             ex_tasks: Vec::new(),
             opts: Options::default(),
             did_ai: false,
+            inserted_space: false,
             global_busy: false,
             cmd_literal: false,
             global_need_beginline: false,
@@ -508,6 +512,7 @@ impl Editor {
             self.buf.line(self.cursor.line),
             self.cursor.col,
             matches!(self.mode, Mode::Insert | Mode::Replace),
+            self.opts.tabstop(),
         )
     }
 
@@ -738,6 +743,7 @@ impl Editor {
         self.ins_stack.clear();
         self.ins_post = PostInsert::None;
         self.arrow_used = false;
+        self.inserted_space = false;
         self.message = None;
     }
 
@@ -747,7 +753,7 @@ impl Editor {
         if !self.opts.autoindent() {
             return;
         }
-        let ind = Self::get_indent(&self.line_vec(from));
+        let ind = Self::get_indent(&self.line_vec(from), self.opts.tabstop());
         if ind > 0 {
             self.set_indent(new, ind);
             let w = self
@@ -817,6 +823,11 @@ impl Editor {
                 });
             }
         }
+        match key {
+            Key::Char(' ') => self.inserted_space = true,
+            Key::Char(_) | Key::Tab => self.inserted_space = false,
+            _ => {}
+        }
         if self.insert_edit(key) {
             self.ins_keys.push(key);
             if let Some(r) = &mut self.redo_building {
@@ -832,19 +843,7 @@ impl Editor {
         match key {
             Key::Char(_) | Key::Tab => {
                 self.did_ai = false;
-                if key == Key::Tab && self.opts.expandtab() {
-                    // 'expandtab': spaces up to the next tab stop.
-                    let ts = self.opts.tabstop();
-                    let vcol = text::cursor_vcol(self.buf.line(line), col, true);
-                    let mode = self.mode;
-                    for i in 0..ts - vcol % ts {
-                        if i == 1 {
-                            // Replace mode replaces one character only.
-                            self.mode = Mode::Insert;
-                        }
-                        self.insert_edit(Key::Char(' '));
-                    }
-                    self.mode = mode;
+                if key == Key::Tab && self.ins_tab() {
                     return true;
                 }
                 let c = if let Key::Char(c) = key { c } else { '\t' };
@@ -866,7 +865,7 @@ impl Editor {
                 let ai = self.opts.autoindent();
                 let ind = if ai {
                     // Only the indent before the cursor is copied.
-                    Self::get_indent(&self.line_vec(line)[..col])
+                    Self::get_indent(&self.line_vec(line)[..col], self.opts.tabstop())
                 } else {
                     0
                 };
@@ -934,6 +933,7 @@ impl Editor {
                     return false;
                 }
             },
+            Key::Backspace if self.bs_uses_sts() => self.ins_bs_sts(),
             // 'backspace' is "indent,eol,start" (Vim's defaults).
             Key::Backspace => {
                 if col > 0 {
@@ -965,6 +965,141 @@ impl Editor {
             _ => return false,
         }
         true
+    }
+
+    /// True when only white space precedes the cursor (Vim's `inindent(0)`).
+    fn in_indent(&self) -> bool {
+        self.line_vec(self.cursor.line)[..self.cursor.col]
+            .iter()
+            .all(|&c| c == ' ' || c == '\t')
+    }
+
+    /// Virtual column of char index `col` in `line` (its start).
+    fn vcol_of(line: &[char], col: usize, ts: usize) -> usize {
+        line[..col]
+            .iter()
+            .fold(0, |vcol, &c| vcol + text::char_width(c, vcol, ts))
+    }
+
+    /// Vim's `ins_tab()` for 'expandtab', 'softtabstop' and 'smarttab'.
+    /// Returns false when the Tab is an ordinary character.
+    fn ins_tab(&mut self) -> bool {
+        let Pos { line, col } = self.cursor;
+        let ts = self.opts.tabstop();
+        let sw = self.opts.shiftwidth();
+        let sts = self.opts.softtabstop();
+        let et = self.opts.expandtab();
+        let sta = self.opts.smarttab();
+        let ind = self.in_indent();
+        if !et && !(sta && ind && sw != ts) && sts == 0 {
+            return false;
+        }
+        // Spaces up to the next stop: 'shiftwidth' in the indent with
+        // 'smarttab', else 'softtabstop', else 'tabstop'.
+        let stop = if sta && ind {
+            sw
+        } else if sts != 0 {
+            sts
+        } else {
+            ts
+        };
+        let vcol = Self::vcol_of(&self.line_vec(line), col, ts);
+        let mode = self.mode;
+        for i in 0..stop - vcol % stop {
+            if i == 1 {
+                // Replace mode replaces one character only.
+                self.mode = Mode::Insert;
+            }
+            self.insert_edit(Key::Char(' '));
+        }
+        self.mode = mode;
+        // Replace mode is left as is: the replace stack (for BS) assumes one
+        // entry per typed character, and Vim's rewrite is not reproduced there.
+        if !et && (sts != 0 || (sta && ind)) && self.mode != Mode::Replace {
+            self.tabify_before_cursor();
+        }
+        true
+    }
+
+    /// The end of Vim's `ins_tab()`: the white space before the cursor is
+    /// written with Tabs wherever a Tab stop is reached within it.
+    fn tabify_before_cursor(&mut self) {
+        let Pos { line, col } = self.cursor;
+        let ts = self.opts.tabstop();
+        let v = self.line_vec(line);
+        let mut start = col;
+        while start > 0 && matches!(v[start - 1], ' ' | '\t') {
+            start -= 1;
+        }
+        if start == col {
+            return;
+        }
+        let end_vcol = Self::vcol_of(&v, col, ts);
+        let mut vcol = Self::vcol_of(&v, start, ts);
+        let mut new: Vec<char> = Vec::new();
+        while (vcol / ts + 1) * ts <= end_vcol {
+            new.push('\t');
+            vcol = (vcol / ts + 1) * ts;
+        }
+        new.extend(std::iter::repeat_n(' ', end_vcol - vcol));
+        if new[..] == v[start..col] {
+            return;
+        }
+        self.buf.remove(line, start, col - start);
+        let s: String = new.iter().collect();
+        self.buf.insert(line, start, &s);
+        self.cursor.col = start + new.len();
+    }
+
+    /// Whether a BS in Insert mode is handled by 'softtabstop' or
+    /// 'smarttab' (the condition of Vim's `ins_bs()`).
+    fn bs_uses_sts(&self) -> bool {
+        let Pos { line, col } = self.cursor;
+        if col == 0 {
+            return false;
+        }
+        if self.opts.smarttab() && self.in_indent() {
+            return true;
+        }
+        let prev = self.buf.char_at(line, col - 1);
+        self.opts.softtabstop() != 0
+            && (prev == Some('\t') || (prev == Some(' ') && !self.inserted_space))
+    }
+
+    /// Vim's `ins_bs()` with 'softtabstop' or 'smarttab': BS deletes white
+    /// space back to the previous stop, then fills up to it with spaces.
+    fn ins_bs_sts(&mut self) {
+        let Pos { line, mut col } = self.cursor;
+        let ts = self.opts.tabstop();
+        let step = if self.opts.smarttab() && self.in_indent() {
+            self.opts.shiftwidth()
+        } else {
+            self.opts.softtabstop()
+        };
+        self.u_save_cursor();
+        let vcol_at = |buf: &crate::buffer::Buffer, col: usize| {
+            Self::vcol_of(&buf.line(line).chars().collect::<Vec<_>>(), col, ts)
+        };
+        let start_vcol = vcol_at(&self.buf, col);
+        // The last cell of the character before the cursor.
+        let want = ((start_vcol - 1) / step) * step;
+        let mut vcol = start_vcol;
+        while vcol > want && col > 0 && matches!(self.buf.char_at(line, col - 1), Some(' ' | '\t'))
+        {
+            self.buf.remove(line, col - 1, 1);
+            col -= 1;
+            vcol = vcol_at(&self.buf, col);
+        }
+        while vcol < want {
+            self.buf.insert(line, col, " ");
+            col += 1;
+            vcol = vcol_at(&self.buf, col);
+        }
+        if vcol >= start_vcol && col > 0 {
+            self.buf.remove(line, col - 1, 1);
+            col -= 1;
+        }
+        self.cursor.col = col;
     }
 
     fn insert_move(&mut self, key: Key) {

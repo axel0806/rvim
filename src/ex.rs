@@ -1215,13 +1215,14 @@ impl Editor {
                     }
                 };
                 let def = &crate::options::TABLE[i];
-                if n < 0 {
+                if def.name == "tabstop" && n < 1 {
+                    // Vim falls back to the default instead of keeping the value.
+                    self.opts.set(i, Val::Num(8));
                     return Err(format!("E487: Argument must be positive: {item}"));
                 }
-                if def.name == "tabstop" && n != 8 {
-                    return Err(format!(
-                        "E474: Invalid argument: {item} (rvim only supports tabstop=8 so far)"
-                    ));
+                // 'softtabstop' may be negative (use 'shiftwidth').
+                if n < 0 && def.name != "softtabstop" {
+                    return Err(format!("E487: Argument must be positive: {item}"));
                 }
                 Val::Num(n)
             }

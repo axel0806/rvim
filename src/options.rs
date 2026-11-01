@@ -49,6 +49,9 @@ pub const TABLE: &[Def] = &[
     b("expandtab", "et", Scope::Buffer, false),
     n("shiftwidth", "sw", Scope::Buffer, 8),
     n("tabstop", "ts", Scope::Buffer, 8),
+    n("softtabstop", "sts", Scope::Buffer, 0),
+    b("smarttab", "sta", Scope::Buffer, false),
+    b("shiftround", "sr", Scope::Global, false),
     n("scrolloff", "so", Scope::Global, 0),
     b("hlsearch", "hls", Scope::Global, false),
     b("incsearch", "is", Scope::Global, false),
@@ -146,6 +149,20 @@ impl Options {
             0 => self.tabstop(),
             v => v.max(1) as usize,
         }
+    }
+    /// The value of `'softtabstop'` in use (Vim's `get_sts_value()`): a
+    /// negative setting means 'shiftwidth', zero means off.
+    pub fn softtabstop(&self) -> usize {
+        match self.num_of("softtabstop") {
+            v if v < 0 => self.shiftwidth(),
+            v => v as usize,
+        }
+    }
+    pub fn smarttab(&self) -> bool {
+        self.bool_of("smarttab")
+    }
+    pub fn shiftround(&self) -> bool {
+        self.bool_of("shiftround")
     }
 }
 

@@ -68,11 +68,14 @@ use:
 - No syntax highlighting, `hlsearch`, `incsearch`, or line numbers. The
   Visual area is drawn (reverse video).
 - Few options. `:set` supports `ignorecase`, `smartcase`, `wrapscan`,
-  `autoindent`, `expandtab`, `shiftwidth`, and stores `hlsearch`,
-  `incsearch`, `number`, `relativenumber`, `wrap` and `autoread` without
-  using them yet (`scrolloff` works). `tabstop` is fixed at 8 (setting another
-  value is an error), `softtabstop`, `smarttab` and `smartindent` do not exist,
-  and `backspace=indent,eol,start`, `whichwrap=b,s` and `startofline` are
+  `autoindent`, `expandtab`, `shiftwidth`, `tabstop`, `softtabstop`,
+  `smarttab` and `shiftround`, and stores `hlsearch`, `incsearch`, `number`,
+  `relativenumber`, `wrap` and `autoread` without using them yet
+  (`scrolloff` works). Tab handling is Vim's for the common cases, but some
+  combinations with `softtabstop` and `tabstop` 2 or 4, Replace-mode Tab with
+  `softtabstop`, and block `<` or block put with tabs still differ from Vim
+  (see PLAN.md, "Known differences"). `smartindent` does not exist, and
+  `backspace=indent,eol,start`, `whichwrap=b,s` and `startofline` are
   fixed. Options are global; `:setlocal` and `:setglobal` are not there yet.
 - No config file (`vimrc`), plugins, Vimscript, `:help`, folds, completion,
   spell checking, `:terminal`, or `:!` shell commands.

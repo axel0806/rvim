@@ -848,7 +848,12 @@ impl Editor {
     /// on the end-of-line position.
     pub(crate) fn coladvance(&mut self, want: usize) {
         let allow_end = matches!(self.mode, Mode::Insert | Mode::Replace | Mode::Visual(_));
-        self.cursor.col = text::col_for_vcol(self.buf.line(self.cursor.line), want, allow_end);
+        self.cursor.col = text::col_for_vcol(
+            self.buf.line(self.cursor.line),
+            want,
+            allow_end,
+            self.opts.tabstop(),
+        );
     }
 
     fn fnb(&mut self) {
@@ -1847,8 +1852,9 @@ impl Editor {
 
     /// Leftmost and rightmost virtual columns of two positions (`getvcols`).
     pub(crate) fn vcols_of(&self, a: Pos, b: Pos) -> (usize, usize) {
-        let (s1, e1) = text::vcol_range(self.buf.line(a.line), a.col);
-        let (s2, e2) = text::vcol_range(self.buf.line(b.line), b.col);
+        let ts = self.opts.tabstop();
+        let (s1, e1) = text::vcol_range(self.buf.line(a.line), a.col, ts);
+        let (s2, e2) = text::vcol_range(self.buf.line(b.line), b.col, ts);
         (s1.min(s2), e1.max(e2))
     }
 

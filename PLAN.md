@@ -25,8 +25,10 @@ clean at the last commit.
 
 Since the alpha (all committed and pushed): bracketed paste, Alt/F-keys/Insert/
 Shift-Tab, Visual area drawn through `view::Hl` groups, row-level diff redraw,
-the options registry (`options.rs`: `autoindent`, `expandtab`, `shiftwidth`
-work), panic recovery files (`recovery.rs`), the channel-based event loop
+the options registry (`options.rs`: `autoindent`, `expandtab`, `shiftwidth`,
+`tabstop`, `softtabstop`, `smarttab`, `shiftround` work; `text.rs` takes the
+tabstop as a parameter, Insert Tab and BS follow `ins_tab()`/`ins_bs()` for
+softtabstop and smarttab), panic recovery files (`recovery.rs`), the channel-based event loop
 (`event.rs`), `:` command-line editing and history (`cmdline.rs`), `&`/`g&`,
 macros (`macros.rs`), `/` and `?` prompts with the same editing keys, `<C-r>`
 and history (also in `cmdline.rs`), `gn`/`gN` (`current_search()` in
@@ -39,7 +41,6 @@ restored by undo in `undo.rs`), and the scrolling commands with `scrolloff`
 **In progress** (as of 2026-11-01; maintained by the orchestrator, and an
 entry is removed when its branch lands on main):
 
-- Indent options (`tabstop`, `softtabstop`, `smarttab`, `shiftround`): being built by a Haiku agent (branch name pending).
 - Licensing (Apache-2.0 for new code, Vim license for Vim-derived files): being built by a Haiku agent (branch name pending); the owner approved this on 2026-11-01.
 - `:s` `\=` expressions and scrolling in the `c` prompt (`<C-e>`, `<C-y>`): being built by a Haiku agent (branch name pending); last open items of milestone 3.
 
@@ -105,7 +106,10 @@ after milestone 7.
   command history is cleared per case via `histdel`, options are reset per
   case in `SCRIPT_BODY`; Vim died on `qaf{char}x q @a` style cases (recording
   an `f` motion), so they are left out. Register lines are compared with
-  trailing `\r` kept.
+  trailing `\r` kept. Desired columns carry over between cases in Vim, and
+  neither `cursor()` nor `normal! 0` clears them here, so `SCRIPT_BODY` uses
+  `winrestview({'curswant': 0})` before each case (a `j` in a case would
+  otherwise start at the previous case's column).
 - `<Esc>` and `<C-c>` in a `:` or `/` prompt are not compared: in silent Ex
   mode Vim types the following keys into the prompt instead of cancelling
   (`/qux<Esc>x` gives the pattern `quxx`). Cancel behaviour is tested in
@@ -156,7 +160,7 @@ pattern, but the Vim contract still decides what happens without an opt-in.
 | Module | Role |
 |---|---|
 | `buffer.rs` | Lines in a `ropey` rope (LF-only line breaks), file load/save, CRLF and missing-EOL detection |
-| `text.rs` | Display widths and virtual columns (tabstop 8, `^X` control chars, wide chars) |
+| `text.rs` | Display widths and virtual columns (every function takes the tabstop; `^X` control chars, wide chars) |
 | `motion.rs` | Positions and motions; word motions are ports of Vim's `fwd_word`/`bck_word`/`end_word` with its `inc`/`dec` cursor walk and `utf_class` table |
 | `editor.rs` | Mode state machine (Normal, Insert, Command-line), counts, desired column (`curswant`) |
 | `jumplist.rs` | The jumplist and the context mark (ports of Vim's `setpcmark`, `checkpcmark`, `movemark`). Window state, so it moves to `Window` with the split; the buffer logs its line edits (`PosEdit`) and the editor applies them in order |
@@ -1775,7 +1779,16 @@ stays the release path.
 - Emoji use approximate block ranges instead of Vim's full `emoji_all` table
   for word motions; composing characters are separate characters.
 - Options come from the registry in `options.rs` (all global for now).
-  `tabstop` is fixed at 8, there is no `softtabstop`/`smarttab`/`smartindent`,
+  `tabstop`, `softtabstop` (negative = 'shiftwidth'), `smarttab` and
+  `shiftround` work, but these Vim cases are not matched yet; they are kept
+  as `#[ignore]`d `known_gap_*` tests in `tests/compat_options.rs` (run with
+  `cargo test -- --ignored`): (a) Insert Tab and BS with 'softtabstop' when
+  'tabstop' is 2 or 4 and white space continues after the cursor (Vim's
+  tabify step leaves a different run); (b) Replace-mode Tab with 'softtabstop'
+  and noexpandtab, and Replace-mode BS over the white space such a Tab made
+  (the replace stack assumes one entry per character); (c) block `<` on a line
+  with a tab in the block, which removes too much (not tabstop specific);
+  (d) block yank and put with 'tabstop' 2 and tabs. There is no `smartindent`,
   `backspace=indent,eol,start`, `whichwrap=b,s` and `startofline` are fixed,
   and the ruler is always shown. `hlsearch`, `incsearch`, `number`,
   `relativenumber`, `wrap` and `autoread` are stored but have no effect yet.

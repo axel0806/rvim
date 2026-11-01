@@ -98,8 +98,9 @@ fn visual_cells(ed: &Editor, line: usize, lay: &Layout) -> Vec<(usize, usize)> {
             if line < a.line.min(b.line) || line > a.line.max(b.line) {
                 return out;
             }
-            let (la, ra) = text::vcol_range(ed.buf.line(a.line), a.col);
-            let (lb, rb) = text::vcol_range(ed.buf.line(b.line), b.col);
+            let ts = ed.opts.tabstop();
+            let (la, ra) = text::vcol_range(ed.buf.line(a.line), a.col, ts);
+            let (lb, rb) = text::vcol_range(ed.buf.line(b.line), b.col, ts);
             let left = la.min(lb);
             let to_eol = ed.curswant == usize::MAX;
             let right = if to_eol { usize::MAX } else { ra.max(rb) };
@@ -132,7 +133,7 @@ struct Layout {
     widths: Vec<usize>,
 }
 
-fn layout(line: RopeSlice, width: usize) -> Layout {
+fn layout(line: RopeSlice, width: usize, ts: usize) -> Layout {
     let mut rows = vec![String::new()];
     let mut cell = 0usize;
     // A char that does not fit at the end of a row (a wide char) moves to the
@@ -149,8 +150,8 @@ fn layout(line: RopeSlice, width: usize) -> Layout {
     let mut widths = Vec::new();
     let mut vcol = 0;
     for c in line.chars() {
-        let w = char_width(c, vcol);
-        let shown = char_display(c, vcol);
+        let w = char_width(c, vcol, ts);
+        let shown = char_display(c, vcol, ts);
         let first_w = shown.chars().next().map_or(1, cell_width);
         align(&mut rows, &mut cell, first_w);
         starts.push(cell);
@@ -195,9 +196,9 @@ fn rows_needed(lay: &Layout, width: usize) -> usize {
 }
 
 /// Screen rows a buffer line takes when wrapped to `width` cells.
-pub fn line_height(line: RopeSlice, width: usize) -> usize {
+pub fn line_height(line: RopeSlice, width: usize, ts: usize) -> usize {
     let width = width.max(1);
-    rows_needed(&layout(line, width), width)
+    rows_needed(&layout(line, width, ts), width)
 }
 
 /// Lays out the window of `ed`: its size is the editor's screen size and it
@@ -212,7 +213,7 @@ pub fn frame(ed: &Editor) -> Frame {
     let mut cursor = (0, 0);
     let mut line = ed.top;
     while rows.len() < text_height && line < ed.buf.line_count() {
-        let lay = layout(ed.buf.line(line), width);
+        let lay = layout(ed.buf.line(line), width, ed.opts.tabstop());
         let need = rows_needed(&lay, width);
         if line != ed.top && rows.len() + need > text_height {
             while rows.len() < text_height {
@@ -286,7 +287,8 @@ fn status_line(
     if let Some(text) = typed {
         // The cursor sits at the edit position of the command line.
         let upto = 1 + ed.cmdline_pos();
-        let used: usize = text.chars().take(upto).map(|c| char_width(c, 0)).sum();
+        let ts = ed.opts.tabstop();
+        let used: usize = text.chars().take(upto).map(|c| char_width(c, 0, ts)).sum();
         *cursor = (used.min(width - 1), bottom);
         return (pad(truncate(&text, width), width), false);
     }

@@ -23,5 +23,14 @@ fn set_errors() {
     assert!(msg(":set sw=x<CR>").starts_with("E521"));
     assert!(msg(":set sw=-1<CR>").starts_with("E487"));
     assert!(msg(":set ai=3<CR>").starts_with("E474"));
-    assert!(msg(":set ts=4<CR>").starts_with("E474"));
+    assert!(msg(":set ts=0<CR>").starts_with("E487"));
+    assert!(msg(":set sts=-2<CR>").is_empty());
+}
+
+#[test]
+fn tabstop_is_real() {
+    assert_eq!(msg(":set ts=4 ts?<CR>"), "  tabstop=4");
+    assert_eq!(msg(":set sts=-1 sts?<CR>"), "  softtabstop=-1");
+    assert_eq!(msg(":set sta sta?<CR>"), "  smarttab");
+    assert_eq!(msg(":set sr sr?<CR>"), "  shiftround");
 }

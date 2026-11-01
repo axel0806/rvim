@@ -116,7 +116,7 @@ let s:out = []
 " Screen size first: rvim's Editor assumes Vim's default without a terminal.
 call add(s:out, 'S ' . &lines . ' ' . &columns)
 for [s:lines, s:keys] in g:cases
-  silent! set autoindent& expandtab& shiftwidth& softtabstop& smarttab& tabstop&
+  silent! set autoindent& expandtab& shiftwidth& softtabstop& smarttab& tabstop& shiftround&
   silent! set ignorecase& smartcase& wrapscan& scrolloff& hlsearch& incsearch&
   " 'scroll&' would set 0, which scrolls nothing with CTRL-D; the default is half the window.
   silent! execute 'set scroll=' . (winheight(0) / 2)
@@ -140,6 +140,10 @@ for [s:lines, s:keys] in g:cases
   silent! call setpos("''", [0, 0, 0, 0])
   silent! clearjumps
   call cursor(1, 1)
+  " cursor() and "0" leave the desired column ('curswant') of the previous
+  " case in place in this headless Vim, so a vertical motion would start at a
+  " stale column; winrestview() sets it.
+  call winrestview({'lnum': 1, 'col': 0, 'curswant': 0})
   " silent!: an error message must not abort the remaining cases.
   silent! call feedkeys(s:keys, 'tx')
   if mode() !=# 'n'
