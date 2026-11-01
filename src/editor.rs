@@ -373,7 +373,7 @@ impl Editor {
             Event::Key(k) => self.handle_key(k),
             Event::Paste(text) => self.paste(&text),
             Event::Resize(cols, rows) => self.set_screen_size(cols as usize, rows as usize),
-            Event::FocusGained | Event::FocusLost | Event::Timer => {}
+            Event::FocusGained | Event::FocusLost | Event::Timer | Event::Signal(_) => {}
         }
     }
 

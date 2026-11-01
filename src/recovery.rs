@@ -60,6 +60,16 @@ pub fn write_recovery(buf: &Buffer, dir: &Path) -> io::Result<Saved> {
     Ok(Saved { path, refused_dir })
 }
 
+/// Writes every modified buffer in `bufs` with [`write_recovery`] and returns
+/// one result per modified buffer, in order. Unmodified buffers are skipped.
+/// The panic hook and the SIGHUP/SIGTERM path both use this.
+pub fn write_modified(bufs: &[&Buffer], dir: &Path) -> Vec<io::Result<Saved>> {
+    bufs.iter()
+        .filter(|b| b.modified)
+        .map(|b| write_recovery(b, dir))
+        .collect()
+}
+
 /// Creates `dir/<name>.<secs>`, or the first free `<name>.<secs>.<n>`, with
 /// `create_new`, so an existing file or a symbolic link at that name is never
 /// written through.
@@ -190,6 +200,26 @@ mod tests {
         let b = write_recovery(&ed.buf, dir.path()).unwrap().path;
         assert_ne!(a, b);
         assert_eq!(std::fs::read_to_string(a).unwrap(), "ne\ntwo\n");
+    }
+
+    #[test]
+    fn only_modified_documents_are_written() {
+        let dir = tempfile::tempdir().unwrap();
+        let clean = crate::Editor::from_text("kept\n");
+        let dirty = sample();
+        let results = write_modified(&[&clean.buf, &dirty.buf], dir.path());
+        assert_eq!(results.len(), 1);
+        let saved = results.into_iter().next().unwrap().unwrap();
+        assert_eq!(std::fs::read_to_string(&saved.path).unwrap(), "ne\ntwo\n");
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn no_modified_documents_writes_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let clean = crate::Editor::from_text("kept\n");
+        assert!(write_modified(&[&clean.buf], dir.path()).is_empty());
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
     }
 
     #[test]

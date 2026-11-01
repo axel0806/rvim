@@ -7,7 +7,7 @@ a real Vim by the differential harness in `tests/common/mod.rs`.
 
 ## Status: read this first
 
-Last updated 2026-11-01 (CI first ran on GitHub; Linux builds Vim 9.1.1914 from source, and all three OS jobs require Vim; cell-level diff redraw in `redraw.rs`; kitty keyboard protocol, with `RVIM_NO_KITTY=1` to turn it off). **rvim is an alpha, roughly 25-30% of this plan.**
+Last updated 2026-11-01 (CI first ran on GitHub; Linux builds Vim 9.1.1914 from source, and all three OS jobs require Vim; cell-level diff redraw in `redraw.rs`; kitty keyboard protocol, with `RVIM_NO_KITTY=1` to turn it off; SIGHUP/SIGTERM recovery on Unix, milestone 4). **rvim is an alpha, roughly 25-30% of this plan.**
 As of 2026-11-01 milestones 1-3 are done; 4 and 5 are partly done; 6 has the start menu only; 7-9 are plans.
 Released as `v0.1.0-alpha.1`, `v0.1.0-alpha.2` and `v0.1.0-alpha.3`. The next release is `v0.1.0-alpha.4`, not yet tagged. All tests pass against Vim 9.1 and clippy/fmt are
 clean at the last commit.
@@ -16,7 +16,7 @@ clean at the last commit.
 |---|---|
 | 1 Core, 2 Vim grammar | Done |
 | 3 Search and Ex | 100%. `:s` `\=` expressions done as the subset in `src/expr.rs` (see Known differences) |
-| 4 Foundation | ~75%. Left: the Document/Window/Editor split (the biggest item; see "Foundation"), real local/global option scopes (`:setlocal`/`:setglobal` semantics; `:setlocal` is accepted as an alias of `:set`, `:setglobal` does not exist), recovery on terminal close (SIGHUP) |
+| 4 Foundation | ~75%. Left: the Document/Window/Editor split (the biggest item; see "Foundation"), real local/global option scopes (`:setlocal`/`:setglobal` semantics; `:setlocal` is accepted as an alias of `:set`, `:setglobal` does not exist) |
 | 5 Windows and buffers | ~30%. Done: macros (`q`, `@`, `@@`, `@:`), lowercase marks (`m{a-z}`, `'a`, `` `a ``, `:k`, `:mark`, `'a` addresses), the jumplist (`<C-o>`, `<Tab>` with counts, `:jumps`) and the context mark (`''`, `` `` ``, `m'`, `` m` ``), scrolling (`<C-e> <C-y> <C-f> <C-b> <C-d> <C-u> zt zz zb z<CR> z. z- H M L`, counts, `scrolloff`, wrapped lines). Left: splits, buffer list, the other marks (uppercase, `'[`/`']`, `'<`/`'>` motions), swap files |
 | 6 Modern editing experience | Started, not near done. Landed: the start menu (opt-in `--start-menu`, `startmenu` option). Left: hlsearch, incsearch, syntax, line numbers, config file, palette, mouse, `:Start`, the start menu's recent files, Config and agent entries, and its modern-profile default (see "Start menu") |
 | 7 Agent integration | 0%. Not started (file-change reload as an undo step, diff view, ACP connector, agent detection). Research is in "Detecting and connecting to agents" |
@@ -250,7 +250,7 @@ What the revised milestones fix, as the code stands today:
    match (`scroll::scroll_window_for_prompt`; tests in `tests/confirm_prompt.rs`,
    not probed in Vim: `-es` does not show the window).
    Marks in Ex addresses (`'a`) are done with the marks (milestone 5).
-4. **Foundation (in progress).** Done: bracketed paste, Alt/F-keys/Insert/Shift-Tab, kitty keyboard protocol, Visual area drawn via highlight groups, cell-level diff redraw (`redraw.rs`), options registry (`autoindent`, `expandtab`, `shiftwidth`), panic recovery files, channel-based event loop with an input thread. Left: the Document/Window/Editor split, real option scopes (`:setlocal`/`:setglobal`; `:setlocal` is only an alias of `:set` for now), SIGHUP recovery. Original description: Restructure before adding more features, because windows,
+4. **Foundation (in progress).** Done: bracketed paste, Alt/F-keys/Insert/Shift-Tab, kitty keyboard protocol, Visual area drawn via highlight groups, cell-level diff redraw (`redraw.rs`), options registry (`autoindent`, `expandtab`, `shiftwidth`), panic recovery files, SIGHUP/SIGTERM recovery files on Unix, channel-based event loop with an input thread. Left: the Document/Window/Editor split, real option scopes (`:setlocal`/`:setglobal`; `:setlocal` is only an alias of `:set` for now). Original description: Restructure before adding more features, because windows,
    agents and prediction all depend on it. Order, each step landing with the
    differential tests green: (a) Document/Window/Editor split, (b) internal
    event loop, (c) styled frame with the Visual area drawn, (d) diff redraw,
@@ -388,8 +388,14 @@ case runs.
 
 - Milestone 4: the panic hook writes every modified document to a recovery
   file (`$XDG_STATE_HOME/rvim/recovery/<name>.<time>` or the platform
-  equivalent) and prints its path after the terminal is restored. Terminal
-  close and SIGHUP/SIGTERM do the same on Unix.
+  equivalent) and prints its path after the terminal is restored. On Unix,
+  SIGHUP (terminal closed) and SIGTERM do the same and then exit with
+  128 + the signal number (129, 143). The signal handler does nothing but
+  hand the signal to signal-hook's iterator thread, which sends an
+  `Event::Signal` into the main loop; the main thread restores the terminal,
+  calls `recovery::write_modified` and exits (`signals.rs`, `main.rs`). Only
+  `cfg(unix)` registers signals, so Windows is unchanged. Done 2026-11-01.
+  A terminal I/O error that ends the loop also saves the text.
 - Milestone 5: Vim-style swap files with `directory`, periodic writes
   (`updatetime`, `updatecount`), the "swap file exists" prompt on open, and
   `:recover`. Recovery files from the panic hook are offered at the next
@@ -1245,6 +1251,7 @@ Failures:
 | Malformed JSON from the agent | parse error | line logged and skipped; 10 in a row: disconnect | Disconnected |
 | Agent write fails (`fs/write_text_file`) | IO error | JSON-RPC error to the agent; message `write failed: <reason>` | unchanged |
 | rvim panics | panic hook | recovery files (existing) | agent processes stop when their pipes close |
+| Terminal closed (SIGHUP) or SIGTERM on Unix | `signals.rs` event; exit 129 or 143 | `rvim stopped by SIGHUP. Unsaved text was saved to <path>` | recovery file; agent processes stop when their pipes close |
 
 Slow agent: every call to an agent runs on the connector's worker. The UI never
 waits for `initialize`, `session/prompt` or a read. The Working state is the
@@ -1602,6 +1609,7 @@ possibly the ACP crate (check).
 
 | Need | Choice | Notes |
 |---|---|---|
+| Unix signals (SIGHUP, SIGTERM) | `signal-hook` 0.3.18 (`cfg(unix)`) | Looked up 2026-11-01. Latest is 0.4.6, first published 2026-10-31, which is under two weeks old, so 0.3.18 is used. crossterm 0.29 already depends on 0.3 (through `signal-hook-mio`), so the lockfile gains no crate. Its iterator thread keeps all work out of the handler. Licence Apache-2.0 or MIT |
 | Line diff, external-change undo step, diff view | `similar` 3.2.1 | Pure Rust, Myers/Patience. Its ops map to range edits. Three-way merge: write a small diff3 on top (or evaluate `diffy`, UNVERIFIED) |
 | File changes | mtime/size polling | `notify` later, optional |
 | Local IPC | `interprocess` 2.4.7 (`local_socket`) | One API for Unix socket and Windows named pipe; std alone has no named pipes. Set permissions, handle stale socket files |
@@ -1984,8 +1992,17 @@ plan, kept for the record; the files are the source of truth.
 - The frame carries highlight groups per cell (`view::Hl`); only Visual and
   the `~`/`@` filler use them so far. The terminal redraws only rows that
   changed. Still missing: hlsearch, incsearch, matching parens, syntax.
-- A panic writes unsaved text to a recovery file (`recovery.rs`), but a
-  closed terminal (SIGHUP) does not yet, and there are no swap files.
+- A panic, SIGHUP or SIGTERM writes unsaved text to a recovery file
+  (`recovery.rs`, `signals.rs`); there are no swap files, so Vim's swap-file
+  behaviour on those signals is not matched. Not covered by the recovery
+  files: SIGKILL and SIGSTOP (cannot be caught), a power loss or a crash of
+  the machine, SIGQUIT (not handled, so the process dies without a file),
+  and on Windows the console close, logoff and Ctrl-Break events (nothing is
+  registered). SIGINT is untouched: in raw mode Ctrl-C is a key, not a
+  signal. The tests raise SIGHUP and SIGTERM inside the test process
+  (`signals.rs`); no test runs the real binary under a terminal, so the full
+  terminal-close path (a pseudo-terminal closed by the emulator) needs a
+  manual check on Linux and macOS.
 - Recovery files are created owner-only on Unix: the directory with mode 0700
   (an existing directory the user owns is tightened to 0700; a symbolic link or
   a directory of another owner is not used, and the file goes to a fresh private

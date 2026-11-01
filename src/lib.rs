@@ -22,6 +22,7 @@ pub mod regex;
 pub mod register;
 mod scroll;
 mod search;
+pub mod signals;
 mod startmenu;
 pub mod text;
 pub mod textobject;

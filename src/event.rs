@@ -18,6 +18,9 @@ pub enum Event {
     FocusLost,
     /// A timer requested through `Editor::next_deadline` expired.
     Timer,
+    /// A signal that ends the session (SIGHUP, SIGTERM; see `signals.rs`).
+    /// The front end acts on it; the editor ignores it.
+    Signal(i32),
 }
 
 #[cfg(test)]

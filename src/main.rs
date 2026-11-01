@@ -58,29 +58,27 @@ fn main() -> io::Result<()> {
     }));
     enable_kitty_keys();
 
-    // A panic must not lose unsaved text: write it to a recovery file.
+    // A panic must not lose unsaved text: write it to a recovery file. The
+    // same goes for a signal that ends the session (see `run`).
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(&mut ed)));
     restore_terminal();
     match result {
-        Ok(r) => r,
+        Ok(Ok(None)) => Ok(()),
+        Ok(Ok(Some(sig))) => {
+            save_recovery(
+                &ed,
+                &format!("rvim stopped by {}", rvim::signals::name(sig)),
+            );
+            std::process::exit(rvim::signals::exit_code(sig));
+        }
+        // A terminal I/O error (for example, a closed terminal found while
+        // drawing) ends the session too, so it saves the text as well.
+        Ok(Err(e)) => {
+            save_recovery(&ed, "rvim stopped after a terminal error");
+            Err(e)
+        }
         Err(_) => {
-            if ed.buf.modified {
-                match rvim::recovery::write_recovery(&ed.buf, &rvim::recovery::recovery_dir()) {
-                    Ok(saved) => {
-                        if let Some(dir) = &saved.refused_dir {
-                            eprintln!(
-                                "rvim: recovery directory {} is a symbolic link or not yours; not used.",
-                                dir.display()
-                            );
-                        }
-                        eprintln!(
-                            "rvim crashed. Unsaved text was saved to {}",
-                            saved.path.display()
-                        );
-                    }
-                    Err(e) => eprintln!("rvim crashed and could not save the text: {e}"),
-                }
-            }
+            save_recovery(&ed, "rvim crashed");
             std::process::exit(101);
         }
     }
@@ -112,6 +110,31 @@ fn enable_kitty_keys() {
     let flags = KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES;
     if execute!(io::stdout(), PushKeyboardEnhancementFlags(flags)).is_ok() {
         KITTY_ACTIVE.store(true, Ordering::SeqCst);
+    }
+}
+
+/// Writes the modified buffer to a recovery file and says where on stderr.
+/// Writes to stderr are ignored on failure: the terminal may be gone.
+fn save_recovery(ed: &Editor, why: &str) {
+    let mut stderr = io::stderr();
+    for result in rvim::recovery::write_modified(&[&ed.buf], &rvim::recovery::recovery_dir()) {
+        let _ = match result {
+            Ok(saved) => {
+                if let Some(dir) = &saved.refused_dir {
+                    let _ = writeln!(
+                        stderr,
+                        "rvim: recovery directory {} is a symbolic link or not yours; not used.",
+                        dir.display()
+                    );
+                }
+                writeln!(
+                    stderr,
+                    "{why}. Unsaved text was saved to {}",
+                    saved.path.display()
+                )
+            }
+            Err(e) => writeln!(stderr, "{why} and could not save the text: {e}"),
+        };
     }
 }
 
@@ -154,10 +177,13 @@ fn spawn_input(tx: mpsc::Sender<rvim::Event>) {
     });
 }
 
-fn run(ed: &mut Editor) -> io::Result<()> {
+/// Runs the loop until the editor quits (`Ok(None)`) or a signal asks the
+/// session to end (`Ok(Some(signal))`). The caller writes the recovery files.
+fn run(ed: &mut Editor) -> io::Result<Option<i32>> {
     let mut screen = Screen::default();
     let mut out = io::BufWriter::new(io::stdout());
     let (tx, rx) = mpsc::channel();
+    rvim::signals::spawn(tx.clone())?;
     spawn_input(tx);
     while !ed.should_quit() {
         draw(&mut out, ed, &mut screen)?;
@@ -175,6 +201,9 @@ fn run(ed: &mut Editor) -> io::Result<()> {
             },
         };
         for ev in std::iter::once(first).chain(rx.try_iter().take(4096)) {
+            if let rvim::Event::Signal(sig) = ev {
+                return Ok(Some(sig));
+            }
             match ev {
                 rvim::Event::Key(Key::Ctrl('l')) | rvim::Event::Resize(..) => screen.invalidate(),
                 _ => {}
@@ -188,7 +217,7 @@ fn run(ed: &mut Editor) -> io::Result<()> {
             queue!(out, Print('\x07'))?;
         }
     }
-    Ok(())
+    Ok(None)
 }
 
 /// The grid last written to the terminal, so only changed cells are sent.

@@ -253,6 +253,7 @@ version = "0.1.0"
 dependencies = [
  "crossterm",
  "ropey",
+ "signal-hook",
  "tempfile",
  "unicode-width",
 ]

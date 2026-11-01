@@ -111,8 +111,8 @@ rvim registers nothing with the system. There is no `make uninstall` yet.
 ## Files rvim writes
 
 - Config: none in this version.
-- Recovery files: written only when rvim panics with unsaved changes, and the
-  path is printed. The directory is `$XDG_STATE_HOME/rvim/recovery` if
+- Recovery files: written only when rvim panics, when the terminal is closed
+  (SIGHUP) or on SIGTERM on Unix, with unsaved changes; the path is printed. The directory is `$XDG_STATE_HOME/rvim/recovery` if
   `XDG_STATE_HOME` is an absolute path; otherwise `%LOCALAPPDATA%\rvim\recovery`
   if `LOCALAPPDATA` is set (on any platform); otherwise
   `~/.local/state/rvim/recovery` (from `HOME`, or `USERPROFILE`); otherwise the
@@ -123,7 +123,8 @@ rvim registers nothing with the system. There is no `make uninstall` yet.
   symbolic link, or a directory owned by someone else, is not used: the text
   goes to a fresh private directory under the temp dir and the printed message
   says so.
-- Not implemented: recovery on terminal close (SIGHUP) and swap files.
+- Not implemented: swap files. SIGKILL cannot be caught, so a killed process
+  writes no recovery file.
 
 ## Packaging status
 
