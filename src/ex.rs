@@ -857,12 +857,7 @@ impl Editor {
     /// It is global-local: an unset local value means the global one.
     fn autoread_on(&self) -> bool {
         let i = crate::options::Options::find("autoread");
-        i.is_some_and(|i| {
-            matches!(
-                self.eff().value(i),
-                crate::options::Val::Bool(true)
-            )
-        })
+        i.is_some_and(|i| matches!(self.eff().value(i), crate::options::Val::Bool(true)))
     }
 
     // ---- line commands --------------------------------------------------
