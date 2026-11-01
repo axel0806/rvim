@@ -133,6 +133,12 @@ for [s:lines, s:keys] in g:cases
   call setline(1, s:lines)
   set undolevels=1000
   set nomodified
+  " The jumplist and the context mark belong to the window, which all cases
+  " share, and enew! sets the context mark. A normal command clears the
+  " previous context mark, then the mark and the jumplist are unset.
+  silent! normal! G
+  silent! call setpos("''", [0, 0, 0, 0])
+  silent! clearjumps
   call cursor(1, 1)
   " silent!: an error message must not abort the remaining cases.
   silent! call feedkeys(s:keys, 'tx')

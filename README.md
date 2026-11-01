@@ -39,6 +39,9 @@ Prebuilt binaries for Windows, Linux and macOS are attached to the
 - Ex commands: ranges (`%`, `.`, `$`, `'<,'>`, `'a`, `/pat/`, `;`, offsets), `:d :y
   :pu :m :t :j :> :< :k :mark :s :g :v :normal :undo :redo :set :r :w :q :wq :x :e`.
 - Lowercase marks `a`-`z` (`m{a-z}`, `'a`, `` `a ``).
+- Jumplist and context mark: `<C-o>` and `<Tab>` with counts, `''`, `` `` ``,
+  `m'`, `` m` ``, and `:jumps` (a one-line message). `G`, `gg`, `/`, `?`, `n`,
+  `N`, `%`, `{`, `}`, `(`, `)`, marks, `:N`, `:s`, `:g` and undo set the mark.
 - Wrapping display, ruler, bracketed paste.
 
 ## Where rvim differs from Vim
@@ -48,13 +51,13 @@ use:
 
 **Missing features**
 
-- One buffer and one window: no `:split`, `:vsplit`, tabs, `:ls`, `:b` or the
-  jumplist. `:r file` works, but `:r !cmd` does not. Macros (`q`, `@`) work; an
+- One buffer and one window: no `:split`, `:vsplit`, tabs, `:ls` or `:b`.
+  `:r file` works, but `:r !cmd` does not. Macros (`q`, `@`) work; an
   error ends a running macro as in Vim.
 - Marks: lowercase marks work (`ma`, `'a`, `` `a ``, as operator motions, `:k`,
   `:mark`, `:'a` addresses, and they follow edits and undo). Missing: uppercase
-  marks, `m'` `` m` `` `m[` `m]` `m<` `m>`, `'[` `']` `` `[ `] ``, `''` and
-  `` `` `` (both need the jumplist), `'<` and `'>` as motions, and `:marks`.
+  marks, `m[` `m]` `m<` `m>`, `'[` `']` `` `[ `] ``, `'<` and `'>` as motions,
+  and `:marks`.
 - Scrolling: `<C-f> <C-b> <C-d> <C-u> <C-e> <C-y> zt zz zb z<CR> z. z- H M L`
   work with counts and `scrolloff`. Not there: `z+ z^ z{height}<CR>`,
   `smoothscroll`, and the `<PageUp>`/`<PageDown>`/`<S-Up>` aliases.
@@ -87,7 +90,10 @@ use:
 - `n` after `/pat/e+1` with the cursor on the last character of the buffer
   wraps in Vim and not in rvim.
 - After `:%s/\n//` Vim leaves the cursor at the last join point; rvim puts it
-  on the first non-blank.
+  on the first non-blank. Vim also sets the context mark on the joined line in
+  that case, which rvim does not.
+- `:jumps` prints one line, not Vim's table. `[[` and `]]` are not implemented
+  yet; when they are, they must set the context mark.
 - An error does not flush pending typeahead.
 
 **Intentional differences**

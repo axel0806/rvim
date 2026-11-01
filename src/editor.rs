@@ -4,6 +4,7 @@
 //! drive it with key strings.
 
 use crate::buffer::{Buffer, FileStats};
+use crate::jumplist::JumpList;
 use crate::key::{Key, parse_keys};
 use crate::motion::{self, Pos};
 use crate::ops::OpArg;
@@ -120,6 +121,8 @@ pub struct Editor {
     /// The other end of the Visual area (Vim's `VIsual`).
     pub(crate) vstart: Pos,
     pub(crate) last_visual: Option<LastVisual>,
+    /// The jumplist and the context mark (Vim's window state, see jumplist.rs).
+    pub(crate) jumps: JumpList,
     ins_kind: InsertKind,
     ins_count: usize,
     ins_keys: Vec<Key>,
@@ -213,6 +216,7 @@ impl Editor {
             pending: Vec::new(),
             vstart: Pos::default(),
             last_visual: None,
+            jumps: JumpList::default(),
             ins_kind: InsertKind::Inline,
             ins_count: 1,
             ins_keys: Vec::new(),
@@ -418,6 +422,13 @@ impl Editor {
             self.curswant = self.cursor_vcol();
         }
         self.update_topline();
+        self.sync_jumps();
+        // Vim's checkpcmark() at the end of each command. Insert and command
+        // line mode are part of the command that started them, so it runs
+        // when they end.
+        if matches!(self.mode, Mode::Normal | Mode::Visual(_)) && self.pending.is_empty() {
+            self.jumps.check_pcmark(self.cursor);
+        }
         self.depth -= 1;
         if self.depth == 0
             && matches!(self.mode, Mode::Normal | Mode::Visual(_) | Mode::CmdLine)
@@ -599,6 +610,9 @@ impl Editor {
                 self.undo.undo(modified, marks)
             };
             let Some(step) = step else { break };
+            // Undo and redo set the context mark to the cursor before the
+            // step, as Vim does (the jumplist changes with it).
+            self.set_pcmark();
             // Like Vim's u_undoredo(): when the number of lines changes,
             // marks on the replaced lines are deleted and the ones below
             // move. Then the marks saved with the change come back.
@@ -1045,6 +1059,8 @@ impl Editor {
                 self.cursor = Pos::default();
                 self.curswant = 0;
                 self.keep_curswant = false;
+                // The jumplist and the context mark refer to the old text.
+                self.jumps = JumpList::default();
                 let name = path.display();
                 match stats {
                     None => self.info(format!("\"{name}\" [New]")),

@@ -91,7 +91,8 @@ pub(crate) enum Motion {
         fwd: bool,
         whole: bool,
     },
-    /// `'{a-z}` (linewise, first non-blank) and `` `{a-z} `` (exact).
+    /// `'{a-z}` (linewise, first non-blank) and `` `{a-z} `` (exact), and
+    /// `''` and ``` `` ``` for the previous context mark.
     Mark {
         mark: char,
         linewise: bool,
@@ -138,8 +139,11 @@ pub(crate) enum Simple {
     Visual(VisualMode),
     Reselect,
     CmdLine,
-    /// `m{a-z}`.
+    /// `m{a-z}`, and `m'` and ``m` `` for the context mark.
     SetMark(char),
+    /// `<C-o>` (older) and `<Tab>` (newer) in the jumplist.
+    JumpOlder,
+    JumpNewer,
     /// `&` (`:s`) and `g&` (`:%s//~/&`).
     Ampersand {
         all: bool,
@@ -291,13 +295,16 @@ pub(crate) fn parse_motion(k: &[Key]) -> Res<(Motion, usize)> {
         Key::Char(q @ ('\'' | '`')) => {
             return match k.get(1) {
                 None => Ok(None),
-                Some(Key::Char(c)) if c.is_ascii_lowercase() => Ok(Some((
-                    Motion::Mark {
-                        mark: *c,
-                        linewise: q == '\'',
-                    },
-                    2,
-                ))),
+                // `''` and ``` `` ``` are the previous context mark.
+                Some(Key::Char(c)) if c.is_ascii_lowercase() || matches!(c, '\'' | '`') => {
+                    Ok(Some((
+                        Motion::Mark {
+                            mark: *c,
+                            linewise: q == '\'',
+                        },
+                        2,
+                    )))
+                }
                 _ => Err(()),
             };
         }
@@ -607,10 +614,14 @@ fn parse_body(k: &[Key], visual: bool) -> Res<(Body, Option<usize>, usize)> {
         Key::Char('m') => {
             return match k.get(1) {
                 None => Ok(None),
-                Some(Key::Char(c)) if c.is_ascii_lowercase() => simple(Simple::SetMark(*c), 2),
+                Some(Key::Char(c)) if c.is_ascii_lowercase() || matches!(c, '\'' | '`') => {
+                    simple(Simple::SetMark(*c), 2)
+                }
                 _ => Err(()),
             };
         }
+        Key::Ctrl('o') => return simple(Simple::JumpOlder, 1),
+        Key::Tab => return simple(Simple::JumpNewer, 1),
         Key::Ctrl('e') => return simple(Simple::Scroll(ScrollCmd::LineDown), 1),
         Key::Ctrl('y') => return simple(Simple::Scroll(ScrollCmd::LineUp), 1),
         Key::Ctrl('f') => return simple(Simple::Scroll(ScrollCmd::PageDown), 1),
@@ -866,6 +877,46 @@ impl Editor {
         true
     }
 
+    /// Applies the line edits made since the last call to the jumplist and
+    /// the context mark (see `PosEdit`).
+    pub(crate) fn sync_jumps(&mut self) {
+        for edit in self.buf.take_pos_edits() {
+            self.jumps.apply(&edit);
+        }
+    }
+
+    /// Vim's setpcmark(): the cursor becomes the previous context mark and
+    /// is added to the jumplist. Inside `:global` it does nothing, since
+    /// `:global` sets it once.
+    pub(crate) fn set_pcmark(&mut self) {
+        if self.global_busy {
+            return;
+        }
+        self.sync_jumps();
+        self.jumps.set_pcmark(self.cursor);
+    }
+
+    /// `<C-o>` and `<Tab>` (Vim's movemark() through nv_pcmark()). In Visual
+    /// mode they do nothing, as in Vim.
+    fn move_in_jumplist(&mut self, count: isize) {
+        if self.is_visual() {
+            self.keep_curswant = true;
+            return;
+        }
+        self.sync_jumps();
+        let Some(p) = self.jumps.move_by(count, self.cursor, !self.global_busy) else {
+            self.keep_curswant = true;
+            self.beep();
+            return;
+        };
+        if p.line >= self.buf.line_count() {
+            self.keep_curswant = true;
+            self.error("E19: Mark has invalid line number");
+            return;
+        }
+        self.cursor = Pos::new(p.line, p.col);
+    }
+
     /// Runs a motion, moving the cursor. `None` means "clear the operator
     /// and beep" (Vim's `clearopbeep`). `op` is the pending operator.
     pub(crate) fn do_motion(
@@ -1002,11 +1053,15 @@ impl Editor {
             Motion::Word(c) => return self.word_motion(c, count1, op),
             Motion::ScreenLine(which) => {
                 info.linewise = true;
+                // H, M and L are jumps (Vim's nv_scroll()).
+                self.set_pcmark();
                 self.cursor.line = self.screen_line(which, count1);
                 self.fnb();
             }
             Motion::Goto { first } => {
                 info.linewise = true;
+                // Vim's nv_goto(): a jump even if the cursor does not move.
+                self.set_pcmark();
                 let line = match count0 {
                     Some(c) => c.saturating_sub(1),
                     None if first => 0,
@@ -1022,6 +1077,7 @@ impl Editor {
                         return None;
                     }
                     info.linewise = true;
+                    self.set_pcmark();
                     let n = self.buf.line_count();
                     let line = (n * c).div_ceil(100).clamp(1, n);
                     self.cursor.line = line - 1;
@@ -1029,6 +1085,7 @@ impl Editor {
                 } else {
                     info.use_reg_one = true;
                     let r = findmatchlimit(&self.buf, self.cursor, None, None, false)?;
+                    self.set_pcmark();
                     self.cursor = r.pos;
                     info.linewise = r.linewise;
                 }
@@ -1036,12 +1093,15 @@ impl Editor {
             Motion::Para { fwd } => {
                 info.use_reg_one = true;
                 let (p, incl) = findpar(&self.buf, self.cursor, fwd, count1, '\0', false)?;
+                self.set_pcmark();
                 self.cursor = p;
                 info.inclusive = incl;
             }
             Motion::Sent { fwd } => {
                 info.use_reg_one = true;
-                self.cursor = findsent(&self.buf, self.cursor, fwd, count1)?;
+                let p = findsent(&self.buf, self.cursor, fwd, count1)?;
+                self.set_pcmark();
+                self.cursor = p;
                 self.adjust_cursor(&mut info);
             }
             Motion::Find { c, fwd, till } => {
@@ -1050,10 +1110,19 @@ impl Editor {
                 self.cursor.col = searchc(&self.buf, self.cursor, c, fwd, till, count1, true)?;
             }
             Motion::Mark { mark, linewise } => {
-                let Some(p) = self.buf.mark(mark) else {
+                let target = if matches!(mark, '\'' | '`') {
+                    self.sync_jumps();
+                    self.jumps.pcmark()
+                } else {
+                    self.buf.mark(mark)
+                };
+                let Some(p) = target else {
                     self.error("E20: Mark not set");
                     return None;
                 };
+                // Like Vim's nv_cursormark(): jumping to a mark sets the
+                // context mark, which is copied above first.
+                self.set_pcmark();
                 // Column clamping: Normal mode clamps the cursor after the
                 // command, an operator may take the end of the line.
                 if linewise {
@@ -1129,6 +1198,7 @@ impl Editor {
         count1: usize,
     ) -> Option<MInfo> {
         let (pos, linewise, inclusive) = self.do_search(dirc, pat.as_deref(), count1)?;
+        self.set_pcmark();
         self.cursor = pos;
         // "/$" can end after the last char.
         if !self.is_visual() {
@@ -1514,8 +1584,17 @@ impl Editor {
             Simple::SetMark(c) => {
                 // Like Vim's nv_mark(): setting a mark keeps the desired column.
                 self.keep_curswant = true;
-                self.buf.set_mark(c, self.cursor);
+                if matches!(c, '\'' | '`') {
+                    // Vim's setmark_pos(): the context mark is kept even when
+                    // the cursor does not move.
+                    self.set_pcmark();
+                    self.jumps.keep_pcmark();
+                } else {
+                    self.buf.set_mark(c, self.cursor);
+                }
             }
+            Simple::JumpOlder => self.move_in_jumplist(-(count1 as isize)),
+            Simple::JumpNewer => self.move_in_jumplist(count1 as isize),
             Simple::Record(c) => self.start_recording(c),
             Simple::Macro(c) => self.exec_register(c, count1),
             Simple::Ampersand { all } => self.execute_ex(if all { "%s//~/&" } else { "s" }),

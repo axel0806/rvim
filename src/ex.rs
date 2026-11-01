@@ -3,7 +3,7 @@
 //! (`:d :y :pu :m :t :j :> :<`), `:s`, `:g`, `:normal`, `:undo`, `:set`.
 //! `:r` reads a file's lines (`:r !cmd` is not supported).
 
-use crate::buffer::Buffer;
+use crate::buffer::{Buffer, PosEdit};
 use crate::editor::{Editor, Message, Mode, describe};
 use crate::key::Key;
 use crate::motion::{Pos, first_non_blank};
@@ -231,6 +231,8 @@ impl Editor {
         let rest = skip_ws(rest);
         if rest.is_empty() {
             if range.count > 0 {
+                // `:N` is a jump.
+                self.set_pcmark();
                 let l = range.line2.clamp(1, self.buf.line_count());
                 self.goto_line_first_non_blank(l - 1);
             }
@@ -328,6 +330,8 @@ impl Editor {
             self.ex_copymove(range, p.arg, false)?;
         } else if n == "k" || abbrev(n, "mark", 2) {
             self.ex_mark(range, p.arg)?;
+        } else if abbrev(n, "jumps", 2) {
+            self.ex_jumps();
         } else if abbrev(n, "join", 1) {
             self.ex_join(range, p.bang, p.arg)?;
         } else if n == ">" || n == "<" {
@@ -874,6 +878,7 @@ impl Editor {
             // are taken out here and put back where the lines land.
             let first = r.line1 - 1;
             let carried = self.buf.take_marks_in(first, r.line2 - 1);
+            let pos_mark = self.buf.pos_edit_count();
             if dest >= r.line2 {
                 for (i, l) in moved.iter().enumerate() {
                     self.buf.insert_line(dest + i, l);
@@ -888,6 +893,26 @@ impl Editor {
                 self.cursor.line = dest + n - 1;
             }
             let new_first = if dest >= r.line2 { dest - n } else { dest };
+            // The jumplist and the context mark follow the move as one
+            // mapping: the moved block lands at `new_first`, the lines
+            // between the two places shift the other way.
+            let (a, b, down) = (first, r.line2 - 1, dest >= r.line2);
+            self.buf.replace_pos_edits_from(
+                pos_mark,
+                PosEdit::Remap(Box::new(move |p: Pos| {
+                    let l = p.line;
+                    let l = if (a..=b).contains(&l) {
+                        l - a + new_first
+                    } else if down && l > b && l < dest {
+                        l - n
+                    } else if !down && l >= dest && l < a {
+                        l + n
+                    } else {
+                        l
+                    };
+                    Pos::new(l, p.col)
+                })),
+            );
             for (mark, p) in carried {
                 self.buf
                     .set_mark(mark, Pos::new(new_first + p.line - first, p.col));
@@ -911,6 +936,26 @@ impl Editor {
         self.uline = None;
         self.cursor.col = first_non_blank(&self.buf, self.cursor.line, true);
         Ok(())
+    }
+
+    /// `:jumps`: the jumplist on one line, oldest first, with `>` before the
+    /// entry `<C-o>` counts from (a message, not Vim's listing).
+    fn ex_jumps(&mut self) {
+        self.sync_jumps();
+        self.jumps.cleanup();
+        let (entries, idx) = self.jumps.entries();
+        let mut items: Vec<String> = entries
+            .iter()
+            .enumerate()
+            .map(|(i, p)| {
+                let mark = if i == idx { ">" } else { "" };
+                format!("{mark}{}:{}", p.line + 1, p.col + 1)
+            })
+            .collect();
+        if idx == entries.len() {
+            items.push(">".to_string());
+        }
+        self.info(format!("jumps: {}", items.join(" ")));
     }
 
     /// `:[range]k{a-z}` and `:[range]mark {a-z}`: sets the mark on the last
@@ -1065,6 +1110,8 @@ impl Editor {
         let cmd = if cmd.trim().is_empty() { "p" } else { cmd };
         let old_lines = self.buf.line_count() as i64;
         self.buf.tracked = marked;
+        // The context mark is set once for the whole command.
+        self.set_pcmark();
         self.global_busy = true;
         self.global_need_beginline = false;
         // The lines run as queued tasks, so that a `c` flag prompt can wait
@@ -1310,6 +1357,7 @@ impl Editor {
             last_line: None,
             multiline_pat: re_multiline(pattern),
             saved_cursor: self.cursor,
+            got_match: false,
             found: false,
             got_quit: false,
             awaiting: false,
@@ -1380,6 +1428,13 @@ impl Editor {
                         }
                         Action::Skip
                     } else {
+                        // The context mark is set at the first match, from the
+                        // cursor as it was before the command (Vim's
+                        // `got_match` in do_sub()).
+                        if !st.got_match {
+                            st.got_match = true;
+                            self.set_pcmark();
+                        }
                         // Normally we continue searching just after the
                         // previous match.
                         ln.matchcol = m.end.1;
@@ -1425,6 +1480,7 @@ impl Editor {
                             RepPiece::Break => {
                                 ln.out_lines.push(ns.iter().collect());
                                 ns.clear();
+                                ln.last_cut = (sc, m.end.1);
                             }
                         }
                     }
@@ -1523,9 +1579,36 @@ impl Editor {
                     }
                     self.u_save_line_start(st.lnum, 1);
                     let added = ln.out_lines.len();
+                    let pos_mark = self.buf.pos_edit_count();
+                    // The length of the text after the last break (the tail
+                    // without the rest of the line).
+                    let rest = ln.sub_line.len().saturating_sub(ln.copycol);
+                    let ylen = ns.len().saturating_sub(rest);
                     self.buf.set_line(st.lnum, &ns.iter().collect::<String>());
                     for (i, l) in ln.out_lines.iter().enumerate() {
                         self.buf.insert_line(st.lnum + i, l);
+                    }
+                    if added > 0 {
+                        // The first piece stays on this line and the tail
+                        // moves to the line after the pieces (Vim's split at
+                        // a line break): positions before the match stay,
+                        // positions after it move to the tail.
+                        let at = st.lnum;
+                        let (cut_s, cut_e) = ln.last_cut;
+                        self.buf.replace_pos_edits_from(
+                            pos_mark,
+                            PosEdit::Remap(Box::new(move |p: Pos| {
+                                if p.line > at {
+                                    Pos::new(p.line + added, p.col)
+                                } else if p.line < at || p.col < cut_s {
+                                    p
+                                } else if p.col >= cut_e {
+                                    Pos::new(at + added, p.col - cut_e + ylen)
+                                } else {
+                                    Pos::new(at, cut_s)
+                                }
+                            })),
+                        );
                     }
                     st.lnum += added;
                     st.line2 += added;
@@ -1688,6 +1771,8 @@ pub(crate) struct SubFlags {
 /// A `:s` in progress: the locals of Vim's `do_sub()`, kept between keys
 /// while a `c` flag prompt waits for an answer.
 pub(crate) struct SubRun {
+    /// The context mark was set for this command (at its first match).
+    got_match: bool,
     pattern: String,
     /// The replacement after `~` expansion, as shown in the prompt.
     rep: String,
@@ -1731,6 +1816,9 @@ struct LineSub {
     prev_matchcol: i64,
     did_sub: bool,
     skip_match: bool,
+    /// The match (start and end columns) of the last line break, where the
+    /// positions of a split line are cut.
+    last_cut: (usize, usize),
 }
 
 impl LineSub {
@@ -1744,6 +1832,7 @@ impl LineSub {
             prev_matchcol: -1,
             did_sub: false,
             skip_match: false,
+            last_cut: (0, 0),
         }
     }
 }
@@ -1794,6 +1883,10 @@ fn is_known_long(name: &str) -> bool {
             | "join"
             | "jo"
             | "joi"
+            | "ju"
+            | "jum"
+            | "jump"
+            | "jumps"
             | "move"
             | "mo"
             | "mov"

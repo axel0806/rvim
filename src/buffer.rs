@@ -17,6 +17,25 @@ fn mark_index(c: char) -> Option<usize> {
     c.is_ascii_lowercase().then(|| c as usize - 'a' as usize)
 }
 
+/// A change of line numbers, recorded for the positions the editor keeps
+/// outside the buffer: the jumplist and the context mark, which belong to
+/// the window (see `jumplist.rs`). The buffer logs every such edit in order
+/// and the editor applies the log before it reads or sets those positions.
+pub enum PosEdit {
+    /// Vim's mark_adjust() for lines `first..first + old` being replaced by
+    /// nothing or by other lines (undo): positions on them move to `first`
+    /// (the context mark is unset), positions from `first + old` on move by
+    /// `after`. An insertion has `old == 0`.
+    Lines {
+        first: usize,
+        old: usize,
+        after: isize,
+    },
+    /// Positions move to a new place computed from the position: the joins
+    /// of `J` and `:s`, and `:m`.
+    Remap(Box<dyn Fn(Pos) -> Pos>),
+}
+
 pub struct Buffer {
     rope: Rope,
     pub path: Option<PathBuf>,
@@ -33,6 +52,8 @@ pub struct Buffer {
     pub tracked: Vec<usize>,
     /// Lowercase marks, followed through edits by the methods below.
     pub(crate) marks: Marks,
+    /// Line edits not yet taken by the editor (see `PosEdit`).
+    pos_edits: Vec<PosEdit>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -123,6 +144,7 @@ impl Buffer {
             changedtick: 0,
             tracked: Vec::new(),
             marks: [None; 26],
+            pos_edits: Vec::new(),
         }
     }
 
@@ -143,6 +165,11 @@ impl Buffer {
     /// deleted, marks below them move by the difference, marks above stay.
     pub(crate) fn adjust_marks(&mut self, first: usize, old: usize, new: usize) {
         let delta = new as isize - old as isize;
+        self.pos_edits.push(PosEdit::Lines {
+            first,
+            old,
+            after: delta,
+        });
         for slot in self.marks.iter_mut() {
             let Some(p) = slot.as_mut() else { continue };
             if p.line >= first + old {
@@ -169,12 +196,13 @@ impl Buffer {
     }
 
     /// Moves the marks on line `from` to line `to`, mapping their columns
-    /// with `col` (used when lines are joined).
+    /// with `col` (used when lines are joined). The jumplist and the context
+    /// mark are moved the same way.
     pub(crate) fn move_marks_to_line(
         &mut self,
         from: usize,
         to: usize,
-        col: impl Fn(usize) -> usize,
+        col: impl Fn(usize) -> usize + Clone + 'static,
     ) {
         for p in self.marks.iter_mut().flatten() {
             if p.line == from {
@@ -182,6 +210,32 @@ impl Buffer {
                 p.col = col(p.col);
             }
         }
+        let col = col.clone();
+        self.pos_edits.push(PosEdit::Remap(Box::new(move |p: Pos| {
+            if p.line == from {
+                Pos::new(to, col(p.col))
+            } else {
+                p
+            }
+        })));
+    }
+
+    /// The number of line edits logged so far; see `replace_pos_edits_from`.
+    pub(crate) fn pos_edit_count(&self) -> usize {
+        self.pos_edits.len()
+    }
+
+    /// Replaces the line edits logged since `mark` with `edit`, for a change
+    /// whose effect on the positions outside the buffer is computed in one
+    /// piece (`:m`, and `:s` over several lines).
+    pub(crate) fn replace_pos_edits_from(&mut self, mark: usize, edit: PosEdit) {
+        self.pos_edits.truncate(mark);
+        self.pos_edits.push(edit);
+    }
+
+    /// Takes the line edits logged so far, for the editor to apply.
+    pub(crate) fn take_pos_edits(&mut self) -> Vec<PosEdit> {
+        std::mem::take(&mut self.pos_edits)
     }
 
     /// Lines separated by `\n`; `"a\nb"` is two lines.
@@ -392,7 +446,7 @@ impl Buffer {
             let l2 = self.rope.char_to_line(end);
             let c2 = end - self.rope.line_to_char(l2);
             for from in l + 1..=l2 {
-                self.move_marks_to_line(from, l, |k| {
+                self.move_marks_to_line(from, l, move |k| {
                     if from == l2 && k >= c2 { c + k - c2 } else { c }
                 });
             }

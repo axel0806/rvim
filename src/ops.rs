@@ -1220,7 +1220,7 @@ impl Editor {
             let s = space_starts[t] as isize;
             let r = removed[t] as isize - spaces[t] as isize;
             let amount = s - r;
-            self.buf.move_marks_to_line(first + t, first, |k| {
+            self.buf.move_marks_to_line(first + t, first, move |k| {
                 let k = k as isize;
                 if amount < 0 && k <= -amount {
                     0

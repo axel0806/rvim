@@ -17,7 +17,7 @@ clean at the last commit.
 | 1 Core, 2 Vim grammar | Done |
 | 3 Search and Ex | ~97%. Left: `:s` `\=` expressions; `<C-e>`/`<C-y>` in the `c` prompt do not scroll yet |
 | 4 Foundation | ~70%. Left: the Document/Window/Editor split (the biggest item; see "Foundation"), kitty keyboard protocol, cell-level diff redraw, `:setlocal`/`:setglobal`, recovery on terminal close (SIGHUP) |
-| 5 Windows and buffers | ~25%. Done: macros (`q`, `@`, `@@`, `@:`), lowercase marks (`m{a-z}`, `'a`, `` `a ``, `:k`, `:mark`, `'a` addresses), scrolling (`<C-e> <C-y> <C-f> <C-b> <C-d> <C-u> zt zz zb z<CR> z. z- H M L`, counts, `scrolloff`, wrapped lines). Left: splits, buffer list, the other marks (uppercase, `''`, `'[`/`']`, `'<`/`'>` motions), jumplist, swap files |
+| 5 Windows and buffers | ~30%. Done: macros (`q`, `@`, `@@`, `@:`), lowercase marks (`m{a-z}`, `'a`, `` `a ``, `:k`, `:mark`, `'a` addresses), the jumplist (`<C-o>`, `<Tab>` with counts, `:jumps`) and the context mark (`''`, `` `` ``, `m'`, `` m` ``), scrolling (`<C-e> <C-y> <C-f> <C-b> <C-d> <C-u> zt zz zb z<CR> z. z- H M L`, counts, `scrolloff`, wrapped lines). Left: splits, buffer list, the other marks (uppercase, `'[`/`']`, `'<`/`'>` motions), swap files |
 | 6 Modern editing experience | 0%. Not started (hlsearch, incsearch, syntax, line numbers, config file, palette, mouse) |
 | 7 Agent integration | 0%. Not started (file-change reload as an undo step, diff view, ACP connector, agent detection). Research is in "Detecting and connecting to agents" |
 | 8 Prediction | 0%. Not started |
@@ -39,8 +39,6 @@ restored by undo in `undo.rs`), and the scrolling commands with `scrolloff`
 **In progress** (as of 2026-11-01; maintained by the orchestrator, and an
 entry is removed when its branch lands on main):
 
-- Jumplist (`<C-o>`, `<C-i>`/`<Tab>`, `''`, ``` `` ```, `:jumps`, context mark):
-  being built by a Haiku agent (branch name pending).
 - Indent options (`tabstop`, `softtabstop`, `smarttab`, `shiftround`): being built by a Haiku agent (branch name pending).
 
 **Suggested order for what is left:** (1) Document/Window split, (2) splits +
@@ -159,6 +157,7 @@ pattern, but the Vim contract still decides what happens without an opt-in.
 | `text.rs` | Display widths and virtual columns (tabstop 8, `^X` control chars, wide chars) |
 | `motion.rs` | Positions and motions; word motions are ports of Vim's `fwd_word`/`bck_word`/`end_word` with its `inc`/`dec` cursor walk and `utf_class` table |
 | `editor.rs` | Mode state machine (Normal, Insert, Command-line), counts, desired column (`curswant`) |
+| `jumplist.rs` | The jumplist and the context mark (ports of Vim's `setpcmark`, `checkpcmark`, `movemark`). Window state, so it moves to `Window` with the split; the buffer logs its line edits (`PosEdit`) and the editor applies them in order |
 | `ex.rs` | Ex commands: ranges (`%`, `.`, `$`, marks `'<` `'>` and `'a`, `/pat/`, `;`), file commands, `:k`/`:mark`, `:d :y :pu :m :t :j :> :<`, `:s` (port of `do_sub`; the `c` prompt keeps the loop state in `SubRun` between keys), `:g`/`:v` and command lines as queued `ExTask`s, `:normal`, `:set` |
 | `normal.rs`, `ops.rs`, `textobject.rs`, `register.rs`, `undo.rs` | Normal/Visual parsing and motions, operators, text objects, registers, undo tree |
 | `regex.rs` | Vim regex (`\v \m \M \V`, `\{}`, look-around, `\zs`, `\_x`, collections, `\%` items) as a backtracking matcher over buffer lines |
@@ -230,11 +229,12 @@ What the revised milestones fix, as the code stands today:
    event loop, (c) styled frame with the Visual area drawn, (d) diff redraw,
    (e) input (bracketed paste, modifiers, kitty protocol), (f) options
    registry, (g) emergency recovery files. Details in "Foundation".
-5. **Windows and buffers.** (Macros `q`/`@`, lowercase marks and scrolling are
-   done: `<C-e> <C-y> <C-f> <C-b> <C-d> <C-u> zt zz zb z<CR> z. z- H M L` with
-   counts, 'scrolloff'.) Left: splits, buffer list, the remaining marks
-   (uppercase, `''`, `'[`/`']`, `'<`/`'>` as motions), jumplist; then swap
-   files (see "Recovery").
+5. **Windows and buffers.** (Macros `q`/`@`, lowercase marks, the jumplist, the
+   context mark and scrolling are done: `<C-e> <C-y> <C-f> <C-b> <C-d> <C-u> zt
+   zz zb z<CR> z. z- H M L` with counts, 'scrolloff'.) Left: splits, buffer
+   list, the remaining marks (uppercase, `'[`/`']`, `'<`/`'>` as motions); then
+   swap files (see "Recovery"). Any jump command added later (`[[`, `]]`) must
+   set the context mark.
 6. **Modern editing experience.** hlsearch, incsearch, matching parens,
    syntax highlighting (tree-sitter), line numbers, a config file, a command
    palette, mouse, the start menu (see "Start menu"), and a `:Health` report
@@ -1814,10 +1814,20 @@ stays the release path.
   enabled in `main.rs`, handled by `Editor::paste`, and tested in
   `tests/paste.rs`; step (e) of milestone 4 still needs modifiers and the
   kitty protocol.)
-- Marks: only lowercase marks exist. Missing: `mA`-`mZ` (file marks), `m'`,
-  `` m` ``, `m[ m] m< m>`, `'[ ']` and `` `[ `] `` as motions, `''` and
-  `` `` `` (both need the jumplist; a jump does not set the previous-context
-  mark), `'<` and `'>` as Normal-mode motions, `:marks` and `:delmarks`. The
+- Jumplist: entries are positions in the one buffer. `:e` of another file
+  clears the jumplist and the context mark (Vim keeps entries for other files
+  and sets the context mark to the old position). `:jumps` prints one line
+  (`jumps: 1:1 >3:4`, `>` at the current entry), not Vim's table. Vim's
+  `:s` with `\n` in the pattern sets the context mark on the joined line, and
+  leaves the cursor on the join point; rvim does neither (cases in
+  `compat_jumps.rs`, ignored until the cursor difference above is fixed).
+  Columns after a `:s` that splits a line into more than two pieces are not
+  checked against Vim.
+- `[[ ]]` are not in rvim yet. When they land they must call `set_pcmark()`
+  when they move, as `G` and `%` do. `H M L` already do (scrolling landed).
+- Marks: only lowercase marks exist. Missing: `mA`-`mZ` (file marks),
+  `m[ m] m< m>`, `'[ ']` and `` `[ `] `` as motions, `'<` and `'>` as
+  Normal-mode motions, `:marks` and `:delmarks`. The
   Visual marks stay in `Editor::last_visual` and do not follow edits.
 - Marks have no column adjustment for single-line edits, as in Vim (`x`, `D`,
   `r`, insert-mode typing do not move them). Joins (`J`, `gJ`, `:j`, `<BS>`

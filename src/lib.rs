@@ -6,6 +6,7 @@ mod cmdline;
 pub mod editor;
 pub mod event;
 pub(crate) mod ex;
+mod jumplist;
 pub mod key;
 mod macros;
 pub mod motion;
