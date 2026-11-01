@@ -116,9 +116,9 @@ user-visible feature set lands together. Not for a small feature or a fix.
 ## Packaging
 
 - `INSTALL.md`, `CONTRIBUTING.md`, `AGENTS.md`, `SECURITY.md` and this file are
-  in the repository (written 2026-11-01). The `Makefile` is still planned
-  (`PLAN.md`, "Repository and packaging") and not written. Until it exists, use
-  the cargo commands in `CLAUDE.md`.
+  in the repository (written 2026-11-01). The `Makefile` exists (`make help` lists
+  its targets; `make check` runs lint and the Vim tests). It has no `uninstall`,
+  `dist` or `PREFIX`/`DESTDIR` support yet.
 - AUR packages are planned as `rvim` (from a tagged source archive) and
   `rvim-bin` (the Linux release binary). Nothing is published yet; see
   `PLAN.md` "Future goals".

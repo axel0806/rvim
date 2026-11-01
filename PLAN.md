@@ -48,7 +48,6 @@ restored by undo in `undo.rs`), and the scrolling commands with `scrolloff`
 entry is removed when its branch lands on main):
 
 - CI workflow: tests, clippy and fmt on Linux, macOS and Windows (`.github/workflows/ci.yml`)
-- Makefile with build, test, lint, install and release-check targets
 - `--help` and `--version` command-line flags (`src/main.rs`)
 
 **Suggested order for what is left:** (1) Document/Window split, (2) splits +
