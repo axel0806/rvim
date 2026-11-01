@@ -43,14 +43,14 @@ impl Editor {
     fn line_rows(&self, l: usize) -> usize {
         view::line_height(
             self.buf().line(l),
-            self.screen_cols,
+            self.win().width,
             self.opts.tabstop(),
         )
     }
 
     /// Rows of the text area (the screen minus the command line).
     pub(crate) fn text_rows(&self) -> usize {
-        self.screen_rows.saturating_sub(1).max(1)
+        self.win().height
     }
 
     /// 'scrolloff' in rows, capped at half the window like Vim.
@@ -253,6 +253,7 @@ impl Editor {
     pub fn set_screen_size(&mut self, cols: usize, rows: usize) {
         self.screen_cols = cols.max(1);
         self.screen_rows = rows.max(1);
+        self.fit_windows();
         self.update_topline();
     }
 

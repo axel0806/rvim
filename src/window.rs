@@ -26,4 +26,8 @@ pub(crate) struct Window {
     pub(crate) jumps: JumpList,
     /// First buffer line shown in the window (Vim's `w_topline`).
     pub(crate) top: usize,
+    /// Text columns and rows of the window, from the screen size (the command
+    /// line is not part of it). Set by `Editor::fit_windows`.
+    pub(crate) width: usize,
+    pub(crate) height: usize,
 }

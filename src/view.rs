@@ -214,7 +214,7 @@ pub fn line_height(line: RopeSlice, width: usize, ts: usize) -> usize {
 pub fn frame(ed: &Editor) -> Frame {
     let width = ed.screen_cols.max(1);
     let height = ed.screen_rows;
-    let text_height = height.saturating_sub(1).max(1);
+    let text_height = ed.win().height;
     if let Some(menu) = &ed.start_menu {
         let mf = crate::startmenu::layout(menu, width, height);
         let mut cursor = mf.cursor;

@@ -153,7 +153,9 @@ pub struct Editor {
     pub(crate) replaying_visual: Option<VisualRedo>,
     /// Size of the last Visual operation, for `1v` (Vim's resel_VIsual_*).
     pub(crate) resel: Option<VisualRedo>,
-    /// Screen size in cells; the last row is the command line.
+    /// The terminal size in cells (Vim's `Columns` and `Rows`), set by
+    /// `set_screen_size`. The last row is the command line. Each window's text
+    /// area is derived from it in `fit_windows`.
     pub(crate) screen_cols: usize,
     pub(crate) screen_rows: usize,
     /// The 'scroll' option for CTRL-D and CTRL-U; 0 means half the window.
@@ -198,7 +200,7 @@ impl Editor {
     }
 
     pub fn with_buffer(buf: Buffer) -> Self {
-        Self {
+        let mut ed = Self {
             documents: vec![Document::new(buf)],
             windows: vec![Window {
                 doc: DocId(0),
@@ -257,6 +259,19 @@ impl Editor {
             message: None,
             quit: false,
             bell: false,
+        };
+        ed.fit_windows();
+        ed
+    }
+
+    /// Gives every window the text area of the screen. There is one window,
+    /// which fills the screen. Splits (milestone 5) will divide it.
+    pub(crate) fn fit_windows(&mut self) {
+        let width = self.screen_cols;
+        let height = self.screen_rows.saturating_sub(1).max(1);
+        for win in &mut self.windows {
+            win.width = width;
+            win.height = height;
         }
     }
 
