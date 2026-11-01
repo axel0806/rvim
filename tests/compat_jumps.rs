@@ -360,7 +360,10 @@ fn jumps_message_and_cursor_are_unchanged() {
     let before = ed.cursor();
     ed.feed(":ju<CR>");
     let msg = ed.message().map(|m| m.text.clone());
-    assert!(msg.as_deref().is_some_and(|m| m.starts_with("jumps:")), "{msg:?}");
+    assert!(
+        msg.as_deref().is_some_and(|m| m.starts_with("jumps:")),
+        "{msg:?}"
+    );
     assert_eq!(ed.cursor(), before);
     assert_eq!(ed.buf.lines(), ["a", "b", "c", "d", "e"]);
 }
