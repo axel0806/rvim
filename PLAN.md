@@ -54,6 +54,8 @@ this, `--help` opened a buffer named `--help`.
 entry is removed when its branch lands on main):
 
 - Document/Window split, step 2: ids and collections, per-document version counter, `'[`/`']` into `Document` (milestone 4; `editor.rs`, `document.rs`, `window.rs`)
+- Document/Window split, step 3: `buf_mut()`, window geometry, accessor-only access (milestone 4; based on the step 2 branch)
+- Real option scopes: `:setlocal`, `:setglobal`, buffer- and window-local values (milestone 4; `options.rs`, `ex.rs`; based on the step 2 branch)
 
 **Suggested order for what is left:** (1) Document/Window split, (2) splits +
 buffers + scrolling, (3) milestone 7, in the step order of "Agent experience:
