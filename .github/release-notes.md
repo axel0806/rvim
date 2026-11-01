@@ -38,7 +38,8 @@ started with `vim -N -u NONE`. The test suite checks this against a real Vim.
 - No syntax highlighting, `hlsearch`, `incsearch` or line numbers.
 - No config file (`vimrc`), no plugins, no Vimscript, no `:help`, no folds, no
   completion and no spell checking.
-- Options are global; `:setlocal` and `:setglobal` do not exist. `hlsearch`,
+- Options are global: `:setglobal` does not exist, and `:setlocal` is only an
+  alias for `:set`. `hlsearch`,
   `incsearch`, `number`, `relativenumber`, `wrap` and `autoread` are stored but
   have no effect yet.
 - No agent integration and no inline code prediction yet. Both are planned and

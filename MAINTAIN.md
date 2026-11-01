@@ -47,11 +47,13 @@ so the checklist above is the only gate.
 
 1. On `main`, `git status -sb` shows a clean tree with no `ahead` or `behind`
    against `origin/main`. Run the checklist on the commit to be tagged.
-2. Refresh the release notes. The `--notes` string in `release.yml` is
-   hand-written and stale: it describes milestones 1-3 and says "No windows,
-   buffers, marks or macros yet". Rewrite it from the Status table and "Since
-   the alpha" in `PLAN.md`, commit on `main`, and tag that commit. The
-   workflow is read from the tagged commit.
+2. Refresh the release notes in `.github/release-notes.md`. `release.yml`
+   passes that file to `gh release create --notes-file`. Write it from the
+   Status table and "Since the alpha" in `PLAN.md`, commit it on `main`, and
+   tag a commit that contains it: the workflow reads the file from the tagged
+   checkout. If the file is missing, `gh release create` fails silently
+   (`2>/dev/null || true`), and the upload step then fails the job. The file
+   is not packed into the archives.
 3. `git tag -a v0.1.0-alpha.N -m "v0.1.0-alpha.N"`, then
    `git push origin v0.1.0-alpha.N`. Push only the tag.
 4. `gh run list --workflow release.yml --limit 3`, then `gh run watch <id>`.

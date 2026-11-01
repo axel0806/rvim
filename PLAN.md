@@ -1824,10 +1824,12 @@ users run `cargo` directly, or run `make` from Git Bash if GNU make is
 installed there (UNVERIFIED). `make` does not replace CI, and `release.yml`
 stays the release path.
 
-**Release notes (to do before tagging).** The `--notes` string in
-`release.yml` is stale: it describes milestones 1-3 only. Refresh it from the
-Status table before tagging v0.1.0-alpha.3. That is a workflow edit for the
-release step and is not done yet.
+**Release notes.** `release.yml` passes `.github/release-notes.md` to
+`gh release create --notes-file`. For each release, edit that file, commit it
+on `main`, and tag a commit that contains it (the workflow reads it from the
+tagged checkout; a missing file fails the upload step). The file is not packed
+into the archives. The v0.1.0-alpha.3 notes are in that file on the
+alpha.3 release branch.
 
 **Documents.** All five were written on 2026-11-01. The table is the original
 plan, kept for the record; the files are the source of truth.

@@ -81,7 +81,8 @@ use:
   `softtabstop`, and block `<` or block put with tabs still differ from Vim
   (see PLAN.md, "Known differences"). `smartindent` does not exist, and
   `backspace=indent,eol,start`, `whichwrap=b,s` and `startofline` are
-  fixed. Options are global; `:setlocal` and `:setglobal` are not there yet.
+  fixed. Options are global: `:setglobal` does not exist, and `:setlocal` is only an
+  alias for `:set`.
 - No config file (`vimrc`), plugins, Vimscript, `:help`, folds, completion,
   spell checking, `:terminal`, or `:!` shell commands.
 - `:s`: no `\=` expressions; the `\n` (NUL) replacement is not implemented.
