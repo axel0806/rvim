@@ -265,3 +265,46 @@ fn incsearch_is_off_by_default() {
     assert_eq!(row_hl(&ed, 0), exp("", 20));
     assert_eq!(ed.cursor().col, 0);
 }
+
+/// Cancelling a search prompt must not change the desired column: the `j`
+/// after it lands in column 4, as in Vim (Vim keeps curswant while a prompt
+/// is open and does not move the cursor back on cancel).
+#[test]
+fn escape_and_ctrl_c_from_a_search_prompt_keep_the_desired_column() {
+    let text = "abcdef\nab\nabcdef\nabcdef";
+    for is in ["", ":set is<CR>"] {
+        for keys in [
+            "llllj/ab<Esc>",
+            "llllj?abc<Esc>",
+            "llllj/ab<C-c>",
+            "llllj/zz<Esc>",
+            "llllj/ab<BS><Esc>",
+            "llllj/zz<Esc>",
+        ] {
+            let mut ed = Editor::from_text(text);
+            ed.set_screen_size(20, 6);
+            ed.feed(&format!("{is}{keys}"));
+            assert_eq!(ed.mode(), Mode::Normal, "{keys}");
+            assert_eq!((ed.cursor().line, ed.cursor().col), (1, 1), "{is}{keys}");
+            ed.feed("jx");
+            assert_eq!(ed.buf().text(), "abcdef\nab\nabcdf\nabcdef", "{is}{keys}");
+        }
+    }
+}
+
+/// The same after an answered prompt: `/pat<CR>` is a search, which resets
+/// the desired column, so `j` lands where the search put the cursor's column.
+#[test]
+fn an_answered_search_prompt_resets_the_desired_column_as_a_search_does() {
+    let text = "abcdef\nab\nabcdef\nabcdef";
+    for is in ["", ":set is<CR>"] {
+        let mut ed = Editor::from_text(text);
+        ed.set_screen_size(20, 6);
+        ed.feed(&format!("{is}llllj/ab<CR>jx"));
+        let mut plain = Editor::from_text(text);
+        plain.set_screen_size(20, 6);
+        plain.feed("llllj/ab<CR>jx");
+        assert_eq!(ed.buf().text(), plain.buf().text(), "{is}");
+        assert_eq!(ed.cursor(), plain.cursor(), "{is}");
+    }
+}

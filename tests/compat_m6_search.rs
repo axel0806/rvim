@@ -7,6 +7,9 @@
 
 mod common;
 use common::{check, cross};
+use rvim::Editor;
+use rvim::view::{Hl, frame};
+use std::process::Command;
 
 const TEXT: &str = "foo bar\nqux foo\nlast foo line\n";
 
@@ -90,4 +93,95 @@ fn incsearch_and_hlsearch_together() {
         (TEXT, ":set is hls<CR>/foo<CR>nx"),
         (TEXT, ":set is hls<CR>/foo<CR>:noh<CR>/qux<CR>x"),
     ]);
+}
+
+#[test]
+fn desired_column_after_a_search_prompt_is_answered() {
+    let text = "abcdef\nab\nabcdef\nabcdef";
+    check(&[
+        (text, "llllj/ab<CR>jX"),
+        (text, ":set is<CR>llllj/ab<CR>jX"),
+        (text, "llllj?abc<CR>jX"),
+        (text, ":set is<CR>llllj?abc<CR>jX"),
+        (text, "llllj/zz<CR>jX"),
+    ]);
+}
+
+/// Steps for the `v:hlsearch` comparison: rvim's keys, and the same step as
+/// Vim script. `set hls` is run before the first step on both sides.
+const FLAG_STEPS: &[(&str, &str)] = &[
+    ("/foo<CR>", r#"execute "normal /foo\<CR>""#),
+    (":noh<CR>", "noh"),
+    (":noh<CR>", "noh"),
+    ("n", r#"execute "normal n""#),
+    (":noh<CR>", "noh"),
+    ("*", r#"execute "normal *""#),
+    (":noh<CR>", "noh"),
+    ("<C-l>", r#"execute "normal \<C-l>""#),
+    ("/foo<CR>", r#"execute "normal /foo\<CR>""#),
+    ("<C-l>", r#"execute "normal \<C-l>""#),
+    (":s/foo/foo/<CR>", "s/foo/foo/"),
+    (":noh<CR>", "noh"),
+    (":s/bar/bar/<CR>", "s/bar/bar/"),
+    ("/qux<CR>", r#"execute "normal /qux\<CR>""#),
+];
+
+/// Vim's `v:hlsearch` after each of `steps`, read by a `-es` script (the
+/// same mechanism as the harness). `None` if Vim is unavailable.
+fn vim_hlsearch_flags(text: &str, steps: &[(&str, &str)]) -> Option<Vec<bool>> {
+    let vim = std::env::var("RVIM_REFERENCE_VIM").unwrap_or_else(|_| "vim".into());
+    let dir = tempfile::tempdir().unwrap();
+    let mut script = String::from("set hls\nlet g:out = []\n");
+    for (_, stmt) in steps {
+        script.push_str(&format!("{stmt}\ncall add(g:out, v:hlsearch)\n"));
+    }
+    script.push_str("call writefile(map(g:out, 'string(v:val)'), 'out.txt')\nqa!\n");
+    std::fs::write(dir.path().join("cases.vim"), script).unwrap();
+    std::fs::write(dir.path().join("t.txt"), text).unwrap();
+    let _ = Command::new(&vim)
+        .current_dir(dir.path())
+        .args(["-N", "-u", "NONE", "-i", "NONE", "-n", "-es", "t.txt"])
+        .args(["-S", "cases.vim"])
+        .stdout(std::process::Stdio::null())
+        .status();
+    let Ok(out) = std::fs::read_to_string(dir.path().join("out.txt")) else {
+        let msg = format!("reference Vim `{vim}` failed or is missing");
+        if std::env::var("RVIM_REQUIRE_VIM").as_deref() == Ok("1") {
+            panic!("{msg}");
+        }
+        eprintln!("warning: {msg}; skipping the v:hlsearch check");
+        return None;
+    };
+    Some(out.lines().map(|l| l.trim() == "1").collect())
+}
+
+/// rvim's hlsearch state after each step, seen as highlighted cells: with
+/// 'hlsearch' on and a pattern in the text, a match is drawn exactly when the
+/// flag (`no_hlsearch` in rvim, `v:hlsearch` in Vim) is on.
+fn rvim_hlsearch_flags(text: &str, steps: &[(&str, &str)]) -> Vec<bool> {
+    let mut ed = Editor::from_text(text);
+    ed.set_screen_size(20, 6);
+    ed.feed(":set hls<CR>");
+    steps
+        .iter()
+        .map(|(keys, _)| {
+            ed.feed(keys);
+            frame(&ed)
+                .hl
+                .iter()
+                .any(|row| row.contains(&Hl::Search))
+        })
+        .collect()
+}
+
+#[test]
+fn v_hlsearch_after_each_step_matches_vim() {
+    let Some(want) = vim_hlsearch_flags(TEXT, FLAG_STEPS) else {
+        return;
+    };
+    assert_eq!(want.len(), FLAG_STEPS.len(), "Vim wrote every step");
+    let got = rvim_hlsearch_flags(TEXT, FLAG_STEPS);
+    for (i, (step, _)) in FLAG_STEPS.iter().enumerate() {
+        assert_eq!(got[i], want[i], "v:hlsearch after step {i} ({step:?})");
+    }
 }

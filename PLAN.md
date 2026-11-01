@@ -2402,8 +2402,11 @@ plan, kept for the record; the files are the source of truth.
   connection yet), and the scan reports no version (`version unknown`).
   `rvim --agent` is not added; the `[agent] enabled` key is the opt-in.
 - hlsearch and incsearch (milestone 6). Vim's behaviour is checked where the
-  harness can see it: text and cursor, and `v:hlsearch` (the only way to read
-  the `no_hlsearch` flag). The screen is not compared, so the cells in
+  harness can see it: text and cursor (`check` in `tests/compat_m6_search.rs`),
+  and `v:hlsearch` after each step of a `-es` script
+  (`v_hlsearch_after_each_step_matches_vim`). rvim's side of that test is the
+  visible Search cells, which follow the flag; the flag itself is not
+  exported. The screen is not compared in Vim, so the cells in
   `tests/search_highlight.rs` follow the rules as stated in the code, not a
   Vim screen dump. Not probed: `:g` (rvim turns hlsearch on for a `:g` with a
   pattern, as for `:s`). rvim's choices: an empty match is one cell (Vim's
