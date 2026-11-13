@@ -5,10 +5,23 @@
 //!
 //! `acp.rs` keeps the queue and answers only on `InEvent::PermissionAnswer`.
 //! This module reads the head of that queue after every batch of actions
-//! ([`Editor::permission_sync`]): it shows the prompt for a new head, answers
+//! ([`Editor::permission_sync`]): it queues the prompt for a new head, answers
 //! it from a session grant the user made, or takes the prompt down when the
 //! queue is empty. Nothing here answers by timeout: after five minutes the
 //! message line only reminds the user, every five minutes.
+//!
+//! The prompt takes keys in plain Normal mode only. A request that arrives
+//! while the editor is in Insert, Replace, Visual or command-line mode, or has
+//! a pending Normal command, stays queued (the indicator says `PERMISSION n`
+//! and the message line says it waits) and never takes a key. It becomes
+//! active, and its text appears, when the editor is next in plain Normal mode
+//! ([`Editor::permission_activate`], run after every top-level key and every
+//! queue change). Grants answer at once in any mode: they need no key.
+//!
+//! The same queue and prompt carry a served write to a sensitive path
+//! (`agent_fs.rs`, [`crate::agent_fs::is_sensitive`]): `[y]es [n]o`, no
+//! grants. It is never answered without a key: `:AgentCancel` or a lost
+//! connection answers the write's request with an error.
 //!
 //! Grants live in memory only. They are never written to disk and are gone
 //! when rvim exits; `:AgentForget` drops them sooner.
@@ -18,10 +31,12 @@ use std::time::{Duration, Instant};
 
 use crate::Editor;
 use crate::acp::{
-    InEvent, PermissionChoice, PermissionOptionKind, PermissionRequest, ToolCallContent, ToolKind,
+    ConnState, Id, InEvent, PermissionChoice, PermissionOptionKind, PermissionRequest,
+    ToolCallContent, ToolKind,
 };
 use crate::agent_approval::FILE_NAME;
 use crate::agent_conn::ConnCmd;
+use crate::agent_fs::Ask;
 use crate::key::Key;
 
 /// How long the prompt waits before the message line reminds the user, and
@@ -40,15 +55,29 @@ pub(crate) struct Grant {
     pub allow: bool,
 }
 
-/// The prompt on the message line.
+/// What a prompt asks about.
+#[derive(Debug)]
+enum Subject {
+    /// The head of the connection's permission queue.
+    Acp(PermissionRequest),
+    /// A served write to a sensitive path (`Editor::agent.fs.asks`), by the
+    /// request's id.
+    Write(Id),
+}
+
+/// The head of the queue: shown on the message line once `active`.
 #[derive(Debug)]
 struct Prompt {
     generation: u64,
     agent: &'static str,
-    request: PermissionRequest,
+    subject: Subject,
+    /// Requests waiting, this one included (the connection's queue and the
+    /// sensitive writes).
     queued: usize,
     remind_at: Instant,
     shown: Shown,
+    /// Takes keys. False while the editor is not in plain Normal mode.
+    active: bool,
 }
 
 /// What the prompt says about a request.
@@ -173,8 +202,29 @@ fn describe(request: &PermissionRequest, root: Option<&Path>) -> Shown {
     }
 }
 
+/// What a sensitive write says about itself.
+fn describe_write(ask: &Ask) -> Shown {
+    Shown {
+        kind: "write",
+        action: format!("wants to write {} (sensitive)", ask.shown),
+        what: format!("write {}", ask.shown),
+        scope: None,
+    }
+}
+
+/// The message line while the prompt is queued but not active.
+fn waiting_text(agent: &str) -> String {
+    format!("{agent}-acp waits for permission; <Esc> to answer")
+}
+
 /// The prompt's text (PLAN.md, section 5).
-fn prompt_text(agent: &str, request: &PermissionRequest, shown: &Shown, queued: usize) -> String {
+fn prompt_text(agent: &str, subject: &Subject, shown: &Shown, queued: usize) -> String {
+    let request = match subject {
+        Subject::Acp(request) => request,
+        Subject::Write(_) => {
+            return format!("{agent}-acp {}. [y]es [n]o (1/{queued})", shown.action);
+        }
+    };
     let has = |k| request.option_of_kind(k).is_some();
     let scope = shown.scope.as_ref().map(|s| {
         if shown.kind == "execute" {
@@ -211,17 +261,29 @@ fn prompt_text(agent: &str, request: &PermissionRequest, shown: &Shown, queued: 
 }
 
 impl Editor {
-    /// The permission prompt's keys, while it is up. Returns true when the
-    /// key was used: the prompt takes every key, so none reaches Normal,
-    /// Insert or command-line mode. `y` `a` `n` `N` answer with the option of
-    /// that kind, when the agent offered one; `<Esc>` and `<C-c>` reject once,
-    /// or cancel when no `reject_once` was offered. Other keys do nothing.
+    /// The permission prompt's keys, while it is active (plain Normal mode;
+    /// a queued prompt takes no key). Returns true when the key was used: an
+    /// active prompt takes every key, so none reaches Normal mode. `y` `a`
+    /// `n` `N` answer with the option of that kind, when the agent offered
+    /// one; `<Esc>` and `<C-c>` reject once, or cancel when no `reject_once`
+    /// was offered. Other keys do nothing. A sensitive write takes `y` and
+    /// `n` (and `<Esc>`, `<C-c>` as `n`).
     pub(crate) fn agent_permission_key(&mut self, key: Key) -> bool {
-        let Some(generation) = self.agent.perm.prompt.as_ref().map(|p| p.generation) else {
+        let Some((generation, write)) = self
+            .agent
+            .perm
+            .prompt
+            .as_ref()
+            .filter(|p| p.active)
+            .map(|p| (p.generation, matches!(p.subject, Subject::Write(_))))
+        else {
             return false;
         };
         // Answering moves nothing: the desired column stays (CLAUDE.md).
         self.win_mut().keep_curswant = true;
+        if write {
+            return self.sensitive_write_key(generation, key);
+        }
         let Some(head) = self
             .agent
             .link
@@ -293,75 +355,226 @@ impl Editor {
         true
     }
 
-    /// Brings the prompt in line with the connection's queue: the prompt for
-    /// a new head (or the head answered from a grant), the count for the same
-    /// head, or no prompt when the queue is empty. Called after every batch of
-    /// connection actions.
-    pub(crate) fn permission_sync(&mut self, now: Instant) {
-        let head = self.agent.link.as_ref().and_then(|l| {
-            l.conn
-                .permission_head()
-                .cloned()
-                .map(|h| (l.id, l.generation, l.conn.permissions_waiting(), h))
-        });
-        let Some((agent, generation, queued, head)) = head else {
-            return self.permission_clear();
+    /// The key on a sensitive write's prompt: `y` writes, `n`, `<Esc>` and
+    /// `<C-c>` refuse; any other key is taken and does nothing.
+    fn sensitive_write_key(&mut self, generation: u64, key: Key) -> bool {
+        let allow = match key {
+            Key::Char('y') => true,
+            Key::Char('n') | Key::Esc | Key::Ctrl('c') => false,
+            _ => return true,
         };
-        if let Some(p) = self.agent.perm.prompt.as_mut()
-            && p.generation == generation
-            && p.request == head
-        {
-            if p.queued != queued {
-                p.queued = queued;
-                let text = prompt_text(agent, &p.request, &p.shown, queued);
-                self.info(text);
-            }
+        let Some(prompt) = self.agent.perm.prompt.take() else {
+            return true;
+        };
+        let Subject::Write(request) = &prompt.subject else {
+            self.agent.perm.prompt = Some(prompt);
+            return true;
+        };
+        let pos = self
+            .agent
+            .fs
+            .asks
+            .iter()
+            .position(|a| a.request == *request && a.generation == generation);
+        let Some(pos) = pos else {
+            return true;
+        };
+        let ask = self.agent.fs.asks.remove(pos);
+        let word = if allow { "allowed" } else { "rejected" };
+        self.log_line(&format!("[permission] {}: {word}", prompt.shown.what));
+        self.message = None;
+        self.sensitive_write_answer(ask, allow);
+        // The next request, if any.
+        self.permission_sync(Instant::now());
+        true
+    }
+
+    /// Whether the editor is in plain Normal mode with nothing pending and no
+    /// other prompt open: the only state in which a permission prompt takes
+    /// keys (the owner's rule, 2026-11-13).
+    fn permission_keys_ok(&self) -> bool {
+        self.depth == 0
+            && self.ready_for_change()
+            && self.conflict.is_none()
+            && self.agent.consent.is_none()
+    }
+
+    /// Makes a queued prompt active and shows its text, when the editor is in
+    /// plain Normal mode. Called after every top-level key (`handle_key`) and
+    /// whenever the queue changes. The desired column is not touched.
+    pub(crate) fn permission_activate(&mut self) {
+        if !self.permission_keys_ok() {
             return;
         }
-        let shown = describe(&head, self.agent.project.as_deref());
-        if let Some(grant) = self.grant_for(agent, &shown) {
-            let (first, second) = if grant.allow {
-                (
-                    PermissionOptionKind::AllowAlways,
-                    PermissionOptionKind::AllowOnce,
-                )
-            } else {
-                (
-                    PermissionOptionKind::RejectAlways,
-                    PermissionOptionKind::RejectOnce,
-                )
-            };
-            let option = head
-                .option_of_kind(first)
-                .or_else(|| head.option_of_kind(second));
-            if let Some(option) = option {
-                let polarity = if grant.allow { "allow" } else { "reject" };
-                let word = if grant.allow { "allowed" } else { "rejected" };
-                self.log_line(&format!(
-                    "[permission] {}: {word}; grant used: {} {} {polarity}",
-                    shown.what, grant.kind, grant.scope
-                ));
-                self.agent.perm.prompt = None;
-                let choice = PermissionChoice::Select(option.option_id.clone());
-                let actions = match self.agent.link.as_mut() {
-                    Some(link) => link.conn.on_event(InEvent::PermissionAnswer(choice)),
-                    None => return,
-                };
-                // The next head, if any, is handled by the sync at its end.
-                return self.agent_apply(generation, actions, now);
-            }
-        }
+        let Some(p) = self.agent.perm.prompt.as_mut().filter(|p| !p.active) else {
+            return;
+        };
+        p.active = true;
+        let text = prompt_text(p.agent, &p.subject, &p.shown, p.queued);
+        self.info(text);
+    }
+
+    /// Queues the prompt for a new head: logged as waiting, active at once in
+    /// plain Normal mode, else the message line says it waits.
+    fn permission_queue(
+        &mut self,
+        generation: u64,
+        agent: &'static str,
+        subject: Subject,
+        shown: Shown,
+        queued: usize,
+        now: Instant,
+    ) {
         self.log_line(&format!("[permission] {}: waiting", shown.what));
-        let text = prompt_text(agent, &head, &shown, queued);
         self.agent.perm.prompt = Some(Prompt {
             generation,
             agent,
-            request: head,
+            subject,
             queued,
             remind_at: now + REMIND_AFTER,
             shown,
+            active: false,
         });
-        self.info(text);
+        self.permission_activate();
+        if self.agent.perm.prompt.as_ref().is_some_and(|p| !p.active) {
+            self.info(waiting_text(agent));
+        }
+    }
+
+    /// Brings the prompt in line with the queues: the prompt for a new head
+    /// (or the head answered from a grant, in any mode), the count for the
+    /// same head, or no prompt when nothing waits. The connection's requests
+    /// come first, then the sensitive writes; a prompt that is up stays the
+    /// head until it is answered. Called after every batch of connection
+    /// actions.
+    pub(crate) fn permission_sync(&mut self, now: Instant) {
+        self.drop_dead_writes();
+        let link = self.agent.link.as_ref().map(|l| {
+            (
+                l.id,
+                l.generation,
+                l.conn.permissions_waiting(),
+                l.conn.permission_head().cloned(),
+            )
+        });
+        let Some((agent, generation, conn_n, conn_head)) = link else {
+            return self.permission_clear();
+        };
+        let queued = conn_n + self.agent.fs.asks.len();
+        // A prompt whose request has left the queues was answered without a
+        // key (`:AgentCancel`, the turn ended, the connection was lost).
+        let stale = self.agent.perm.prompt.as_ref().is_some_and(|p| {
+            p.generation != generation
+                || match &p.subject {
+                    Subject::Acp(r) => conn_head.as_ref() != Some(r),
+                    Subject::Write(id) => !self.agent.fs.asks.iter().any(|a| a.request == *id),
+                }
+        });
+        if stale && let Some(p) = self.agent.perm.prompt.take() {
+            self.log_line(&format!("[permission] {}: cancelled", p.shown.what));
+            if queued == 0 && p.queued > 1 {
+                self.log_line(&format!("[permission] {} more cancelled", p.queued - 1));
+            }
+        }
+        let mut prompt_is_acp = false;
+        let mut have_prompt = false;
+        let mut update = None;
+        if let Some(p) = self.agent.perm.prompt.as_mut() {
+            have_prompt = true;
+            prompt_is_acp = matches!(p.subject, Subject::Acp(_));
+            if p.queued != queued {
+                p.queued = queued;
+                // A count change is shown only when the prompt is active: a
+                // queued one says nothing more than the indicator.
+                if p.active {
+                    update = Some(prompt_text(agent, &p.subject, &p.shown, queued));
+                }
+            }
+        }
+        if let Some(text) = update {
+            self.info(text);
+        }
+        if !prompt_is_acp && let Some(head) = conn_head {
+            let shown = describe(&head, self.agent.project.as_deref());
+            if let Some(grant) = self.grant_for(agent, &shown) {
+                let (first, second) = if grant.allow {
+                    (
+                        PermissionOptionKind::AllowAlways,
+                        PermissionOptionKind::AllowOnce,
+                    )
+                } else {
+                    (
+                        PermissionOptionKind::RejectAlways,
+                        PermissionOptionKind::RejectOnce,
+                    )
+                };
+                let option = head
+                    .option_of_kind(first)
+                    .or_else(|| head.option_of_kind(second));
+                if let Some(option) = option {
+                    let polarity = if grant.allow { "allow" } else { "reject" };
+                    let word = if grant.allow { "allowed" } else { "rejected" };
+                    self.log_line(&format!(
+                        "[permission] {}: {word}; grant used: {} {} {polarity}",
+                        shown.what, grant.kind, grant.scope
+                    ));
+                    let choice = PermissionChoice::Select(option.option_id.clone());
+                    let actions = match self.agent.link.as_mut() {
+                        Some(link) => link.conn.on_event(InEvent::PermissionAnswer(choice)),
+                        None => return,
+                    };
+                    // The next head, if any, is handled by the sync at its end.
+                    return self.agent_apply(generation, actions, now);
+                }
+            }
+            if !have_prompt {
+                let subject = Subject::Acp(head);
+                return self.permission_queue(generation, agent, subject, shown, queued, now);
+            }
+        }
+        if !have_prompt && let Some(ask) = self.agent.fs.asks.first() {
+            let (id, shown) = (ask.request.clone(), describe_write(ask));
+            let subject = Subject::Write(id);
+            self.permission_queue(generation, agent, subject, shown, queued, now);
+        }
+    }
+
+    /// Sensitive writes of a connection that is gone or down are dropped: the
+    /// agent can no longer be answered. They were never written.
+    fn drop_dead_writes(&mut self) {
+        if self.agent.fs.asks.is_empty() {
+            return;
+        }
+        let alive = self.agent.link.as_ref().map(|l| {
+            (
+                l.generation,
+                !matches!(l.conn.state(), ConnState::Disconnected | ConnState::Closed),
+            )
+        });
+        self.agent
+            .fs
+            .asks
+            .retain(|a| alive.is_some_and(|(generation, up)| up && a.generation == generation));
+    }
+
+    /// `:AgentCancel`, `\ac`: every sensitive write that waits for a key is
+    /// answered with an error, never written. Returns true when there was one.
+    pub(crate) fn permission_cancel_writes(&mut self) -> bool {
+        let asks = std::mem::take(&mut self.agent.fs.asks);
+        if asks.is_empty() {
+            return false;
+        }
+        if matches!(
+            self.agent.perm.prompt.as_ref().map(|p| &p.subject),
+            Some(Subject::Write(_))
+        ) {
+            self.agent.perm.prompt = None;
+        }
+        for ask in asks {
+            self.log_line(&format!("[permission] write {}: cancelled", ask.shown));
+            self.sensitive_write_dropped(ask, true);
+        }
+        true
     }
 
     /// The grant that answers a request like `shown` from `agent`, if any.
@@ -375,10 +588,12 @@ impl Editor {
             .cloned()
     }
 
-    /// Takes the prompt down: the queue emptied without a key (`:AgentCancel`,
-    /// the turn ended, a disconnect or a lost connection). The log says the
-    /// request was cancelled.
+    /// Takes the prompt down: the queue emptied without a key (a disconnect,
+    /// `:AgentForget`, no connection). The log says the request was
+    /// cancelled. Sensitive writes still waiting are dropped with it: the
+    /// connection that asked is gone, and nothing is written.
     pub(crate) fn permission_clear(&mut self) {
+        self.agent.fs.asks.clear();
         let Some(prompt) = self.agent.perm.prompt.take() else {
             return;
         };
@@ -391,9 +606,20 @@ impl Editor {
         }
     }
 
-    /// Whether the permission prompt is up (for paste and tests).
+    /// Whether the permission prompt is active: up on the message line and
+    /// taking keys (for paste and tests). A queued prompt is not.
     pub fn permission_prompt_up(&self) -> bool {
+        self.agent.perm.prompt.as_ref().is_some_and(|p| p.active)
+    }
+
+    /// Whether a request is queued, active or not (for tests).
+    pub fn permission_queued(&self) -> bool {
         self.agent.perm.prompt.is_some()
+    }
+
+    /// Sensitive writes waiting for a key, for the indicator's count.
+    pub(crate) fn permission_writes_waiting(&self) -> usize {
+        self.agent.fs.asks.len()
     }
 
     /// The reminder's deadline, for `next_deadline`.
@@ -401,8 +627,8 @@ impl Editor {
         self.agent.perm.prompt.as_ref().map(|p| p.remind_at)
     }
 
-    /// The clock moved: the reminder, every five minutes while the prompt
-    /// is up. It never answers the request.
+    /// The clock moved: the reminder, every five minutes while a request
+    /// waits. It never answers the request.
     pub(crate) fn permission_timer(&mut self, now: Instant) {
         let Some(prompt) = self.agent.perm.prompt.as_mut() else {
             return;
@@ -413,7 +639,11 @@ impl Editor {
         while prompt.remind_at <= now {
             prompt.remind_at += REMIND_AFTER;
         }
-        let text = format!("{}-acp still waiting for y or n", prompt.agent);
+        let text = if prompt.active {
+            format!("{}-acp still waiting for y or n", prompt.agent)
+        } else {
+            waiting_text(prompt.agent)
+        };
         self.info(text);
     }
 
