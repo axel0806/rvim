@@ -21,7 +21,11 @@ const ROOT: &str = "C:\\proj";
 const ROOT: &str = "/proj";
 
 fn editor() -> Editor {
-    let mut ed = Editor::new();
+    editor_with("")
+}
+
+fn editor_with(text: &str) -> Editor {
+    let mut ed = Editor::from_text(text);
     ed.set_screen_size(200, 24);
     ed.set_agent_project(PathBuf::from(ROOT));
     let mut approvals = Approvals::default();
@@ -99,7 +103,12 @@ fn handshake(ed: &mut Editor, generation: u64, taken: Vec<ConnCmd>) -> Vec<ConnC
 
 /// An editor connected to the fake agent as generation `generation`.
 fn connected(generation: u64) -> Editor {
-    let mut ed = editor();
+    connected_with(generation, "")
+}
+
+/// As `connected`, with `text` in the document.
+fn connected_with(generation: u64, text: &str) -> Editor {
+    let mut ed = editor_with(text);
     ed.agent_connect(None);
     let cmds = ed.take_agent_conn_commands();
     handshake(&mut ed, generation, cmds);
@@ -273,12 +282,14 @@ fn a_permission_request_waits_and_cancel_answers_it_as_cancelled() {
                               {"optionId": "no", "name": "Reject", "kind": "reject_once"}]}}),
     );
     assert!(
-        status(&ed).contains("waiting for a permission decision"),
+        status(&ed).contains("claude-acp asks for permission: edit a.rs. [y]es [n]o (1/1)"),
         "{}",
         status(&ed)
     );
     assert!(status(&ed).contains("PERMISSION 1"), "{}", status(&ed));
-    ed.feed(":AgentCancel<CR>");
+    // The prompt takes typed keys, so the cancel comes from the API (as
+    // the leader key would, were it typeable while the prompt is up).
+    ed.agent_cancel();
     let cmds = ed.take_agent_conn_commands();
     let answer = sent(&cmds)
         .into_iter()
@@ -405,4 +416,514 @@ fn leader_keys_are_unbound_with_the_layer_off() {
     ed.feed("\\aZ<Esc>");
     assert_eq!(text(&ed), "Z");
     assert_eq!(ed.cmdline(), "");
+}
+
+// ---- permission requests (milestone 7 step 6a) -----------------------------
+
+/// The absolute path of `rel` in the project, as an agent sends it.
+fn project_path(rel: &str) -> String {
+    PathBuf::from(ROOT).join(rel).to_string_lossy().into_owned()
+}
+
+/// A tool call of `kind` on the project file `rel`.
+fn file_tool(kind: &str, rel: &str) -> Value {
+    json!({"toolCallId": format!("t-{rel}"), "title": format!("{kind} {rel}"),
+           "kind": kind, "locations": [{"path": project_path(rel)}]})
+}
+
+/// `session/request_permission` with request id `id`, offering the option
+/// kinds `kinds`; each option's id is its kind.
+fn ask(ed: &mut Editor, id: i64, tool: Value, kinds: &[&str]) {
+    let options: Vec<Value> = kinds
+        .iter()
+        .map(|k| json!({"optionId": k, "name": k, "kind": k}))
+        .collect();
+    agent(
+        ed,
+        1,
+        json!({"jsonrpc": "2.0", "id": id, "method": "session/request_permission",
+               "params": {"sessionId": "s1", "toolCall": tool, "options": options}}),
+    );
+}
+
+const ALL: [&str; 4] = ["allow_once", "allow_always", "reject_once", "reject_always"];
+
+/// The answers to permission requests in `cmds`: (request id, outcome),
+/// where the outcome is the selected option id or `cancelled`.
+fn answers(cmds: &[ConnCmd]) -> Vec<(i64, String)> {
+    sent(cmds)
+        .into_iter()
+        .filter(|v| v.get("result").is_some_and(|r| r.get("outcome").is_some()))
+        .map(|v| {
+            let outcome = &v["result"]["outcome"];
+            let what = match outcome["outcome"].as_str() {
+                Some("selected") => outcome["optionId"].as_str().unwrap_or("?").to_owned(),
+                other => other.unwrap_or("?").to_owned(),
+            };
+            (v["id"].as_i64().unwrap_or(-1), what)
+        })
+        .collect()
+}
+
+#[test]
+fn a_queue_of_two_is_answered_only_by_keys_in_order() {
+    let mut ed = connected(1);
+    let _turn = start_turn(&mut ed, "edit");
+    let diff = json!([{"type": "diff", "path": project_path("src/a.rs"),
+                       "oldText": "a\nb\nc\n", "newText": "a\nB\nc\nd\ne\n"}]);
+    let mut tool = file_tool("edit", "src/a.rs");
+    tool["content"] = diff;
+    ask(&mut ed, 50, tool, &ALL);
+    ask(
+        &mut ed,
+        51,
+        json!({"toolCallId": "t2", "title": "cargo test", "kind": "execute"}),
+        &["allow_once", "reject_once"],
+    );
+    assert_eq!(
+        status(&ed)
+            .split("  ")
+            .next()
+            .unwrap_or_default()
+            .trim_end(),
+        "claude-acp wants to edit src/a.rs (+3 -1). [y]es [a]lways for edit in src/ this session [n]o [N]ever (1/2)",
+    );
+    assert!(status(&ed).contains("PERMISSION 2"), "{}", status(&ed));
+    // No answer without a key, however long the prompt waits.
+    ed.agent_timer(Instant::now() + Duration::from_secs(3600));
+    assert!(answers(&ed.take_agent_conn_commands()).is_empty());
+    ed.feed("y");
+    assert_eq!(
+        answers(&ed.take_agent_conn_commands()),
+        [(50, "allow_once".to_owned())]
+    );
+    assert!(
+        status(&ed).contains("claude-acp wants to run: cargo test. [y]es [n]o (1/1)"),
+        "{}",
+        status(&ed)
+    );
+    ed.feed("n");
+    assert_eq!(
+        answers(&ed.take_agent_conn_commands()),
+        [(51, "reject_once".to_owned())]
+    );
+    assert!(!ed.permission_prompt_up());
+    assert!(!status(&ed).contains("PERMISSION"), "{}", status(&ed));
+    let log = log(&ed);
+    assert!(log.contains("[permission] edit src/a.rs: waiting"), "{log}");
+    assert!(log.contains("[permission] edit src/a.rs: allowed"), "{log}");
+    assert!(
+        log.contains("[permission] execute cargo test: rejected"),
+        "{log}"
+    );
+}
+
+#[test]
+fn each_key_selects_its_option_kind() {
+    for (keys, want) in [
+        ("y", "allow_once"),
+        ("a", "allow_always"),
+        ("n", "reject_once"),
+        ("N", "reject_always"),
+        ("<Esc>", "reject_once"),
+        ("<C-c>", "reject_once"),
+    ] {
+        let mut ed = connected(1);
+        let _turn = start_turn(&mut ed, "edit");
+        ask(&mut ed, 50, file_tool("edit", "src/a.rs"), &ALL);
+        ed.feed(keys);
+        assert_eq!(
+            answers(&ed.take_agent_conn_commands()),
+            [(50, want.to_owned())],
+            "{keys}"
+        );
+    }
+}
+
+#[test]
+fn esc_without_a_reject_option_cancels_and_unoffered_keys_do_nothing() {
+    let mut ed = connected(1);
+    let _turn = start_turn(&mut ed, "edit");
+    ask(
+        &mut ed,
+        50,
+        file_tool("edit", "src/a.rs"),
+        &["allow_once", "reject_always"],
+    );
+    assert!(
+        status(&ed).contains("[y]es [N]ever for edit in src/ this session (1/1)"),
+        "{}",
+        status(&ed)
+    );
+    // Not offered (`a`, `n`) or not a prompt key (`x`): the prompt stays.
+    ed.feed("anxq:");
+    assert!(answers(&ed.take_agent_conn_commands()).is_empty());
+    assert!(ed.permission_prompt_up());
+    assert_eq!(ed.cmdline(), "");
+    ed.feed("<Esc>");
+    assert_eq!(
+        answers(&ed.take_agent_conn_commands()),
+        [(50, "cancelled".to_owned())]
+    );
+    assert!(
+        log(&ed).contains("[permission] edit src/a.rs: cancelled"),
+        "{}",
+        log(&ed)
+    );
+}
+
+#[test]
+fn a_grant_answers_only_matching_requests_and_is_not_saved() {
+    let mut ed = connected(1);
+    let _turn = start_turn(&mut ed, "edit");
+    ask(&mut ed, 50, file_tool("edit", "src/a.rs"), &ALL);
+    ed.feed("a");
+    let cmds = ed.take_agent_conn_commands();
+    assert_eq!(answers(&cmds), [(50, "allow_always".to_owned())]);
+    assert!(cmds.iter().all(|c| !matches!(c, ConnCmd::SaveApprovals(_))));
+    assert!(
+        status(&ed).contains("ai: claude working (1 grant)"),
+        "{}",
+        status(&ed)
+    );
+    // Same kind and directory: answered from the grant, with no prompt.
+    ask(&mut ed, 51, file_tool("edit", "src/b.rs"), &ALL);
+    assert_eq!(
+        answers(&ed.take_agent_conn_commands()),
+        [(51, "allow_always".to_owned())]
+    );
+    assert!(!ed.permission_prompt_up());
+    assert!(
+        log(&ed).contains("grant used: edit src/ allow"),
+        "{}",
+        log(&ed)
+    );
+    // Only allow_once offered: the grant picks it.
+    ask(
+        &mut ed,
+        52,
+        file_tool("edit", "src/c.rs"),
+        &["allow_once", "reject_once"],
+    );
+    assert_eq!(
+        answers(&ed.take_agent_conn_commands()),
+        [(52, "allow_once".to_owned())]
+    );
+    // No allow option at all: the grant cannot answer, so it prompts.
+    ask(&mut ed, 53, file_tool("edit", "src/d.rs"), &["reject_once"]);
+    assert!(ed.permission_prompt_up());
+    ed.feed("n");
+    // Another directory, a subdirectory, another kind: they prompt.
+    for (id, tool) in [
+        (54, file_tool("edit", "lib/a.rs")),
+        (55, file_tool("edit", "src/sub/a.rs")),
+        (56, file_tool("delete", "src/a.rs")),
+    ] {
+        ask(&mut ed, id, tool, &ALL);
+        assert!(ed.permission_prompt_up(), "{id} prompts");
+        assert!(
+            answers(&ed.take_agent_conn_commands())
+                .iter()
+                .all(|(i, _)| *i != id)
+        );
+        ed.feed("y");
+        assert_eq!(
+            answers(&ed.take_agent_conn_commands()),
+            [(id, "allow_once".to_owned())]
+        );
+    }
+    // A grant is never written to agent-approvals.toml.
+    let cmds = ed.take_agent_conn_commands();
+    assert!(cmds.iter().all(|c| !matches!(c, ConnCmd::SaveApprovals(_))));
+    ed.feed(":AgentGrants<CR>");
+    assert!(
+        status(&ed).contains("claude: allow edit src/"),
+        "{}",
+        status(&ed)
+    );
+}
+
+#[test]
+fn a_reject_grant_for_a_command_answers_the_same_command_only() {
+    let mut ed = connected(1);
+    let _turn = start_turn(&mut ed, "run");
+    let run = |cmd: &str| json!({"toolCallId": cmd, "title": cmd, "kind": "execute"});
+    ask(&mut ed, 50, run("rm -rf target"), &ALL);
+    assert!(
+        status(&ed).contains("[a]lways for this command this session"),
+        "{}",
+        status(&ed)
+    );
+    ed.feed("N");
+    assert_eq!(
+        answers(&ed.take_agent_conn_commands()),
+        [(50, "reject_always".to_owned())]
+    );
+    ask(
+        &mut ed,
+        51,
+        run("rm -rf target"),
+        &["allow_once", "reject_once"],
+    );
+    assert_eq!(
+        answers(&ed.take_agent_conn_commands()),
+        [(51, "reject_once".to_owned())]
+    );
+    assert!(
+        log(&ed).contains("grant used: execute rm -rf target reject"),
+        "{}",
+        log(&ed)
+    );
+    ask(&mut ed, 52, run("cargo test"), &ALL);
+    assert!(ed.permission_prompt_up());
+}
+
+#[test]
+fn a_request_without_a_scope_makes_no_grant() {
+    let mut ed = connected(1);
+    let _turn = start_turn(&mut ed, "x");
+    ask(
+        &mut ed,
+        50,
+        json!({"toolCallId": "t1", "title": "think hard", "kind": "think"}),
+        &ALL,
+    );
+    ed.feed("a");
+    assert_eq!(
+        answers(&ed.take_agent_conn_commands()),
+        [(50, "allow_always".to_owned())]
+    );
+    ed.feed(":AgentGrants<CR>");
+    assert!(status(&ed).contains("No grants"), "{}", status(&ed));
+    ask(
+        &mut ed,
+        51,
+        json!({"toolCallId": "t1", "title": "think hard", "kind": "think"}),
+        &ALL,
+    );
+    assert!(ed.permission_prompt_up());
+}
+
+#[test]
+fn agent_forget_removes_the_grants_and_the_approval() {
+    let mut ed = connected(1);
+    let _turn = start_turn(&mut ed, "edit");
+    ask(&mut ed, 50, file_tool("edit", "src/a.rs"), &ALL);
+    ed.feed("a");
+    ed.take_agent_conn_commands();
+    ed.feed(":AgentForget<CR>");
+    let cmds = ed.take_agent_conn_commands();
+    assert_eq!(stops(&cmds), 1, "the connection is closed");
+    let saved: Vec<&String> = cmds
+        .iter()
+        .filter_map(|c| match c {
+            ConnCmd::SaveApprovals(text) => Some(text),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(saved.len(), 1, "{cmds:?}");
+    assert!(!saved[0].contains("[[approval]]"), "{}", saved[0]);
+    assert!(
+        status(&ed).contains("forgot 1 grant and 1 approval for this project"),
+        "{}",
+        status(&ed)
+    );
+    ed.feed(":AgentGrants<CR>");
+    assert!(status(&ed).contains("No grants"), "{}", status(&ed));
+    // Connecting again asks for consent.
+    ed.agent_connect(None);
+    assert!(status(&ed).contains("[y]es [n]o"), "{}", status(&ed));
+    assert!(
+        ed.take_agent_conn_commands()
+            .iter()
+            .all(|c| !matches!(c, ConnCmd::Start { .. }))
+    );
+}
+
+#[test]
+fn agent_forget_bang_removes_every_project() {
+    let mut ed = editor();
+    let mut approvals = Approvals::default();
+    approvals.approve("claude", ROOT);
+    approvals.approve("claude", "/elsewhere");
+    ed.set_agent_approvals(approvals, None);
+    ed.feed(":AgentForget<CR>");
+    let cmds = ed.take_agent_conn_commands();
+    let text = cmds
+        .iter()
+        .find_map(|c| match c {
+            ConnCmd::SaveApprovals(text) => Some(text.clone()),
+            _ => None,
+        })
+        .expect("saved");
+    assert!(
+        text.contains("/elsewhere") && !text.contains(&format!("{:?}", ROOT)),
+        "{text}"
+    );
+    ed.feed(":AgentForget!<CR>");
+    let cmds = ed.take_agent_conn_commands();
+    let text = cmds
+        .iter()
+        .find_map(|c| match c {
+            ConnCmd::SaveApprovals(text) => Some(text.clone()),
+            _ => None,
+        })
+        .expect("saved");
+    assert!(!text.contains("[[approval]]"), "{text}");
+    assert!(status(&ed).contains("every project"), "{}", status(&ed));
+}
+
+#[test]
+fn the_prompt_goes_when_the_queue_empties() {
+    // :AgentCancel answers the queue as cancelled.
+    let mut ed = connected(1);
+    let id = start_turn(&mut ed, "edit");
+    ask(&mut ed, 50, file_tool("edit", "src/a.rs"), &ALL);
+    ask(&mut ed, 51, file_tool("edit", "src/b.rs"), &ALL);
+    // The prompt takes typed keys, so the cancel comes from the API (as
+    // the leader key would, were it typeable while the prompt is up).
+    ed.agent_cancel();
+    assert!(!ed.permission_prompt_up());
+    let got = answers(&ed.take_agent_conn_commands());
+    assert_eq!(
+        got,
+        [(50, "cancelled".to_owned()), (51, "cancelled".to_owned())]
+    );
+    assert!(
+        log(&ed).contains("[permission] edit src/a.rs: cancelled"),
+        "{}",
+        log(&ed)
+    );
+    assert!(
+        log(&ed).contains("[permission] 1 more cancelled"),
+        "{}",
+        log(&ed)
+    );
+    finish(&mut ed, 1, &id, "cancelled");
+    // A `y` now is Vim's `y` again: no answer.
+    ed.feed("y<Esc>");
+    assert!(answers(&ed.take_agent_conn_commands()).is_empty());
+
+    // The turn ends with a request queued.
+    let mut ed = connected(1);
+    let id = start_turn(&mut ed, "edit");
+    ask(&mut ed, 50, file_tool("edit", "src/a.rs"), &ALL);
+    finish(&mut ed, 1, &id, "end_turn");
+    assert!(!ed.permission_prompt_up());
+
+    // The connection is lost.
+    let mut ed = connected(1);
+    let _id = start_turn(&mut ed, "edit");
+    ask(&mut ed, 50, file_tool("edit", "src/a.rs"), &ALL);
+    ed.handle_event(Event::AgentConn {
+        generation: 1,
+        event: AgentEvent::Ended(Some(1)),
+    });
+    assert!(!ed.permission_prompt_up());
+    assert!(ed.next_deadline().is_some(), "the retry timer");
+
+    // :AgentDisconnect.
+    let mut ed = connected(1);
+    let _id = start_turn(&mut ed, "edit");
+    ask(&mut ed, 50, file_tool("edit", "src/a.rs"), &ALL);
+    ed.feed(":AgentDisconnect<CR>");
+    assert!(!ed.permission_prompt_up());
+    assert_eq!(ed.next_deadline(), None);
+}
+
+#[test]
+fn the_prompt_reminds_every_five_minutes_and_never_answers() {
+    let mut ed = connected(1);
+    let _turn = start_turn(&mut ed, "edit");
+    let t0 = Instant::now();
+    ask(&mut ed, 50, file_tool("edit", "src/a.rs"), &ALL);
+    let deadline = ed.next_deadline().expect("the reminder is a deadline");
+    assert!(deadline >= t0 + Duration::from_secs(299), "{deadline:?}");
+    ed.agent_timer(t0 + Duration::from_secs(240));
+    assert!(status(&ed).contains("wants to edit"), "{}", status(&ed));
+    ed.agent_timer(deadline);
+    assert!(
+        status(&ed).contains("claude-acp still waiting for y or n"),
+        "{}",
+        status(&ed)
+    );
+    let next = ed.next_deadline().expect("repeats");
+    assert_eq!(next, deadline + Duration::from_secs(300));
+    ed.feed(":"); // taken by the prompt; clears nothing
+    ed.agent_timer(next);
+    assert!(status(&ed).contains("still waiting"), "{}", status(&ed));
+    assert!(answers(&ed.take_agent_conn_commands()).is_empty());
+    assert!(ed.permission_prompt_up());
+    ed.feed("y");
+    assert_eq!(
+        answers(&ed.take_agent_conn_commands()),
+        [(50, "allow_once".to_owned())]
+    );
+    assert_eq!(ed.next_deadline(), None, "no reminder once answered");
+}
+
+#[test]
+fn prompt_keys_do_not_reach_normal_or_insert_mode() {
+    let mut ed = connected_with(1, "abc");
+    let _turn = start_turn(&mut ed, "edit");
+    ask(
+        &mut ed,
+        50,
+        file_tool("edit", "src/a.rs"),
+        &["allow_once", "reject_once"],
+    );
+    ed.feed("xddiZp");
+    assert_eq!(text(&ed), "abc");
+    assert_eq!(ed.mode(), rvim::editor::Mode::Normal);
+    ed.paste("y");
+    assert!(ed.permission_prompt_up(), "a paste is not an answer");
+    assert_eq!(text(&ed), "abc");
+    ed.feed("y");
+    assert_eq!(
+        answers(&ed.take_agent_conn_commands()),
+        [(50, "allow_once".to_owned())]
+    );
+    // A request that arrives in Insert mode takes the keys too (PLAN.md,
+    // "Permissions, step 6a": a known risk).
+    ed.feed("A");
+    ask(
+        &mut ed,
+        51,
+        file_tool("edit", "src/a.rs"),
+        &["allow_once", "reject_once"],
+    );
+    ed.feed("n");
+    assert_eq!(
+        answers(&ed.take_agent_conn_commands()),
+        [(51, "reject_once".to_owned())]
+    );
+    ed.feed("Z<Esc>");
+    assert_eq!(text(&ed), "abcZ");
+}
+
+#[test]
+fn prompt_keys_keep_the_desired_column() {
+    let mut ed = connected_with(1, "abcdef\nab\nabcdef");
+    let _turn = start_turn(&mut ed, "edit");
+    ed.feed("gg0llllj");
+    assert_eq!((ed.cursor().line, ed.cursor().col), (1, 1));
+    ask(&mut ed, 50, file_tool("edit", "src/a.rs"), &ALL);
+    // An ignored key and an answer: neither moves the cursor or resets the
+    // desired column, so `j` goes back to column 4.
+    ed.feed("xy");
+    assert_eq!(
+        answers(&ed.take_agent_conn_commands()),
+        [(50, "allow_once".to_owned())]
+    );
+    assert_eq!((ed.cursor().line, ed.cursor().col), (1, 1));
+    ed.feed("j");
+    assert_eq!((ed.cursor().line, ed.cursor().col), (2, 4));
+    // A grant answer (no key) keeps it too.
+    ed.feed("k");
+    ask(&mut ed, 51, file_tool("edit", "src/a.rs"), &ALL);
+    ed.feed("a");
+    ask(&mut ed, 52, file_tool("edit", "src/b.rs"), &ALL);
+    assert!(!ed.permission_prompt_up());
+    ed.feed("j");
+    assert_eq!((ed.cursor().line, ed.cursor().col), (2, 4));
 }

@@ -72,6 +72,8 @@ pub struct AgentState {
     pub next_gen: u64,
     /// Prompt turns, the agent log and the leader keys (`agent_turn.rs`).
     pub(crate) turn: crate::agent_turn::TurnState,
+    /// The permission prompt and the session grants (`agent_permission.rs`).
+    pub(crate) perm: crate::agent_permission::PermState,
 }
 
 fn spec_of(id: &str) -> Option<&'static AgentSpec> {
@@ -108,11 +110,12 @@ impl Editor {
     /// retry), for `next_deadline`.
     pub(crate) fn agent_deadline(&self) -> Option<Instant> {
         let leader = self.agent_leader_deadline();
+        let remind = self.permission_deadline();
         let Some(link) = self.agent.link.as_ref() else {
-            return leader;
+            return leader.into_iter().chain(remind).min();
         };
         let retry = link.retry_at.filter(|_| link.life == Life::Disconnected);
-        [retry, link.conn.next_deadline(), leader]
+        [retry, link.conn.next_deadline(), leader, remind]
             .into_iter()
             .flatten()
             .min()
@@ -139,7 +142,7 @@ impl Editor {
             let state = match link.life {
                 Life::Connecting => " connecting".to_owned(),
                 // A turn shows as working; a queued permission request as
-                // PERMISSION n (answering it is step 6).
+                // PERMISSION n.
                 Life::Idle => match (link.conn.permissions_waiting(), link.conn.state()) {
                     (n, _) if n > 0 => format!(" PERMISSION {n}"),
                     (_, ConnState::Prompting { .. }) => " working".to_owned(),
@@ -149,7 +152,12 @@ impl Editor {
                 Life::Disconnected => format!(" retry {}/{}", link.retries, RETRY_DELAYS.len()),
                 Life::Error => " error".to_owned(),
             };
-            return Some(format!("ai: {}{state}", link.id));
+            let grants = match self.grant_count(link.id) {
+                0 => String::new(),
+                1 => " (1 grant)".to_owned(),
+                n => format!(" ({n} grants)"),
+            };
+            return Some(format!("ai: {}{state}{grants}", link.id));
         }
         crate::agent_detect::indicator(true, self.agent_scan.as_ref())
     }
@@ -302,6 +310,7 @@ impl Editor {
                 self.agent.outbox.push(ConnCmd::Stop {
                     generation: link.generation,
                 });
+                self.permission_clear();
                 self.info(format!("{}-acp: disconnected", link.id));
             }
             None => self.info("no agent connected"),
@@ -326,6 +335,7 @@ impl Editor {
     /// loop on `Event::Timer`; tests pass the fake time.
     pub fn agent_timer(&mut self, now: Instant) {
         self.agent_leader_timer(now);
+        self.permission_timer(now);
         let Some(link) = self.agent.link.as_mut() else {
             return;
         };
@@ -399,9 +409,11 @@ impl Editor {
         }
     }
 
-    /// Turns the connection's actions into worker requests and messages.
-    /// Actions that belong to later steps (updates, the log, permission
-    /// prompts, file calls) are not shown yet.
+    /// Turns the connection's actions into worker requests, messages and log
+    /// lines. File calls belong to a later step and are not served here. The
+    /// permission prompt follows the queue's head after the batch
+    /// (`permission_sync`), not the `AskPermission` actions themselves: a
+    /// batch can hold an ask for a head that a grant already answered.
     pub(crate) fn agent_apply(&mut self, generation: u64, actions: Vec<OutAction>, now: Instant) {
         for action in actions {
             match action {
@@ -413,13 +425,12 @@ impl Editor {
                     self.turn_notice(generation, &notice);
                 }
                 OutAction::Update(update) => self.turn_update(update),
-                OutAction::AskPermission { request, queued } => {
-                    self.turn_permission(&request, queued)
-                }
+                OutAction::AskPermission { .. } => {}
                 OutAction::Close => self.agent.outbox.push(ConnCmd::Stop { generation }),
                 OutAction::Log(_) | OutAction::ServeRead { .. } | OutAction::ServeWrite { .. } => {}
             }
         }
+        self.permission_sync(now);
     }
 
     fn agent_notice(&mut self, generation: u64, notice: Notice, now: Instant) {

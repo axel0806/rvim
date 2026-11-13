@@ -64,6 +64,19 @@ impl Approvals {
         true
     }
 
+    /// Removes every approval for `project` (`:AgentForget`). Returns how
+    /// many were removed.
+    pub fn forget_project(&mut self, project: &str) -> usize {
+        let before = self.entries.len();
+        self.entries.retain(|(_, p)| p != project);
+        before - self.entries.len()
+    }
+
+    /// Removes every approval (`:AgentForget!`). Returns how many there were.
+    pub fn forget_all(&mut self) -> usize {
+        std::mem::take(&mut self.entries).len()
+    }
+
     /// True when the file was unreadable or invalid: nothing may be saved.
     pub fn is_broken(&self) -> bool {
         self.broken
@@ -164,6 +177,21 @@ mod tests {
         assert_eq!(back, a);
         assert!(back.is_approved("claude", "C:\\Users\\me \"proj\""));
         assert!(!back.is_approved("claude", "/home/me/p"));
+    }
+
+    #[test]
+    fn forget_removes_one_project_or_all() {
+        let mut a = Approvals::default();
+        a.approve("claude", "/p");
+        a.approve("codex", "/p");
+        a.approve("claude", "/q");
+        assert_eq!(a.forget_project("/p"), 2);
+        assert!(!a.is_approved("claude", "/p"));
+        assert!(a.is_approved("claude", "/q"));
+        assert_eq!(a.forget_project("/p"), 0);
+        assert_eq!(a.forget_all(), 1);
+        assert!(!a.is_approved("claude", "/q"));
+        assert!(!a.to_text().contains("[[approval]]"));
     }
 
     #[test]

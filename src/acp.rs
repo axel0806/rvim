@@ -954,6 +954,11 @@ impl Conn {
         self.permissions.len()
     }
 
+    /// The head of the permission queue: the request a key answers.
+    pub fn permission_head(&self) -> Option<&PermissionRequest> {
+        self.permissions.front().map(|q| &q.request)
+    }
+
     pub fn on_event(&mut self, event: InEvent) -> Vec<OutAction> {
         let mut out = Vec::new();
         match event {

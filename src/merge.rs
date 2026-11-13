@@ -132,6 +132,13 @@ fn rebuild(base: &[String], span: Range<usize>, hunks: &[Hunk]) -> Vec<String> {
     out
 }
 
+/// Lines added and removed from `old` to `new` (for `(+3 -1)` summaries).
+pub(crate) fn line_stats(old: &[String], new: &[String]) -> (usize, usize) {
+    hunks(old, new).iter().fold((0, 0), |(add, del), h| {
+        (add + h.new.len(), del + (h.end - h.start))
+    })
+}
+
 /// The changed regions of `side` against `base`, in order.
 fn hunks(base: &[String], side: &[String]) -> Vec<Hunk> {
     // Common head and tail are never changes.

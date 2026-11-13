@@ -2,8 +2,7 @@
 //! Prompt turns and the agent log (PLAN.md, "Agent experience", sections 3
 //! and 4; milestone 7 step 5b-2): `:Agent`, `:AgentLog`, the leader keys
 //! `\a`, `\al` and `\ac` (only with the opt-in), the streamed updates written
-//! to the log document, and the message for a permission request (answering
-//! it is step 6).
+//! to the log document. Permission requests are `agent_permission.rs`.
 //!
 //! The log is a scratch document with no file. It is not modifiable: changes
 //! typed in it are refused with E21, and `:w` with E382, as Vim refuses them
@@ -13,8 +12,8 @@
 
 use crate::Editor;
 use crate::acp::{
-    ConnState, ContentBlock, InEvent, Notice, PermissionRequest, PlanEntryStatus, SessionUpdate,
-    StopReason, ToolCallInfo, ToolCallStatus,
+    ConnState, ContentBlock, InEvent, Notice, PlanEntryStatus, SessionUpdate, StopReason,
+    ToolCallInfo, ToolCallStatus,
 };
 use crate::agent_session::Life;
 use crate::buffer::Buffer;
@@ -89,28 +88,38 @@ impl Editor {
             }
             return;
         };
-        let (life, state, generation) = (link.life, link.conn.state().clone(), link.generation);
+        let (life, state, generation, id) = (
+            link.life,
+            link.conn.state().clone(),
+            link.generation,
+            link.id,
+        );
         match life {
             Life::Connecting => {
                 self.agent.turn.pending = Some(text.to_owned());
-                return self.info("claude-acp: connecting; the prompt is sent when connected");
+                return self.info(format!(
+                    "{id}-acp: connecting; the prompt is sent when connected"
+                ));
             }
             Life::Disconnected => {
-                return self
-                    .error("claude-acp: connection lost, retrying; send the prompt again later");
+                return self.error(format!(
+                    "{id}-acp: connection lost, retrying; send the prompt again later"
+                ));
             }
             Life::Error => {
                 self.agent.turn.pending = None;
-                return self.error("claude-acp: not connected; :AgentConnect");
+                return self.error(format!("{id}-acp: not connected; :AgentConnect"));
             }
             Life::Idle => {}
         }
         match state {
             ConnState::Ready => {}
             ConnState::Prompting { .. } | ConnState::Cancelling { .. } => {
-                return self.info("claude-acp: a turn is already running; :AgentCancel stops it");
+                return self.info(format!(
+                    "{id}-acp: a turn is already running; :AgentCancel stops it"
+                ));
             }
-            _ => return self.error("claude-acp: not connected; :AgentConnect"),
+            _ => return self.error(format!("{id}-acp: not connected; :AgentConnect")),
         }
         let actions = match self.agent.link.as_mut() {
             Some(link) => link.conn.on_event(InEvent::Prompt {
@@ -265,7 +274,7 @@ impl Editor {
     }
 
     /// A complete line in the log (closes a line still open).
-    fn log_line(&mut self, text: &str) {
+    pub(crate) fn log_line(&mut self, text: &str) {
         let log = self.agent_log_doc();
         let follow = self.log_follow(log);
         self.agent.turn.open = None;
@@ -379,22 +388,6 @@ impl Editor {
         }
     }
 
-    /// A permission request. It is not answered in this step: the turn
-    /// waits, and `:AgentCancel` answers it as cancelled.
-    pub(crate) fn turn_permission(&mut self, request: &PermissionRequest, queued: usize) {
-        let what = request
-            .tool_call
-            .title
-            .clone()
-            .unwrap_or_else(|| request.tool_call.tool_call_id.clone());
-        self.log_line(&format!(
-            "[permission] {what}: waiting; answering is not supported yet (:AgentCancel answers it)"
-        ));
-        self.info(format!(
-            "claude-acp: waiting for a permission decision ({queued} waiting), not supported yet; :AgentCancel"
-        ));
-    }
-
     /// The turn's lifecycle notices, for the log and the message line. Only
     /// the current connection's notices are shown.
     pub(crate) fn turn_notice(&mut self, generation: u64, notice: &Notice) {
@@ -416,7 +409,8 @@ impl Editor {
             Notice::TurnEnded { stop_reason, .. } => {
                 let word = stop_word(*stop_reason);
                 self.log_line(&format!("[stop] {word}"));
-                self.info(format!("claude-acp: turn ended ({word})"));
+                let id = self.agent.link.as_ref().map_or("agent", |l| l.id);
+                self.info(format!("{id}-acp: turn ended ({word})"));
             }
             Notice::RequestFailed { message, .. } => {
                 self.log_line(&format!("[error] {message}"));

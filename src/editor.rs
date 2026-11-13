@@ -565,6 +565,10 @@ impl Editor {
         if self.agent_consent_key(key) {
             return;
         }
+        // So does the permission prompt (agent_permission.rs), in any mode.
+        if self.agent_permission_key(key) {
+            return;
+        }
         // Recording: the `q` that ends it is not part of the macro; keys
         // replayed from a register are not recorded again.
         if self.depth == 0 && self.replaying == 0 && self.recording.is_some() {
@@ -644,8 +648,9 @@ impl Editor {
     /// is appended without newlines.
     pub fn paste(&mut self, text: &str) {
         // Pasted text is data, not an answer to the conflict prompt or to the
-        // agent consent prompt (a pasted `y` would approve a connection).
-        if self.conflict.is_some() || self.agent.consent.is_some() {
+        // agent consent prompt (a pasted `y` would approve a connection), nor
+        // to a permission request.
+        if self.conflict.is_some() || self.agent.consent.is_some() || self.permission_prompt_up() {
             return self.beep();
         }
         self.close_start_menu();

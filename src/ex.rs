@@ -365,6 +365,19 @@ impl Editor {
             self.agent_disconnect();
         } else if n == "AgentCancel" {
             self.agent_cancel();
+        } else if n == "AgentGrants" {
+            // rvim only: this session's permission grants (agent_permission.rs).
+            if !p.arg.is_empty() {
+                return Err(format!("E488: Trailing characters: {}", p.arg));
+            }
+            self.agent_grants_command();
+        } else if n == "AgentForget" {
+            // rvim only: forgets the grants and the approval for this project,
+            // or with `!` the approvals for every project.
+            if !p.arg.is_empty() {
+                return Err(format!("E488: Trailing characters: {}", p.arg));
+            }
+            self.agent_forget(p.bang);
         } else if n == "Agent" {
             // rvim only: one prompt turn to the connected agent (agent_turn.rs).
             // The rest of the line is the prompt, as typed.
