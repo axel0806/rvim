@@ -15,20 +15,24 @@ use std::fmt;
 
 /// Who made an undo step (PLAN.md, "Agent experience": the source tags shown
 /// by `:AgentChanges`). Steps made by the user's typing are `User`; a reload
-/// of a file changed on disk is `External`. More sources come with their
-/// features (agent, paste, prediction).
+/// of a file changed on disk is `External`; a write the editor served for a
+/// connected agent (`fs/write_text_file`, `agent_fs.rs`) is `Agent(id)`,
+/// shown as `agent:<id>`. More sources come with their features (paste,
+/// prediction).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UndoSource {
     User,
     External,
+    Agent(&'static str),
 }
 
 impl fmt::Display for UndoSource {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            UndoSource::User => "user",
-            UndoSource::External => "external",
-        })
+        match self {
+            UndoSource::User => f.write_str("user"),
+            UndoSource::External => f.write_str("external"),
+            UndoSource::Agent(id) => write!(f, "agent:{id}"),
+        }
     }
 }
 

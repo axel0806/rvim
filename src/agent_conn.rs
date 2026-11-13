@@ -35,6 +35,11 @@ pub enum ConnCmd {
     Stop { generation: u64 },
     /// Write the approvals file (the text from `Approvals::to_text`).
     SaveApprovals(String),
+    /// A served file call (`agent_fs.rs`), run on the file thread in order.
+    Fs {
+        generation: u64,
+        job: crate::agent_fs::FsJob,
+    },
 }
 
 /// What the worker reports back. `generation` 0 is for notes that belong to no
@@ -49,6 +54,8 @@ pub enum AgentEvent {
     SpawnFailed(String),
     /// A message for the message line.
     Note(String),
+    /// A served file call finished (`agent_fs.rs`).
+    Fs(crate::agent_fs::FsDone),
 }
 
 /// The part of a child process the connection uses: a kill, and a check that
@@ -103,6 +110,16 @@ impl Live {
 pub fn spawn(rx: mpsc::Receiver<ConnCmd>, tx: mpsc::Sender<Event>, approvals: PathBuf) {
     thread::spawn(move || {
         let mut current: Option<Live> = None;
+        // File calls run on their own thread, one at a time and in order, so
+        // a slow disk never delays the agent's stdin.
+        let (fs_tx, fs_rx) = mpsc::channel::<(u64, crate::agent_fs::FsJob)>();
+        let fs_events = tx.clone();
+        thread::spawn(move || {
+            for (generation, job) in fs_rx {
+                let done = crate::agent_fs::run(job);
+                send(&fs_events, generation, AgentEvent::Fs(done));
+            }
+        });
         while let Ok(cmd) = rx.recv() {
             match cmd {
                 ConnCmd::Start {
@@ -139,6 +156,10 @@ pub fn spawn(rx: mpsc::Receiver<ConnCmd>, tx: mpsc::Sender<Event>, approvals: Pa
                     if let Some(live) = current.take_if(|l| l.generation == generation) {
                         live.stop();
                     }
+                }
+                ConnCmd::Fs { generation, job } => {
+                    // The file thread ends only with the manager.
+                    let _ = fs_tx.send((generation, job));
                 }
                 ConnCmd::SaveApprovals(text) => {
                     if let Err(e) = agent_approval::write(&approvals, &text) {

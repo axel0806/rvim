@@ -644,10 +644,13 @@ pub struct RequestPermissionResponse {
 pub struct ReadTextFileParams {
     pub session_id: String,
     /// Absolute path, as the agent sent it. Not checked here: the caller
-    /// validates it (later step).
+    /// validates it (`agent_fs::check_request`).
     pub path: String,
+    /// The first line to read, 1-based (schema: "Line number to start
+    /// reading from (1-based)"; its minimum is 0, which is read as 1).
     #[serde(default)]
     pub line: Option<u32>,
+    /// The most lines to read.
     #[serde(default)]
     pub limit: Option<u32>,
 }
@@ -853,7 +856,8 @@ pub enum OutAction {
         queued: usize,
     },
     /// The agent asks to read a file. The caller validates `path` (absolute,
-    /// shareable) and answers with `InEvent::FileReadAnswer`.
+    /// shareable, not excluded; `agent_fs.rs`) and answers with
+    /// `InEvent::FileReadAnswer`.
     ServeRead {
         request: Id,
         session: String,
@@ -861,8 +865,10 @@ pub enum OutAction {
         line: Option<u32>,
         limit: Option<u32>,
     },
-    /// The agent asks to write a file. The caller asks the user, writes, and
-    /// answers with `InEvent::FileWriteAnswer`.
+    /// The agent asks to write a file. The caller validates `path` as for a
+    /// read, writes, and answers with `InEvent::FileWriteAnswer`
+    /// (`agent_fs.rs`; no prompt of its own: the agent asks first with
+    /// `session/request_permission`).
     ServeWrite {
         request: Id,
         session: String,
@@ -998,9 +1004,17 @@ impl Conn {
         self.state = ConnState::Initializing;
         let params = InitializeParams {
             protocol_version: PROTOCOL_VERSION,
-            // rvim does not serve file calls or terminals yet (step 6), so
-            // it advertises neither.
-            client_capabilities: ClientCapabilities::default(),
+            // The editor serves `fs/read_text_file` and `fs/write_text_file`
+            // (`agent_fs.rs`, step 6b; the file-system page: an agent must
+            // not call a method whose capability is false or missing).
+            // Terminals are not served.
+            client_capabilities: ClientCapabilities {
+                fs: FsCapabilities {
+                    read_text_file: true,
+                    write_text_file: true,
+                },
+                terminal: false,
+            },
             client_info: Implementation {
                 name: "rvim".to_owned(),
                 title: None,

@@ -72,6 +72,8 @@ pub struct AgentState {
     pub next_gen: u64,
     /// Prompt turns, the agent log and the leader keys (`agent_turn.rs`).
     pub(crate) turn: crate::agent_turn::TurnState,
+    /// Served file calls in flight (`agent_fs.rs`).
+    pub(crate) fs: crate::agent_fs::FsState,
 }
 
 fn spec_of(id: &str) -> Option<&'static AgentSpec> {
@@ -355,6 +357,7 @@ impl Editor {
         let now = Instant::now();
         match event {
             AgentEvent::Note(text) => self.error(text),
+            AgentEvent::Fs(done) => self.agent_fs_done(generation, done),
             AgentEvent::SpawnFailed(reason) => {
                 let Some(link) = self
                     .agent
@@ -417,7 +420,20 @@ impl Editor {
                     self.turn_permission(&request, queued)
                 }
                 OutAction::Close => self.agent.outbox.push(ConnCmd::Stop { generation }),
-                OutAction::Log(_) | OutAction::ServeRead { .. } | OutAction::ServeWrite { .. } => {}
+                OutAction::ServeRead {
+                    request,
+                    path,
+                    line,
+                    limit,
+                    ..
+                } => self.agent_serve_read(generation, request, path, line, limit),
+                OutAction::ServeWrite {
+                    request,
+                    path,
+                    content,
+                    ..
+                } => self.agent_serve_write(generation, request, path, content),
+                OutAction::Log(_) => {}
             }
         }
     }
