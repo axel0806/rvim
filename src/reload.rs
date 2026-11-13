@@ -276,6 +276,24 @@ pub(crate) fn map_cursor<S: AsRef<str>>(old: &[S], new: &[S], cursor: Pos) -> Po
     LineMap::new(old, new).pos(cursor, cursor.col)
 }
 
+/// The pairs `(old, new)` of equal lines of two whole texts, in order (the
+/// same diff a reload uses), or `None` over the size caps. The review gutter
+/// (`review.rs`) makes its hunks from them.
+pub(crate) fn line_pairs<S: AsRef<str>>(old: &[S], new: &[S]) -> Option<Vec<(usize, usize)>> {
+    let pre = old
+        .iter()
+        .zip(new)
+        .take_while(|(a, b)| a.as_ref() == b.as_ref())
+        .count();
+    let suf = old[pre..]
+        .iter()
+        .rev()
+        .zip(new[pre..].iter().rev())
+        .take_while(|(a, b)| a.as_ref() == b.as_ref())
+        .count();
+    matched_pairs(old, new, pre, suf)
+}
+
 /// The pairs `(old, new)` of equal lines, in order, for the whole texts: the
 /// common first lines, an LCS of the part between them, and the common last
 /// lines. `None` when a text is over the size caps.

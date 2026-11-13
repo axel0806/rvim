@@ -12,6 +12,7 @@
 use crate::buffer::{Marks, Snapshot};
 use crate::motion::Pos;
 use std::fmt;
+use std::time::Instant;
 
 /// Who made an undo step (PLAN.md, "Agent experience": the source tags shown
 /// by `:AgentChanges`). Steps made by the user's typing are `User`; a reload
@@ -55,6 +56,8 @@ struct Node {
     changed: bool,
     /// The marks when the change started (swapped on each use).
     marks: Marks,
+    /// When the change ended (`:AgentChanges` shows its age).
+    time: Instant,
 }
 
 struct Open {
@@ -99,6 +102,7 @@ impl UndoTree {
                 redo_child: None,
                 changed: false,
                 marks: [None; 26],
+                time: Instant::now(),
             }],
             cur: 0,
             open: None,
@@ -171,6 +175,7 @@ impl UndoTree {
             redo_child: None,
             changed: o.changed,
             marks: o.marks,
+            time: Instant::now(),
         });
         self.nodes[self.cur].redo_child = Some(id);
         self.cur = id;
@@ -230,4 +235,40 @@ impl UndoTree {
     pub fn seq(&self) -> usize {
         self.cur
     }
+
+    /// The change that ends at node `seq` (1 is the oldest change; 0, the
+    /// text as loaded, is no change), for `:AgentChanges` (review.rs).
+    pub fn step_info(&self, seq: usize) -> Option<StepInfo<'_>> {
+        if seq == 0 {
+            return None;
+        }
+        let node = self.nodes.get(seq)?;
+        Some(StepInfo {
+            source: node.source,
+            time: node.time,
+            top: node.top,
+            below: node.below,
+            before: &self.nodes[node.parent].snap,
+            after: &node.snap,
+        })
+    }
+
+    /// The number of the newest change (0 when there is none). Changes are
+    /// numbered in the order they were made, over every branch of the tree.
+    pub fn last_seq(&self) -> usize {
+        self.nodes.len() - 1
+    }
+}
+
+/// One change of the tree, as `step_info` gives it.
+pub struct StepInfo<'a> {
+    pub source: UndoSource,
+    pub time: Instant,
+    /// Lines above the changed region.
+    pub top: usize,
+    /// Lines below the changed region.
+    pub below: usize,
+    /// The text before and after the change.
+    pub before: &'a Snapshot,
+    pub after: &'a Snapshot,
 }

@@ -287,6 +287,7 @@ fn run(ed: &mut Editor) -> io::Result<Option<i32>> {
         }
         forward_watch(ed, &watch_tx);
         forward_agent(ed, &agent_tx, &conn_tx);
+        forward_review(ed, &agent_tx);
         if ed.take_bell() {
             queue!(out, Print('\x07'))?;
         }
@@ -299,6 +300,19 @@ fn run(ed: &mut Editor) -> io::Result<Option<i32>> {
 fn forward_watch(ed: &mut Editor, watch_tx: &mpsc::Sender<rvim::watch::WatchCmd>) {
     for cmd in ed.take_watch_commands() {
         let _ = watch_tx.send(cmd);
+    }
+}
+
+/// Runs the change gutter's large diffs (`review.rs`) on worker threads; each
+/// comes back as `Event::ReviewDiff`. The editor has at most one in flight
+/// per document.
+fn forward_review(ed: &mut Editor, tx: &mpsc::Sender<rvim::Event>) {
+    for job in ed.take_review_jobs() {
+        let tx = tx.clone();
+        std::thread::spawn(move || {
+            // A send fails only when the editor has ended.
+            let _ = tx.send(job.run());
+        });
     }
 }
 
@@ -372,6 +386,7 @@ fn set_style(out: &mut impl Write, style: Style) -> io::Result<()> {
         )?,
         Hl::Dimmed | Hl::LineNr => queue!(out, SetForegroundColor(Color::DarkGrey))?,
         Hl::CursorLineNr => queue!(out, SetForegroundColor(Color::Yellow))?,
+        Hl::Changed => queue!(out, SetForegroundColor(Color::Cyan))?,
     }
     if style.bold {
         queue!(out, SetAttribute(Attribute::Bold))?;

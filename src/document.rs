@@ -63,6 +63,25 @@ pub(crate) struct Document {
     /// Changes typed in it are refused, as Vim refuses them with 'modifiable'
     /// off. Output the editor writes to it is not a user change.
     pub(crate) nomodifiable: bool,
+    /// The review baseline when it is not `baseline` (review.rs): `None`
+    /// while the two are the same text, which they are after `:e` and `:w`.
+    /// A change from outside (a reload, the conflict prompt's `l` and `m`)
+    /// moves `baseline` but not the review baseline, so the gutter shows what
+    /// it changed until the next `:w`.
+    review_own: Option<Option<Vec<String>>>,
+    /// Goes up whenever a baseline changes, so a gutter computed for the old
+    /// one is not taken as current (review.rs).
+    pub(crate) baseline_gen: u64,
+    /// The change gutter last computed for this document (review.rs).
+    pub(crate) review: crate::review::ReviewCache,
+    /// The `[base]` scratch document of this document, once made.
+    pub(crate) base_doc: Option<DocId>,
+    /// For a `[base]` document: the document it is the baseline of, and the
+    /// `baseline_gen` its text was copied at.
+    pub(crate) base_of: Option<(DocId, u64)>,
+    /// The name of a scratch document with no file (`[base]`), shown where
+    /// a file name would be.
+    pub(crate) scratch_name: Option<&'static str>,
 }
 
 impl Document {
@@ -88,6 +107,34 @@ impl Document {
             baseline: None,
             seen: None,
             nomodifiable: false,
+            review_own: None,
+            baseline_gen: 0,
+            review: Default::default(),
+            base_doc: None,
+            base_of: None,
+            scratch_name: None,
+        }
+    }
+
+    /// Sets the text last known to be on disk (`baseline`). With `review`
+    /// (`:e`, `:w`) the review baseline becomes the same text; without it (a
+    /// change from outside) the review baseline stays what it was.
+    pub(crate) fn set_baseline(&mut self, lines: Option<Vec<String>>, review: bool) {
+        if review {
+            self.review_own = None;
+        } else if self.review_own.is_none() {
+            self.review_own = Some(self.baseline.take());
+        }
+        self.baseline = lines;
+        self.baseline_gen += 1;
+    }
+
+    /// The review baseline: the text last read by `:e` or written by `:w`
+    /// (PLAN.md, "Per-hunk review", the `[base]` text). `None` with no file.
+    pub(crate) fn review_base(&self) -> Option<&Vec<String>> {
+        match &self.review_own {
+            Some(own) => own.as_ref(),
+            None => self.baseline.as_ref(),
         }
     }
 
@@ -109,10 +156,15 @@ impl Document {
         // reload, as they did when they were kept in the editor.
         let (op_start, op_end) = (self.op_start, self.op_end);
         let local = self.local.clone();
+        // The `[base]` document and the baseline counter stay: the counter
+        // keeps going up, so a gutter for the old text is never current.
+        let (base_doc, baseline_gen) = (self.base_doc, self.baseline_gen + 1);
         *self = Self {
             version_base,
             op_start,
             op_end,
+            base_doc,
+            baseline_gen,
             ..Self::with_local(buf, local)
         };
     }
