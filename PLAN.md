@@ -70,6 +70,18 @@ milestone lands; `.github/workflows/release.yml` builds the binaries. Small item
 any time: the stale `--notes` string in `release.yml`, to refresh before tagging
 v0.1.0-alpha.3 (see "Repository and packaging").
 
+**Owner requests and decisions (2026-11-13).** Recorded as the owner gave them; each section named here carries the details once built.
+
+- Subagents for this project run on Sonnet with high effort (working practice, not a product item).
+- The permission prompt takes keys only in plain Normal mode. A request that arrives in Insert, Visual, Cmdline or with a pending command waits (the indicator shows `PERMISSION n`) and is shown when the editor is next in Normal mode. Grants still answer at once. `<Esc>` stays reject once (or cancelled when no reject option exists); `<C-c>` is not changed. See "Permissions, step 6a".
+- Served writes to files that control execution or approvals (`.git/`, `.github/workflows/`, editor and agent settings directories, MCP config, `AGENTS.md`/`CLAUDE.md`/`GEMINI.md`, rvim's own config and approvals) ask first with `[y]es [n]o`, with no grants. See "Served file calls, step 6b".
+- `:AgentChanges` and `:AgentBase` keep working without the opt-in (the owner left this to the implementer); the gutter and `[deleted]` need the opt-in. See "Review gutter, step 3b".
+- A must: the agent integration has to work with the user's existing subscriptions (Claude Pro or Max through Claude Code, a ChatGPT plan through Codex, Gemini's Google login, Copilot and similar), not only API keys. rvim never reads, stores or sends credentials; it uses the routes that reuse the agent's own login. The research and the per-agent table go in "Agent SDKs and subscriptions".
+- `rvim --agent` / `rvim -A` opens an agent picker (`j`/`k`, `gg`/`G`, arrows, `<CR>`, `<Esc>`/`q`) listing the installed agents. The choice sets the user's default agent (`[agent] default` in the user `config.toml`, written without disturbing the rest of the file); `p` sets it for the project instead. `--agent=<id>` skips the picker. Consent per agent and project still applies.
+- Repo-specific settings live in `.rvim/config.toml` in the project. A cloned repo is untrusted (compare Vim's 'exrc', off by default), so it may set only `[options]` and `[agent] default`; `[agent] enabled` and anything that runs a command are refused with a `:ConfigWarnings` entry. Repo values take precedence over the user config. `-u NONE`, `--clean` and a skip flag ignore it; without `.rvim/` rvim behaves as `vim -N -u NONE`. See "Agent picker and project settings".
+- The owner wants no more questions on these designs: the implementer decides and records the choice here.
+- Every request of this kind from the owner is written into this plan when it is given.
+
 **Planned additions from the owner's todo (2026-11-01).** These are plans
 only. Apart from the License item and the repository documents, which are done,
 nothing listed here is built, and the milestone table above is unchanged.
