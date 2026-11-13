@@ -111,6 +111,13 @@ use:
   `[l]oad disk [k]eep mine [d]iff [m]erge` (the diff view is not built yet),
   can merge with conflict markers, and `:w` refuses to overwrite a changed
   file (`:w!` overrides). See PLAN.md, milestone 7, and "Known differences".
+  With the opt-in, a two-cell change gutter left of the line numbers marks
+  the lines that differ from the text last read or written (`+` added, `~`
+  changed, `_` and `^` deleted), and a buffer whose file is gone shows
+  `[deleted]` in the status line. Without the opt-in neither is drawn and the
+  screen is Vim's. `:AgentChanges` (recent undo steps with their source) and
+  `:AgentBase` (the baseline as a read-only `[base]` document) are rvim's own
+  commands.
 - `:s`: `\=` expressions are a subset (no floats, dictionaries, user functions
   or `v:` variables; see PLAN.md, Known differences); the `\n` (NUL)
   replacement is not implemented.

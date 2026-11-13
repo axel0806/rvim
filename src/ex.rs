@@ -377,6 +377,21 @@ impl Editor {
             } else {
                 self.agent_log_show();
             }
+        } else if n == "AgentChanges" {
+            // rvim only: the recent undo steps with their sources, or with a
+            // number the jump to that step's first changed line (review.rs).
+            self.agent_changes(p.bang, p.arg)?;
+        } else if n == "AgentBase" {
+            // rvim only: `:AgentBase` shows the `[base]` scratch document,
+            // `:AgentBase!` goes back to the document it replaced (review.rs).
+            if !p.arg.is_empty() {
+                return Err(format!("E488: Trailing characters: {}", p.arg));
+            }
+            if p.bang {
+                self.agent_base_back();
+            } else {
+                self.agent_base_show()?;
+            }
         } else if n == "ConfigWarnings" {
             // rvim only (capital letter, as CLAUDE.md asks): the problems
             // the config file had at startup.
@@ -764,7 +779,7 @@ impl Editor {
                     let mtime = fs::metadata(&target).ok().and_then(|m| m.modified().ok());
                     let disk = DiskState::of(mtime, &self.buf().to_bytes());
                     let lines = self.buf().lines();
-                    self.doc_mut().baseline = Some(lines);
+                    self.doc_mut().set_baseline(Some(lines), true);
                     self.doc_mut().seen = None;
                     self.doc_mut().disk = Some(disk);
                     self.doc_mut().stale = None;

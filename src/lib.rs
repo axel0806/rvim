@@ -33,6 +33,7 @@ pub mod redraw;
 pub mod regex;
 pub mod register;
 pub(crate) mod reload;
+pub mod review;
 mod scroll;
 mod search;
 pub mod signals;

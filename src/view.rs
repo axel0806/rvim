@@ -50,6 +50,9 @@ pub enum Hl {
     LineNr,
     /// The number of the cursor line; Vim's CursorLineNr.
     CursorLineNr,
+    /// A sign in the change gutter (review.rs): a line added, changed or
+    /// deleted since the review baseline. rvim's own group (agent opt-in).
+    Changed,
 }
 
 /// Linear cell ranges on `line` covered by the match a `c` flag prompt asks
@@ -284,11 +287,12 @@ impl Editor {
         if cols >= self.win().width { 0 } else { cols }
     }
 
-    /// Cells left for the text of a line: the window minus the number column.
+    /// Cells left for the text of a line: the window minus the change gutter
+    /// and the number column.
     pub(crate) fn text_width(&self) -> usize {
         self.win()
             .width
-            .saturating_sub(self.number_col_width())
+            .saturating_sub(self.sign_col_width() + self.number_col_width())
             .max(1)
     }
 }
@@ -325,10 +329,22 @@ fn number_text(ed: &Editor, line: usize, first: bool, nw: usize) -> String {
     format!("{body} ").chars().take(nw).collect()
 }
 
-/// A row with a blank number column and `mark` (`~` or `@`) at the start of
-/// the text area.
+/// A row with a blank gutter and number column (`nw` cells together) and
+/// `mark` (`~` or `@`) at the start of the text area.
 fn filler(nw: usize, tw: usize, mark: &str) -> String {
     format!("{}{}", " ".repeat(nw), pad(mark.into(), tw))
+}
+
+/// The change gutter of buffer line `line`, `sw` cells wide (0 when there is
+/// no gutter): its sign on the line's first row, blanks on the others.
+fn sign_text(ed: &Editor, line: usize, first: bool, sw: usize) -> (String, bool) {
+    if sw == 0 {
+        return (String::new(), false);
+    }
+    match ed.sign_at(line).filter(|_| first) {
+        Some(sign) => (format!("{:<sw$}", sign.mark()), true),
+        None => (" ".repeat(sw), false),
+    }
 }
 
 /// Lays out the window of `ed`: its size is the editor's screen size and it
@@ -352,9 +368,12 @@ pub fn frame(ed: &Editor) -> Frame {
             cursor,
         };
     }
-    // The number column (`nw` cells) is left of the text area (`tw` cells,
-    // which wraps lines); the two make up the window's width.
+    // The change gutter (`sw` cells, agent opt-in only) and the number column
+    // (`nw` cells) are left of the text area (`tw` cells, which wraps lines);
+    // the three make up the window's width. The text starts at `left`.
+    let sw = ed.sign_col_width();
     let nw = ed.number_col_width();
+    let left = sw + nw;
     let tw = ed.text_width();
     // The matches that can reach the window: those starting on the line
     // above the top line may run into it.
@@ -370,8 +389,8 @@ pub fn frame(ed: &Editor) -> Frame {
         let need = rows_needed(&lay, tw);
         if line != ed.win().top && rows.len() + need > text_height {
             while rows.len() < text_height {
-                hl[rows.len()][nw..].fill(Hl::NonText);
-                rows.push(filler(nw, tw, "@"));
+                hl[rows.len()][left..].fill(Hl::NonText);
+                rows.push(filler(left, tw, "@"));
             }
             break;
         }
@@ -382,7 +401,7 @@ pub fn frame(ed: &Editor) -> Frame {
             if on_tab && ed.mode() != Mode::Insert {
                 cell += lay.widths[col] - 1;
             }
-            cursor = (nw + cell % tw, rows.len() + cell / tw);
+            cursor = (left + cell % tw, rows.len() + cell / tw);
         }
         let base = rows.len();
         for &(s, e) in &hits {
@@ -391,7 +410,7 @@ pub fn frame(ed: &Editor) -> Frame {
                     &mut hl,
                     base,
                     need,
-                    (nw, tw),
+                    (left, tw),
                     text_height,
                     cells,
                     Hl::Search,
@@ -401,14 +420,14 @@ pub fn frame(ed: &Editor) -> Frame {
         for (c0, c1) in visual_cells(ed, line, &lay) {
             for c in c0..c1 {
                 if base + c / tw < text_height {
-                    hl[base + c / tw][nw + c % tw] = Hl::Visual;
+                    hl[base + c / tw][left + c % tw] = Hl::Visual;
                 }
             }
         }
         for (c0, c1) in confirm_cells(ed, line, &lay) {
             for c in c0..c1 {
                 if base + c / tw < text_height {
-                    hl[base + c / tw][nw + c % tw] = Hl::IncSearch;
+                    hl[base + c / tw][left + c % tw] = Hl::IncSearch;
                 }
             }
         }
@@ -419,7 +438,7 @@ pub fn frame(ed: &Editor) -> Frame {
                 &mut hl,
                 base,
                 need,
-                (nw, tw),
+                (left, tw),
                 text_height,
                 cells,
                 Hl::IncSearch,
@@ -440,17 +459,21 @@ pub fn frame(ed: &Editor) -> Frame {
             } else {
                 String::new()
             };
-            if r == 0 {
-                hl[rows.len()][..nw].fill(num_hl);
+            let (sign, signed) = sign_text(ed, line, r == 0, sw);
+            if signed {
+                hl[rows.len()][..sw].fill(Hl::Changed);
             }
-            rows.push(num + &pad(text, tw));
+            if r == 0 {
+                hl[rows.len()][sw..left].fill(num_hl);
+            }
+            rows.push(sign + &num + &pad(text, tw));
         }
         line += 1;
     }
     let filler_from = rows.len();
     while rows.len() < text_height {
-        hl[rows.len()][nw..].fill(Hl::NonText);
-        rows.push(filler(nw, tw, "~"));
+        hl[rows.len()][left..].fill(Hl::NonText);
+        rows.push(filler(left, tw, "~"));
     }
 
     // `line` is now the first buffer line not fully shown.
@@ -495,7 +518,14 @@ fn status_line(
     // The agent indicator (PLAN.md, "Agent experience", Lifecycle) sits just
     // left of the ruler; the message keeps the cells before it. With the
     // layer off, or no room, the row is Vim's.
-    let indicator = ed.agent_indicator();
+    // `[deleted]` (agent opt-in only) marks a buffer whose file is gone from
+    // disk (PLAN.md, "The edit loop"); it goes before the indicator.
+    let deleted = (ed.agent_enabled && ed.doc().stale == Some(crate::reload::Stale::Deleted))
+        .then(|| "[deleted]".to_string());
+    let indicator = match (deleted, ed.agent_indicator()) {
+        (Some(d), Some(i)) => Some(format!("{d} {i}")),
+        (d, i) => d.or(i),
+    };
     let (msg_cols, tag) = match indicator {
         Some(t) if t.len() + 2 <= ruler_col => (ruler_col - t.len() - 1, Some(t)),
         _ => (ruler_col, None),
@@ -580,6 +610,7 @@ mod tests {
                         Hl::Dimmed => 'd',
                         Hl::LineNr => 'n',
                         Hl::CursorLineNr => 'c',
+                        Hl::Changed => 'g',
                         Hl::Normal => '.',
                     })
                     .collect()

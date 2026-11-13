@@ -172,7 +172,7 @@ impl Editor {
     pub(crate) fn sync_disk(&mut self, doc: DocId, disk: DiskState, lines: Vec<String>) {
         let d = self.document_mut(doc);
         d.disk = Some(disk);
-        d.baseline = Some(lines);
+        d.set_baseline(Some(lines), false);
         d.seen = None;
         d.stale = None;
         d.warned = None;

@@ -226,6 +226,9 @@ pub struct Editor {
     /// The agent opt-in (`[agent] enabled` or `--agent`), off by default. It
     /// turns on the conflict prompt and the write guard (`conflict.rs`).
     pub(crate) agent_enabled: bool,
+    /// The review gutter's worker jobs and the way back from `[base]`
+    /// (review.rs).
+    pub(crate) review: crate::review::ReviewState,
 }
 
 /// What the watcher reported about a file that is there.
@@ -329,6 +332,7 @@ impl Editor {
             watch_queue: None,
             conflict: None,
             agent_enabled: false,
+            review: Default::default(),
         };
         ed.fit_windows();
         ed
@@ -342,6 +346,11 @@ impl Editor {
 
     pub(crate) fn document_mut(&mut self, id: DocId) -> &mut Document {
         &mut self.documents[id.0]
+    }
+
+    /// How many documents there are (ids are `0..document_count()`).
+    pub(crate) fn document_count(&self) -> usize {
+        self.documents.len()
     }
 
     /// A new document for `buf`, with the global option values (the agent
@@ -480,6 +489,7 @@ impl Editor {
         for k in parse_keys(keys) {
             self.handle_key(k);
         }
+        self.refresh_review();
     }
 
     /// The single entry point for everything that happens to the editor.
@@ -511,8 +521,15 @@ impl Editor {
                 mtime,
                 size,
             } => self.watch_arrived(doc, version, Some(Arrival::TooLarge { mtime, size })),
+            Event::ReviewDiff {
+                doc,
+                version,
+                base_gen,
+                hunks,
+            } => self.review_arrived(doc, version, base_gen, hunks),
         }
         self.apply_watch_queue();
+        self.refresh_review();
     }
 
     /// The watcher commands the front end must send now (see `watch.rs`):
@@ -765,6 +782,9 @@ impl Editor {
     }
 
     pub(crate) fn display_name(&self) -> String {
+        if let Some(name) = self.doc().scratch_name {
+            return name.to_string();
+        }
         self.buf()
             .path
             .as_ref()
@@ -1475,7 +1495,8 @@ impl Editor {
                     .map(|(mtime, bytes)| DiskState::of(*mtime, bytes));
                 let lines = buf.lines();
                 self.doc_mut().reload(buf);
-                self.doc_mut().baseline = disk.as_ref().map(|_| lines);
+                self.doc_mut()
+                    .set_baseline(disk.as_ref().map(|_| lines), true);
                 self.doc_mut().disk = disk;
                 self.win_mut().cursor = Pos::default();
                 self.win_mut().curswant = 0;
@@ -1717,7 +1738,7 @@ impl Editor {
             let lines = new.lines();
             let change = self.apply_external_change(doc, new, UndoSource::External);
             let d = &mut self.documents[doc.0];
-            d.baseline = Some(lines);
+            d.set_baseline(Some(lines), false);
             d.disk = now_state;
             d.stale = None;
             d.warned = None;

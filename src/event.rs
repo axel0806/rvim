@@ -61,6 +61,16 @@ pub enum Event {
         generation: u64,
         event: crate::agent_conn::AgentEvent,
     },
+    /// The change gutter's line diff of document `doc`, computed on a worker
+    /// because the text was too large to diff on a key press (`review.rs`).
+    /// It was computed for document version `version` and baseline counter
+    /// `base_gen`; the editor drops it if either has moved on.
+    ReviewDiff {
+        doc: DocId,
+        version: u64,
+        base_gen: u64,
+        hunks: Vec<crate::review::Hunk>,
+    },
 }
 
 #[cfg(test)]
