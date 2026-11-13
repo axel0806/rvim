@@ -368,6 +368,22 @@ impl AuthMethod {
     pub fn is_terminal(&self) -> bool {
         self.kind.as_deref() == Some("terminal")
     }
+
+    /// The agent handles the whole flow itself after `authenticate`: the
+    /// `type` is absent or `"agent"`. Any other type (`terminal`, and types a
+    /// later protocol version adds) needs the client to do something first,
+    /// and is never passed to `authenticate`.
+    pub fn is_agent_flow(&self) -> bool {
+        matches!(self.kind.as_deref(), None | Some("agent"))
+    }
+
+    /// Whether rvim offers this method to the user and may send it. The agent
+    /// must run the flow itself, and the method must not need data that only
+    /// a client supplies: a custom gateway takes its base URL and headers
+    /// from the client, which rvim never provides.
+    pub fn is_offered(&self) -> bool {
+        self.is_agent_flow() && self.id != "gateway"
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -1226,6 +1242,24 @@ impl Conn {
             }));
             return;
         }
+        if !method.is_agent_flow() {
+            // A type this client does not know needs the client's part of the
+            // flow, which the protocol says must come before `authenticate`.
+            out.push(OutAction::Notice(Notice::RequestFailed {
+                turn: None,
+                message: format!("authentication method {method_id} is not supported"),
+            }));
+            return;
+        }
+        if !method.is_offered() {
+            out.push(OutAction::Notice(Notice::RequestFailed {
+                turn: None,
+                message: format!(
+                    "authentication method {method_id} needs data this client does not provide"
+                ),
+            }));
+            return;
+        }
         self.state = ConnState::Initializing;
         self.request(
             Pending::Authenticate,
@@ -1252,6 +1286,11 @@ impl Conn {
                 out.push(OutAction::Notice(Notice::RequestFailed {
                     turn: None,
                     message: format!("authenticate failed: {}", e.message),
+                }));
+                // The agent still needs a login: offer the methods again, so
+                // the user can pick another or give up.
+                out.push(OutAction::Notice(Notice::AuthRequired {
+                    methods: self.auth_methods.clone(),
                 }));
             }
         }

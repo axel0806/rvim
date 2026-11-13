@@ -20,7 +20,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use crate::Editor;
-use crate::acp::{Conn, ConnState, InEvent, Notice, OutAction};
+use crate::acp::{AuthMethod, Conn, ConnState, InEvent, Notice, OutAction};
 use crate::agent_approval::{Approvals, FILE_NAME};
 use crate::agent_conn::{AgentEvent, ConnCmd};
 use crate::agent_detect::{AGENTS, AgentSpec};
@@ -58,12 +58,32 @@ pub struct Link {
     pub cwd: PathBuf,
 }
 
+/// The sign-in choice on the message line: the methods the agent advertised
+/// that rvim may offer, in the order shown (`[1]`, `[2]`, ...). Nothing is sent
+/// to the agent until the user presses a number; every other way out sends
+/// nothing and leaves the connection in the Error state. rvim never sees what
+/// a method does: the agent signs in itself, with its own stored login or its
+/// own browser flow.
+#[derive(Debug)]
+pub struct AuthChoice {
+    /// The connection the choice belongs to.
+    pub generation: u64,
+    pub methods: Vec<AuthMethod>,
+}
+
+/// At most this many methods are offered (the keys `1` to `9`).
+const MAX_AUTH_CHOICES: usize = 9;
+
 /// Everything the agent connection keeps in the editor.
 #[derive(Default)]
 pub struct AgentState {
     pub link: Option<Link>,
     /// The agent whose consent prompt is on the message line.
     pub consent: Option<&'static str>,
+    /// The sign-in choice on the message line, if one is up.
+    pub auth_choice: Option<AuthChoice>,
+    /// Why the last `authenticate` failed, shown with the next choice.
+    pub(crate) auth_failure: Option<String>,
     pub approvals: Approvals,
     /// The project root: where agents run and what approvals are for.
     pub project: Option<PathBuf>,
@@ -80,6 +100,62 @@ pub struct AgentState {
 
 fn spec_of(id: &str) -> Option<&'static AgentSpec> {
     AGENTS.iter().find(|a| a.id == id)
+}
+
+/// The methods to offer for an agent: the advertised ones rvim may send
+/// (`AuthMethod::is_offered`), those the registry names as reusing the
+/// agent's own login first, at most nine.
+fn auth_choices(spec: Option<&AgentSpec>, advertised: &[AuthMethod]) -> Vec<AuthMethod> {
+    let login: &[&str] = spec.map_or(&[], |s| s.login_methods);
+    let offered: Vec<&AuthMethod> = advertised.iter().filter(|m| m.is_offered()).collect();
+    let mut out: Vec<AuthMethod> = Vec::new();
+    for id in login {
+        out.extend(offered.iter().filter(|m| m.id == *id).map(|m| (*m).clone()));
+    }
+    for m in offered {
+        if !out.iter().any(|o| o.id == m.id) {
+            out.push(m.clone());
+        }
+    }
+    out.truncate(MAX_AUTH_CHOICES);
+    out
+}
+
+/// Text from the agent for the message line: control characters (an escape
+/// sequence, a newline) become spaces and the length is capped.
+fn plain(text: &str) -> String {
+    let mut s: String = text
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .take(40)
+        .collect();
+    s.truncate(s.trim_end().len());
+    s
+}
+
+/// The sign-in choice as one message line.
+fn auth_prompt(tag: &str, failure: Option<&str>, methods: &[AuthMethod]) -> String {
+    let lead = match failure {
+        Some(why) => format!("{tag}: {}. Sign in with", plain(why)),
+        None => format!("{tag}: not logged in. Sign in with"),
+    };
+    let list: Vec<String> = methods
+        .iter()
+        .enumerate()
+        .map(|(i, m)| format!("[{}] {}", i + 1, plain(&m.name)))
+        .collect();
+    format!("{lead}: {} [n]ot now", list.join(" "))
+}
+
+/// The message when the agent needs a login and rvim has nothing to offer:
+/// the agent's own tool does the sign-in.
+fn login_hint(tag: &str, spec: Option<&AgentSpec>) -> String {
+    match spec.map(|s| s.login).filter(|l| !l.is_empty()) {
+        Some(hint) => format!("{tag}: not logged in; {hint}, then :AgentConnect"),
+        None => {
+            format!("{tag}: not logged in. Log in with the agent's own tool, then :AgentConnect")
+        }
+    }
 }
 
 impl Editor {
@@ -142,6 +218,8 @@ impl Editor {
         }
         if let Some(link) = &self.agent.link {
             let state = match link.life {
+                // The agent waits for the user's sign-in choice.
+                Life::Connecting if self.agent.auth_choice.is_some() => " login?".to_owned(),
                 Life::Connecting => " connecting".to_owned(),
                 // A turn shows as working; a queued permission request as
                 // PERMISSION n.
@@ -181,6 +259,12 @@ impl Editor {
                 "{} has no ACP command in the registry; not connected",
                 spec.id
             ));
+        }
+        if let Some(choice) = self.agent.auth_choice.as_ref() {
+            // The login choice is still up: show it again.
+            let tag = format!("{}-acp", self.agent.link.as_ref().map_or(spec.id, |l| l.id));
+            let text = auth_prompt(&tag, None, &choice.methods);
+            return self.info(text);
         }
         if let Some(link) = self.agent.link.as_ref().filter(|l| l.life != Life::Error) {
             {
@@ -240,6 +324,10 @@ impl Editor {
     /// used (the prompt takes every key). `y` approves, saves the approval
     /// and connects; `n` and `<Esc>` do nothing.
     pub(crate) fn agent_consent_key(&mut self, key: Key) -> bool {
+        // The sign-in choice shares this entry point: it also takes every key.
+        if self.agent.auth_choice.is_some() {
+            return self.agent_auth_key(key);
+        }
         let Some(id) = self.agent.consent else {
             return false;
         };
@@ -271,12 +359,71 @@ impl Editor {
         true
     }
 
+    /// Answers the sign-in choice. `1` to `9` send `authenticate` with that
+    /// method (the agent then signs in itself: with its stored login, or by
+    /// opening its own browser flow); `n`, `<Esc>` and `<C-c>` send nothing and
+    /// leave the Error state with the agent's own login hint. Other keys are
+    /// ignored and the choice stays up.
+    fn agent_auth_key(&mut self, key: Key) -> bool {
+        let Some(choice) = self.agent.auth_choice.as_ref() else {
+            return false;
+        };
+        let generation = choice.generation;
+        match key {
+            Key::Char(c @ '1'..='9') => {
+                let index = usize::from(c as u8 - b'1');
+                let Some(method) = choice.methods.get(index).cloned() else {
+                    return true;
+                };
+                self.agent.auth_choice = None;
+                let Some(link) = self
+                    .agent
+                    .link
+                    .as_mut()
+                    .filter(|l| l.generation == generation)
+                else {
+                    return true;
+                };
+                let tag = format!("{}-acp", link.id);
+                let actions = link.conn.on_event(InEvent::Authenticate {
+                    method_id: method.id.clone(),
+                });
+                self.info(format!(
+                    "{tag}: signing in with {}; the agent does this itself...",
+                    plain(&method.name)
+                ));
+                self.agent_apply(generation, actions, Instant::now());
+            }
+            Key::Char('n') | Key::Esc | Key::Ctrl('c') => {
+                self.agent.auth_choice = None;
+                self.agent.auth_failure = None;
+                self.agent.turn.pending = None;
+                let Some(link) = self
+                    .agent
+                    .link
+                    .as_mut()
+                    .filter(|l| l.generation == generation)
+                else {
+                    return true;
+                };
+                link.life = Life::Error;
+                let text = login_hint(&format!("{}-acp", link.id), spec_of(link.id));
+                self.agent.outbox.push(ConnCmd::Stop { generation });
+                self.error(text);
+            }
+            _ => {}
+        }
+        true
+    }
+
     /// Starts the process and the handshake. `retries` is kept when this is a
     /// retry after a lost connection.
     fn start_link(&mut self, id: &'static str, root: PathBuf, retries: u32) {
         let Some(spec) = spec_of(id) else {
             return;
         };
+        self.agent.auth_choice = None;
+        self.agent.auth_failure = None;
         self.agent.next_gen += 1;
         let generation = self.agent.next_gen;
         let mut conn = Conn::new();
@@ -309,6 +456,8 @@ impl Editor {
     /// rvim started. The approval stays.
     pub fn agent_disconnect(&mut self) {
         self.agent.consent = None;
+        self.agent.auth_choice = None;
+        self.agent.auth_failure = None;
         self.agent.turn.pending = None;
         match self.agent.link.take() {
             Some(link) => {
@@ -456,6 +605,7 @@ impl Editor {
 
     fn agent_notice(&mut self, generation: u64, notice: Notice, now: Instant) {
         if let Notice::ConnectionLost { .. } = notice {
+            self.agent.auth_choice = None;
             return self.agent_lost(generation, now);
         }
         let shown = {
@@ -473,24 +623,44 @@ impl Editor {
                     link.life = Life::Idle;
                     link.retries = 0;
                     link.retry_at = None;
+                    self.agent.auth_choice = None;
+                    self.agent.auth_failure = None;
                     Some((format!("{tag}: connected"), false))
                 }
-                Notice::AuthRequired { .. } => {
-                    link.life = Life::Error;
-                    self.agent.outbox.push(ConnCmd::Stop { generation });
-                    Some((
-                        format!(
-                            "{tag}: not logged in. Log in with the agent's own tool, then :AgentConnect"
-                        ),
-                        true,
-                    ))
+                Notice::AuthRequired { methods } => {
+                    let choices = auth_choices(spec_of(link.id), &methods);
+                    let failure = self.agent.auth_failure.take();
+                    if choices.is_empty() {
+                        // Nothing rvim may send: the user signs in with the
+                        // agent's own tool and connects again.
+                        link.life = Life::Error;
+                        self.agent.auth_choice = None;
+                        self.agent.outbox.push(ConnCmd::Stop { generation });
+                        Some((login_hint(&tag, spec_of(link.id)), true))
+                    } else {
+                        // The process stays up while the user chooses; no
+                        // request is sent before a number is pressed. A turn
+                        // that was waiting for the connection is dropped.
+                        link.life = Life::Connecting;
+                        let text = auth_prompt(&tag, failure.as_deref(), &choices);
+                        self.agent.auth_choice = Some(AuthChoice {
+                            generation,
+                            methods: choices,
+                        });
+                        Some((text, false))
+                    }
                 }
                 Notice::Failed { reason } => {
                     link.life = Life::Error;
+                    self.agent.auth_choice = None;
                     self.agent.outbox.push(ConnCmd::Stop { generation });
                     Some((format!("{tag}: {reason}"), true))
                 }
-                Notice::RequestFailed { message, .. } => {
+                Notice::RequestFailed { turn, message } => {
+                    // A failed `authenticate`: kept for the choice that follows.
+                    if turn.is_none() && link.conn.state() == &ConnState::NeedsAuth {
+                        self.agent.auth_failure = Some(message.clone());
+                    }
                     Some((format!("{tag}: request failed: {message}"), true))
                 }
                 Notice::PromptRejected { reason } => {

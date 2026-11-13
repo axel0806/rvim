@@ -467,6 +467,54 @@ fn transcript_auth_required_then_login() {
 }
 
 #[test]
+fn transcript_auth_failed_then_retry() {
+    replay("auth_failed_then_retry.jsonl");
+}
+
+#[test]
+fn only_agent_flow_methods_are_offered() {
+    let methods: Vec<rvim::acp::AuthMethod> = serde_json::from_value(json!([
+        {"id": "a", "name": "A"},
+        {"id": "b", "name": "B", "type": "agent"},
+        {"id": "c", "name": "C", "type": "terminal"},
+        {"id": "d", "name": "D", "type": "env_var"},
+        {"id": "gateway", "name": "G"},
+    ]))
+    .expect("methods");
+    let offered: Vec<&str> = methods
+        .iter()
+        .filter(|m| m.is_offered())
+        .map(|m| m.id.as_str())
+        .collect();
+    assert_eq!(offered, vec!["a", "b"]);
+    assert!(!methods[3].is_terminal() && !methods[3].is_agent_flow());
+}
+
+#[test]
+fn an_unknown_method_type_is_never_sent_to_authenticate() {
+    let t = Instant::now();
+    let mut c = Conn::new();
+    c.on_event(connect(t));
+    c.on_event(wire(
+        init_ok(1, json!([{"id": "e", "name": "Env", "type": "env_var"}])),
+        t,
+    ));
+    c.on_event(wire(
+        json!({"jsonrpc": "2.0", "id": 2, "error": {"code": -32000, "message": "auth"}}),
+        t,
+    ));
+    assert_eq!(c.state(), &ConnState::NeedsAuth);
+    let out = c.on_event(InEvent::Authenticate {
+        method_id: "e".to_owned(),
+    });
+    assert!(
+        !out.iter().any(|a| matches!(a, OutAction::Send(_))),
+        "{out:?}"
+    );
+    assert_eq!(c.state(), &ConnState::NeedsAuth);
+}
+
+#[test]
 fn transcript_prompt_cancelled() {
     replay("prompt_cancelled.jsonl");
 }

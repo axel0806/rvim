@@ -185,6 +185,18 @@ pub struct AgentSpec {
     pub launch: &'static str,
     /// The command or adapter package for ACP, or `""` when there is none.
     pub acp: &'static str,
+    /// How the user signs in with the agent's own tool, for the "not logged
+    /// in" message (`run ... in a shell`). rvim never signs in itself and never
+    /// reads, stores or sends a credential: the agent keeps its own login, and
+    /// a subscription (Claude Pro or Max, ChatGPT Plus or Pro, and so on) is
+    /// used through that login.
+    pub login: &'static str,
+    /// ACP `authenticate` method ids that reuse the agent's existing login or
+    /// run the agent's own sign-in, which is how a subscription user connects.
+    /// They are listed first when the agent asks for authentication. Methods
+    /// not named here (an API key from the environment, say) are still offered,
+    /// after these; a method the agent marks `terminal` is never offered.
+    pub login_methods: &'static [&'static str],
     /// Notes, including what is UNVERIFIED.
     pub notes: &'static str,
     /// The sources read, with the date.
@@ -259,17 +271,25 @@ pub static AGENTS: &[AgentSpec] = &[
             },
         ],
         launch: "claude",
-        acp: "npx -y @agentclientprotocol/claude-agent-acp@0.99.1",
+        acp: "npx -y @agentclientprotocol/claude-agent-acp@0.107.0",
+        login: "run `claude auth login` in a shell",
+        login_methods: &[],
         notes: "Native install puts claude in ~/.local/bin (Windows: %USERPROFILE%\\.local\\bin\\claude.exe). \
                 The ACP adapter is the package in the ACP registry (the older @zed-industries name is gone); it needs \
                 Node 22 or later, and on Windows the launcher npx is tried as npx.cmd. \
+                Subscription: the adapter runs the Claude Agent SDK, which runs the claude binary with the login that \
+                `claude auth login` stored (Pro, Max, Team and Enterprise plans), so rvim handles no credential. \
+                The adapter advertises only terminal auth methods (claude-ai-login, claude-login, console-login), and \
+                only to a client that declares terminal auth, which rvim does not yet; so rvim sees none and shows the login hint. \
+                Anthropic's terms are not clear-cut for a third-party tool: see PLAN.md, \"Agent SDKs and subscriptions\". \
                 The IDE protocol is documented for VS Code only (code.claude.com/docs/en/ide-integrations, read 2026-11-01): \
                 a local WebSocket server on 127.0.0.1, a lock file ~/.claude/ide/<port>.lock (or $CLAUDE_CONFIG_DIR/ide/ \
                 when set), and the token sent in the header X-Claude-Code-Ide-Authorization. The lock file's JSON schema \
                 and the handshake are not documented: UNVERIFIED, and not a supported third-party API. \
                 ~/.claude/local and %APPDATA%\\npm are install guesses: UNVERIFIED. CLAUDE_CONFIG_DIR is named only in the IDE docs.",
         sources: "code.claude.com/docs/en/setup and code.claude.com/docs/en/ide-integrations (read 2026-11-01); \
-                  agentclientprotocol.com/get-started/agents and cdn.agentclientprotocol.com registry v1.0.0 (read 2026-11-01)",
+                  code.claude.com/docs/en/authentication and /legal-and-compliance, github.com/agentclientprotocol/claude-agent-acp \
+                  src/auth-methods.ts, and the ACP registry entry claude-acp 0.107.0 (read 2026-11-13)",
     },
     AgentSpec {
         id: "codex",
@@ -290,7 +310,7 @@ pub static AGENTS: &[AgentSpec] = &[
                 base: Base::Home,
                 rel: ".codex",
                 os: ANY_OS,
-                verified: false,
+                verified: true,
             },
             Location {
                 base: Base::Var("CODEX_HOME"),
@@ -310,11 +330,21 @@ pub static AGENTS: &[AgentSpec] = &[
             },
         ],
         launch: "codex",
-        acp: "npx @agentclientprotocol/codex-acp@2.5.0",
+        acp: "npx -y @agentclientprotocol/codex-acp@2.6.0",
+        login: "run `codex login` in a shell",
+        login_methods: &["chat-gpt", "chat-gpt-device-code"],
         notes: "The CLI is codex (docs). Headless: codex exec (docs). The ACP adapter is the registry package \
-                (the older @zed-industries name is gone). ~/.codex and CODEX_HOME are not on the CLI page: UNVERIFIED. \
-                The app-server launch command is UNVERIFIED and not used.",
-        sources: "learn.chatgpt.com/docs/codex/cli (read 2026-11-01); cdn.agentclientprotocol.com registry v1.0.0 (read 2026-11-01)",
+                (the older @zed-industries name is gone); -y keeps npx from asking to install it. It starts the Codex \
+                app server itself and bundles a compatible @openai/codex. Subscription: the method chat-gpt reuses a working \
+                ChatGPT login (the one `codex login` cached in ~/.codex/auth.json or the OS store) and opens the \
+                browser only when there is none; chat-gpt-device-code is the same with a one-time code and needs URL \
+                elicitation, which rvim does not offer. api-key reads CODEX_API_KEY or OPENAI_API_KEY from the agent's \
+                environment; gateway needs client data and is never offered. The method ids are from the adapter's \
+                main branch, not its 2.6.0 tag: UNVERIFIED for the release. CODEX_HOME is not on the auth page: UNVERIFIED. \
+                The app-server route (codex app-server, JSON-RPC over stdio) is documented but not used: see PLAN.md, \
+                \"Agent SDKs and subscriptions\".",
+        sources: "learn.chatgpt.com/docs/auth and /docs/app-server, github.com/agentclientprotocol/codex-acp \
+                  src/CodexAuthMethod.ts and src/CodexAcpClient.ts, and the ACP registry entry codex-acp 2.6.0 (read 2026-11-13)",
     },
     AgentSpec {
         id: "cursor",
@@ -350,11 +380,15 @@ pub static AGENTS: &[AgentSpec] = &[
         ],
         launch: "agent",
         acp: "agent acp",
+        login: "run `agent login` in a shell",
+        login_methods: &["cursor_login"],
         notes: "The docs name the executable agent (cursor.com/docs/cli/overview), with install by curl or irm. \
                 agent is a generic process name, so it counts only when its path (or its symlink target) contains \
                 \"cursor\". cursor-agent is the executable the ACP registry names (read 2026-11-01). The Unix install location is UNVERIFIED. \
-                Auth: cursor_login (agent login, CURSOR_API_KEY or CURSOR_AUTH_TOKEN). No config directory is known.",
-        sources: "cursor.com/docs/cli/overview and cursor.com/docs/cli/acp (read 2026-11-01); \
+                Auth: the one method cursor_login; the docs say to sign in first with agent login, or with CURSOR_API_KEY or \
+                CURSOR_AUTH_TOKEN, and do not say whether authenticate reuses that login or opens a browser: UNVERIFIED. \
+                No config directory is known. The plan behind the login (Cursor Pro and so on) is not stated on the ACP page.",
+        sources: "cursor.com/docs/cli/overview and cursor.com/docs/cli/acp (read 2026-11-13); \
                   cdn.agentclientprotocol.com registry v1.0.0 (read 2026-11-01)",
     },
     AgentSpec {
@@ -398,6 +432,8 @@ pub static AGENTS: &[AgentSpec] = &[
         ],
         launch: "kimi",
         acp: "kimi acp",
+        login: "run `kimi`, then /login",
+        login_methods: &[],
         notes: "The executable is kimi; @moonshot-ai/kimi-code is the npm package, not the executable. ~/.kimi is the \
                 legacy kimi-cli (its repository was archived 2026-09-23) and uses the same executable name. Login is \
                 /login inside the UI. Headless -p: whether it auto-approves is not stated: UNVERIFIED, not used. \
@@ -410,7 +446,7 @@ pub static AGENTS: &[AgentSpec] = &[
         display: "Gemini CLI",
         executables: &[Named {
             name: "gemini",
-            verified: false,
+            verified: true,
             path_hint: None,
         }],
         install_dirs: &[],
@@ -426,18 +462,27 @@ pub static AGENTS: &[AgentSpec] = &[
             },
         ],
         launch: "gemini",
-        acp: "npx -y @google/gemini-cli@0.66.0 --acp",
-        notes: "The ACP command is the registry entry (npm @google/gemini-cli, pinned to 0.66.0). It honours \
-                GEMINI_API_KEY and GOOGLE_AI_API_KEY. The installed executable name gemini is UNVERIFIED (from memory). \
+        acp: "npx -y @google/gemini-cli@0.68.0 --acp",
+        login: "run `gemini` and choose Sign in with Google",
+        login_methods: &["oauth-personal"],
+        notes: "The ACP command is the registry entry (npm @google/gemini-cli, pinned to 0.68.0; the docs name --acp only). \
+                Methods advertised (source on main): oauth-personal (Log in with Google; authenticate reuses valid cached \
+                credentials, or signs in), gemini-api-key, vertex-ai and gateway (needs client data, never offered). \
+                A failed authenticate is -32000. SUBSCRIPTION CAVEAT: since 2026-06-18 Gemini CLI no longer serves Google AI Pro \
+                and Ultra or free Code Assist for individuals (they moved to Antigravity CLI, registry id antigravity); it still \
+                serves Code Assist Standard and Enterprise licences and paid API keys. Using its Google sign-in from \
+                third-party software is called a terms violation on geminicli.com/docs/resources/tos-privacy. \
                 No install or config directory is probed: UNVERIFIED.",
-        sources: "agentclientprotocol.com/get-started/agents and cdn.agentclientprotocol.com registry v1.0.0 (read 2026-11-01)",
+        sources: "geminicli.com/docs/cli/acp-mode, /docs/get-started/authentication and /docs/resources/tos-privacy, \
+                  developers.googleblog.com (Gemini CLI to Antigravity CLI), github.com/google-gemini/gemini-cli \
+                  packages/cli/src/acp/acpRpcDispatcher.ts, and the ACP registry entry gemini 0.68.0 (read 2026-11-13)",
     },
     AgentSpec {
         id: "github-copilot-cli",
         display: "GitHub Copilot CLI",
         executables: &[Named {
             name: "copilot",
-            verified: false,
+            verified: true,
             path_hint: None,
         }],
         install_dirs: &[],
@@ -453,10 +498,16 @@ pub static AGENTS: &[AgentSpec] = &[
             },
         ],
         launch: "copilot",
-        acp: "npx -y @github/copilot@1.0.105 --acp",
-        notes: "The ACP command is the registry entry (npm @github/copilot, pinned to 1.0.105). The installed \
-                executable name copilot is UNVERIFIED (from memory). Login and config locations: UNVERIFIED, not probed.",
-        sources: "agentclientprotocol.com/get-started/agents and cdn.agentclientprotocol.com registry v1.0.0 (read 2026-11-01)",
+        acp: "npx -y @github/copilot@1.0.110 --acp",
+        login: "run `copilot login` in a shell",
+        login_methods: &[],
+        notes: "The ACP command is the registry entry (npm @github/copilot, pinned to 1.0.110; ACP is a public preview). \
+                Install: npm install -g @github/copilot (Node 22+), winget install GitHub.Copilot, brew install --cask copilot-cli. \
+                It needs a GitHub Copilot subscription; the login (copilot login, device flow on a remote host) is stored in the \
+                OS keychain, and COPILOT_GITHUB_TOKEN, GH_TOKEN or GITHUB_TOKEN override it. The ACP page does not list authMethods: \
+                UNVERIFIED what initialize returns. Config locations are not probed.",
+        sources: "docs.github.com copilot-cli ACP server, authenticate and install pages, and the ACP registry entry \
+                  github-copilot-cli 1.0.110 (read 2026-11-13)",
     },
     AgentSpec {
         id: "opencode",
@@ -480,9 +531,13 @@ pub static AGENTS: &[AgentSpec] = &[
         ],
         launch: "opencode",
         acp: "opencode acp",
-        notes: "The registry runs the executable opencode with the acp argument (binary release 2.2.5). Install \
-                and config locations are not probed: UNVERIFIED.",
-        sources: "agentclientprotocol.com/get-started/agents and cdn.agentclientprotocol.com registry v1.0.0 (read 2026-11-01)",
+        login: "run `opencode`, then /connect",
+        login_methods: &[],
+        notes: "The registry runs the executable opencode with the acp argument (binary release 2.2.7). Providers are \
+                connected with /connect; its docs offer Sign in with ChatGPT (Plus or Pro plan) and GitHub Copilot (device \
+                flow). It reads its own stored provider logins, so rvim handles no credential. Install and config locations \
+                are not probed: UNVERIFIED. Whether the ACP mode advertises authMethods is UNVERIFIED.",
+        sources: "opencode.ai/docs/acp and /docs/providers (read 2026-11-13); cdn.agentclientprotocol.com registry v1.0.0 (read 2026-11-13)",
     },
     AgentSpec {
         id: "goose",
@@ -506,16 +561,21 @@ pub static AGENTS: &[AgentSpec] = &[
         ],
         launch: "goose",
         acp: "goose acp",
-        notes: "The registry runs the executable goose with the acp argument (binary release 1.57.0). No Windows \
-                aarch64 build is listed. Install and config locations are not probed: UNVERIFIED.",
-        sources: "agentclientprotocol.com/get-started/agents and cdn.agentclientprotocol.com registry v1.0.0 (read 2026-11-01)",
+        login: "run `goose configure` in a shell",
+        login_methods: &[],
+        notes: "The registry runs the executable goose with the acp argument (binary release 1.59.0). `goose configure` \
+                sets up a provider, including ChatGPT Codex (browser OAuth, Plus or Pro plan) and GitHub Copilot (device flow). \
+                goose can also use claude-acp and codex-acp as providers over the logged-in claude and codex CLIs. \
+                Install and config locations are not probed: UNVERIFIED. Whether `goose acp` advertises authMethods is UNVERIFIED.",
+        sources: "goose-docs.ai getting-started/providers and guides/acp-providers (read 2026-11-13); \
+                  cdn.agentclientprotocol.com registry v1.0.0 (read 2026-11-13)",
     },
     AgentSpec {
         id: "qwen-code",
         display: "Qwen Code",
         executables: &[Named {
             name: "qwen",
-            verified: false,
+            verified: true,
             path_hint: None,
         }],
         install_dirs: &[],
@@ -531,10 +591,49 @@ pub static AGENTS: &[AgentSpec] = &[
             },
         ],
         launch: "qwen",
-        acp: "npx -y @qwen-code/qwen-code@0.26.5 --acp --experimental-skills",
-        notes: "The ACP command is the registry entry (npm @qwen-code/qwen-code, pinned to 0.26.5). The installed \
-                executable name qwen is UNVERIFIED (from memory). Config locations: UNVERIFIED, not probed.",
-        sources: "agentclientprotocol.com/get-started/agents and cdn.agentclientprotocol.com registry v1.0.0 (read 2026-11-01)",
+        acp: "npx -y @qwen-code/qwen-code@0.27.3 --acp --experimental-skills",
+        login: "run `qwen`, then /auth",
+        login_methods: &[],
+        notes: "The ACP command is the registry entry (npm @qwen-code/qwen-code, pinned to 0.27.3). The executable is qwen \
+                (README). /auth offers a Qwen account with a Plus or Pro subscription, the Alibaba Cloud Coding Plan \
+                (a fixed monthly fee, its own endpoint and key) or an API key. The README does not name --acp: the flag is the \
+                registry's. Config locations: not probed. Whether ACP mode advertises authMethods is UNVERIFIED.",
+        sources: "github.com/QwenLM/qwen-code README and qwenlm.github.io/qwen-code-docs auth page (read 2026-11-13); \
+                  cdn.agentclientprotocol.com registry v1.0.0 (read 2026-11-13)",
+    },
+    AgentSpec {
+        id: "antigravity",
+        display: "Antigravity CLI",
+        executables: &[Named {
+            name: "agy",
+            verified: true,
+            path_hint: None,
+        }],
+        install_dirs: &[],
+        config_dirs: &[],
+        protocols: &[
+            Conn {
+                kind: ProtocolKind::AcpNative,
+                verified: true,
+            },
+            Conn {
+                kind: ProtocolKind::FilesOnly,
+                verified: true,
+            },
+        ],
+        launch: "agy",
+        acp: "agy acp",
+        login: "run `agy acp --login` in a shell, or sign in in an interactive `agy`",
+        login_methods: &["oauth-personal", "oauth-business"],
+        notes: "Google's replacement for Gemini CLI (2026-06-18) and the route for Google AI Pro and Ultra subscribers. \
+                `agy acp` is the ACP server (Antigravity docs, no minimum version given: check `agy acp --help`); it reuses \
+                the CLI's cached sign-in and answers -32000 `Authentication required` without one. Methods advertised: \
+                oauth-personal (Google personal), oauth-business (Gemini Enterprise), gemini-api-key, agent-platform, and \
+                terminal-login for clients that support terminal auth. What authenticate does for each is UNVERIFIED. \
+                The registry's separate agy_acp_server binary download (antigravity-acp 1.5.0, proprietary) is not used. \
+                The install location is not documented, so none is probed.",
+        sources: "antigravity.google/docs/cli/acp and /docs/ide/extensions/acp, developers.googleblog.com (Gemini CLI to \
+                  Antigravity CLI), cdn.agentclientprotocol.com registry v1.0.0 (read 2026-11-13)",
     },
 ];
 
