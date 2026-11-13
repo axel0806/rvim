@@ -465,6 +465,7 @@ fn registry_matches_plan() {
         ("opencode", vec!["opencode"]),
         ("goose", vec!["goose"]),
         ("qwen-code", vec!["qwen"]),
+        ("antigravity", vec!["agy"]),
     ];
     let got: Vec<(&str, Vec<&str>)> = AGENTS
         .iter()

@@ -84,13 +84,14 @@ fn claude_on_path_is_found_and_the_others_are_not() {
             "github-copilot-cli",
             "opencode",
             "goose",
-            "qwen-code"
+            "qwen-code",
+            "antigravity"
         ]
     );
     assert!(s.warnings.is_empty(), "{:?}", s.warnings);
     assert!(
         s.message()
-            .starts_with("found claude (PATH) | not found: codex, cursor, kimi, gemini, github-copilot-cli, opencode, goose, qwen-code"),
+            .starts_with("found claude (PATH) | not found: codex, cursor, kimi, gemini, github-copilot-cli, opencode, goose, qwen-code, antigravity"),
         "{}",
         s.message()
     );
@@ -122,7 +123,7 @@ fn nothing_installed_gives_an_empty_found_list() {
     };
     let s = scan_of(&host);
     assert!(s.found.is_empty() && s.config_only.is_empty());
-    assert_eq!(s.not_found.len(), 9);
+    assert_eq!(s.not_found.len(), 10);
 }
 
 #[test]
