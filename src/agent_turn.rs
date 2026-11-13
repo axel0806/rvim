@@ -273,6 +273,12 @@ impl Editor {
         id
     }
 
+    /// A complete line in the agent log, for other agent modules (the served
+    /// file calls, `agent_fs.rs`).
+    pub(crate) fn agent_log_line(&mut self, text: &str) {
+        self.log_line(text);
+    }
+
     /// A complete line in the log (closes a line still open).
     pub(crate) fn log_line(&mut self, text: &str) {
         let log = self.agent_log_doc();

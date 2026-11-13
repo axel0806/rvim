@@ -74,6 +74,8 @@ pub struct AgentState {
     pub(crate) turn: crate::agent_turn::TurnState,
     /// The permission prompt and the session grants (`agent_permission.rs`).
     pub(crate) perm: crate::agent_permission::PermState,
+    /// Served file calls in flight (`agent_fs.rs`).
+    pub(crate) fs: crate::agent_fs::FsState,
 }
 
 fn spec_of(id: &str) -> Option<&'static AgentSpec> {
@@ -365,6 +367,7 @@ impl Editor {
         let now = Instant::now();
         match event {
             AgentEvent::Note(text) => self.error(text),
+            AgentEvent::Fs(done) => self.agent_fs_done(generation, done),
             AgentEvent::SpawnFailed(reason) => {
                 let Some(link) = self
                     .agent
@@ -427,7 +430,20 @@ impl Editor {
                 OutAction::Update(update) => self.turn_update(update),
                 OutAction::AskPermission { .. } => {}
                 OutAction::Close => self.agent.outbox.push(ConnCmd::Stop { generation }),
-                OutAction::Log(_) | OutAction::ServeRead { .. } | OutAction::ServeWrite { .. } => {}
+                OutAction::ServeRead {
+                    request,
+                    path,
+                    line,
+                    limit,
+                    ..
+                } => self.agent_serve_read(generation, request, path, line, limit),
+                OutAction::ServeWrite {
+                    request,
+                    path,
+                    content,
+                    ..
+                } => self.agent_serve_write(generation, request, path, content),
+                OutAction::Log(_) => {}
             }
         }
         self.permission_sync(now);

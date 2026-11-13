@@ -167,8 +167,13 @@ fn successful_initialize_and_session_new() {
     assert_eq!(first[0]["params"]["protocolVersion"], 1);
     assert_eq!(
         first[0]["params"]["clientCapabilities"]["fs"]["readTextFile"],
-        false
+        true
     );
+    assert_eq!(
+        first[0]["params"]["clientCapabilities"]["fs"]["writeTextFile"],
+        true
+    );
+    assert_eq!(first[0]["params"]["clientCapabilities"]["terminal"], false);
 
     let (methods, _) = serve_taken(&mut ed, 1, false, cmds);
     assert_eq!(methods, vec!["initialize", "session/new"]);

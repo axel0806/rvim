@@ -351,6 +351,11 @@ impl Editor {
         DocId(self.documents.len() - 1)
     }
 
+    /// Every document's id (the served file calls, `agent_fs.rs`).
+    pub(crate) fn document_ids(&self) -> impl Iterator<Item = DocId> + use<> {
+        (0..self.documents.len()).map(DocId)
+    }
+
     /// Gives every window the text area of the screen. There is one window,
     /// which fills the screen. Splits (milestone 5) will divide it.
     pub(crate) fn fit_windows(&mut self) {
@@ -501,8 +506,12 @@ impl Editor {
                 size,
                 hash,
             } => {
-                let state = DiskState { mtime, size, hash };
-                self.watch_arrived(doc, version, Some(Arrival::Read(state, bytes)));
+                // A served agent write is applied by itself, once
+                // (`agent_fs.rs`); the watcher's report of it is dropped.
+                if !self.agent_fs_echo(doc, hash) {
+                    let state = DiskState { mtime, size, hash };
+                    self.watch_arrived(doc, version, Some(Arrival::Read(state, bytes)));
+                }
             }
             Event::FileDeleted { doc, version } => self.watch_arrived(doc, version, None),
             Event::FileTooLarge {
@@ -513,6 +522,7 @@ impl Editor {
             } => self.watch_arrived(doc, version, Some(Arrival::TooLarge { mtime, size })),
         }
         self.apply_watch_queue();
+        self.apply_served_writes();
     }
 
     /// The watcher commands the front end must send now (see `watch.rs`):
@@ -1779,7 +1789,7 @@ impl Editor {
 
     /// Whether a change from outside may be applied now: Normal mode, no
     /// command being typed, and no start menu.
-    fn ready_for_change(&self) -> bool {
+    pub(crate) fn ready_for_change(&self) -> bool {
         self.mode == Mode::Normal && self.pending.is_empty() && self.start_menu.is_none()
     }
 
