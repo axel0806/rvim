@@ -20,9 +20,14 @@
 //!   undo step tagged `agent:<id>`, with the disk state it wrote recorded, so
 //!   the watcher's report of the same write is not applied again.
 //!
-//! No new prompt is shown for a write: PLAN section 4 puts the agent's own
-//! `session/request_permission` before its writes (step 6a owns those
-//! prompts), and the path rules here are the client's own check, which the
+//! A write to a file that controls execution or approval ([`is_sensitive`]:
+//! VCS hooks, editor and agent settings, MCP config, workflows, agent
+//! instruction files, rvim's own config) waits for a key in step 6a's
+//! permission prompt, as the file-system page says a client SHOULD ask. The
+//! prompt offers `y` and `n` only and makes no grants; the write intent is
+//! recorded only after `y`. Every other write needs no prompt of its own: PLAN
+//! section 4 puts the agent's own `session/request_permission` before its
+//! writes, and the path rules here are the client's own check, which the
 //! file-system page requires whatever the agent was granted.
 
 use std::io::Read;
@@ -41,6 +46,9 @@ use crate::undo::UndoSource;
 pub const MAX_SERVE_BYTES: usize = crate::watch::MAX_WATCH_BYTES;
 /// JSON-RPC "Internal error" (schema `ErrorCode`): an IO failure.
 pub const INTERNAL_ERROR: i64 = -32603;
+/// JSON-RPC "Request cancelled" (schema `ErrorCode`): a served write that
+/// waited for a key and was cancelled (`:AgentCancel`, a disconnect).
+pub const REQUEST_CANCELLED: i64 = -32800;
 
 /// Why a path is refused. The messages name the rule, never file contents.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,6 +60,9 @@ pub enum PathError {
     Outside,
     /// An excluded name (`.env*`, `*.pem`, `*.key`, `id_rsa*`).
     Excluded,
+    /// rvim's own `config.toml` or `agent-approvals.toml` outside the project:
+    /// refused, never asked about (inside the project the write is asked).
+    RvimConfig,
 }
 
 impl PathError {
@@ -60,6 +71,7 @@ impl PathError {
             PathError::NotAbsolute => "path must be absolute",
             PathError::Outside => "path outside shareable directories",
             PathError::Excluded => "path excluded from sharing",
+            PathError::RvimConfig => "rvim's own configuration is not served",
         }
     }
 
@@ -136,6 +148,88 @@ pub fn is_excluded_name(name: &str) -> bool {
     n.starts_with(".env") || n.ends_with(".pem") || n.ends_with(".key") || n.starts_with("id_rsa")
 }
 
+/// Directories whose contents control execution or approval: a path with one
+/// of these as a component (at any depth below the project root) is sensitive.
+/// `.git` covers hooks and a `.git` file (a worktree or submodule pointer).
+pub const SENSITIVE_DIRS: &[&str] = &[
+    ".git",
+    ".vscode",
+    ".idea",
+    ".zed",
+    ".claude",
+    ".codex",
+    ".gemini",
+    ".cursor",
+    ".husky",
+    ".devcontainer",
+];
+
+/// File names that are sensitive wherever they are below the project root.
+pub const SENSITIVE_FILES: &[&str] = &[
+    ".mcp.json",
+    "mcp.json",
+    "AGENTS.md",
+    "CLAUDE.md",
+    "GEMINI.md",
+    "agent-approvals.toml",
+    ".gitmodules",
+    ".gitattributes",
+    ".pre-commit-config.yaml",
+    ".cursorrules",
+];
+
+/// Whether two names are the same. Windows and macOS file systems ignore
+/// case, so `.GIT` is `.git` there; elsewhere names compare exactly.
+fn same_name(a: &str, b: &str) -> bool {
+    if cfg!(any(windows, target_os = "macos")) {
+        a.eq_ignore_ascii_case(b)
+    } else {
+        a == b
+    }
+}
+
+/// rvim's own configuration: `agent-approvals.toml` anywhere, and
+/// `config.toml` directly inside a directory named `rvim` (where
+/// `config.rs` and `agent_approval.rs` keep them).
+pub fn is_rvim_config(path: &Path) -> bool {
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    if same_name(&name, crate::agent_approval::FILE_NAME) {
+        return true;
+    }
+    let parent = path
+        .parent()
+        .and_then(Path::file_name)
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    same_name(&name, crate::config::FILE_NAME) && same_name(&parent, "rvim")
+}
+
+/// Whether a write to `path` (normalized, absolute) must wait for a key: it is
+/// inside a root and its part below the root names a sensitive directory, a
+/// sensitive file, `.github/workflows`, or is rvim's own configuration.
+pub fn is_sensitive(path: &Path, roots: &[PathBuf]) -> bool {
+    let Some(rest) = roots.iter().find_map(|r| below(path, r)) else {
+        return false;
+    };
+    let names: Vec<String> = rest
+        .iter()
+        .map(|c| c.as_os_str().to_string_lossy().into_owned())
+        .collect();
+    let dir = names
+        .iter()
+        .any(|n| SENSITIVE_DIRS.iter().any(|d| same_name(n, d)));
+    let file = names
+        .last()
+        .is_some_and(|n| SENSITIVE_FILES.iter().any(|f| same_name(n, f)));
+    let workflows = names
+        .windows(2)
+        .any(|w| same_name(&w[0], ".github") && same_name(&w[1], "workflows"));
+    dir || file || workflows || is_rvim_config(path)
+}
+
 /// Checks `path` (normalized and absolute) against `roots` (normalized and
 /// absolute): inside one of them, and no excluded name below it.
 fn check_inside(path: &Path, roots: &[PathBuf]) -> Result<(), PathError> {
@@ -163,6 +257,9 @@ pub fn check_request(path: &str, roots: &[PathBuf]) -> Result<PathBuf, PathError
     }
     let n = normalize(p).ok_or(PathError::Outside)?;
     let roots: Vec<PathBuf> = roots.iter().filter_map(|r| normalize(r)).collect();
+    if is_rvim_config(&n) && !roots.iter().any(|r| below(&n, r).is_some()) {
+        return Err(PathError::RvimConfig);
+    }
     check_inside(&n, &roots)?;
     Ok(n)
 }
@@ -233,12 +330,15 @@ pub enum FsJob {
         limit: Option<u32>,
     },
     /// Write `content` to `path` (already checked), creating the file and
-    /// its directories.
+    /// its directories. `allowed_sensitive` is true when the user said `y` to
+    /// the sensitive-write prompt; otherwise a path that is sensitive once its
+    /// symlinks are resolved is refused (it would have skipped the prompt).
     Write {
         request: Id,
         path: PathBuf,
         roots: Vec<PathBuf>,
         content: String,
+        allowed_sensitive: bool,
     },
 }
 
@@ -328,10 +428,23 @@ pub fn run(job: FsJob) -> FsDone {
             path,
             roots,
             content,
+            allowed_sensitive,
         } => {
             let result = check_resolved(&path, &roots)
                 .map_err(PathError::error)
-                .and_then(|real| write(&real, content.as_bytes()));
+                .and_then(|real| {
+                    let canon: Vec<PathBuf> = roots
+                        .iter()
+                        .filter_map(|r| std::fs::canonicalize(r).ok())
+                        .collect();
+                    if !allowed_sensitive && is_sensitive(&real, &canon) {
+                        return Err(FsError::new(
+                            INVALID_PARAMS,
+                            "path is sensitive once links are resolved; not written",
+                        ));
+                    }
+                    write(&real, content.as_bytes())
+                });
             FsDone::Written {
                 request,
                 path,
@@ -375,11 +488,27 @@ struct Apply {
     agent: &'static str,
 }
 
+/// A served write to a sensitive path that waits for the user's key
+/// (`agent_permission.rs` shows it). No write intent exists yet.
+#[derive(Debug)]
+pub(crate) struct Ask {
+    pub(crate) request: Id,
+    pub(crate) generation: u64,
+    pub(crate) agent: &'static str,
+    path: PathBuf,
+    /// The path as shown: relative to the project root with `/`.
+    pub(crate) shown: String,
+    content: String,
+    roots: Vec<PathBuf>,
+}
+
 /// The editor's state for served file calls.
 #[derive(Debug, Default)]
 pub(crate) struct FsState {
     intents: Vec<Intent>,
     applies: Vec<Apply>,
+    /// Sensitive writes waiting for a key, oldest first.
+    pub(crate) asks: Vec<Ask>,
 }
 
 fn same_path(a: &Path, b: &Path) -> bool {
@@ -500,23 +629,93 @@ impl Editor {
                 self.fs_answer(generation, InEvent::FileWriteAnswer { request, result });
             }
             Ok(path) => {
-                self.agent.fs.intents.push(Intent {
-                    request: request.clone(),
-                    generation,
-                    path: path.clone(),
-                    hash: fnv1a(content.as_bytes()),
-                    content: content.clone(),
-                    agent,
-                });
-                let job = FsJob::Write {
-                    request,
-                    path,
-                    roots,
-                    content,
-                };
-                self.agent.outbox.push(ConnCmd::Fs { generation, job });
+                let normal: Vec<PathBuf> = roots.iter().filter_map(|r| normalize(r)).collect();
+                if is_sensitive(&path, &normal) {
+                    // Nothing is recorded or written until the user says `y`
+                    // (`agent_permission.rs`).
+                    let shown = self.fs_display(&path).replace('\\', "/");
+                    self.agent_log_line(&format!(
+                        "[fs] write {shown}: waiting for permission (sensitive)"
+                    ));
+                    self.agent.fs.asks.push(Ask {
+                        request,
+                        generation,
+                        agent,
+                        path,
+                        shown,
+                        content,
+                        roots,
+                    });
+                    return;
+                }
+                self.start_write(generation, request, path, content, roots, agent, false);
             }
         }
+    }
+
+    /// Records the write intent and hands the write to the file thread.
+    #[allow(clippy::too_many_arguments)]
+    fn start_write(
+        &mut self,
+        generation: u64,
+        request: Id,
+        path: PathBuf,
+        content: String,
+        roots: Vec<PathBuf>,
+        agent: &'static str,
+        allowed_sensitive: bool,
+    ) {
+        self.agent.fs.intents.push(Intent {
+            request: request.clone(),
+            generation,
+            path: path.clone(),
+            hash: fnv1a(content.as_bytes()),
+            content: content.clone(),
+            agent,
+        });
+        let job = FsJob::Write {
+            request,
+            path,
+            roots,
+            content,
+            allowed_sensitive,
+        };
+        self.agent.outbox.push(ConnCmd::Fs { generation, job });
+    }
+
+    /// The user's key on a sensitive write: `y` writes it (the write goes
+    /// the usual way from here), `n` answers the agent with an error that has
+    /// no file contents.
+    pub(crate) fn sensitive_write_answer(&mut self, ask: Ask, allow: bool) {
+        if allow {
+            let Ask {
+                request,
+                generation,
+                agent,
+                path,
+                content,
+                roots,
+                ..
+            } = ask;
+            return self.start_write(generation, request, path, content, roots, agent, true);
+        }
+        self.agent_log_line(&format!("[fs] write {}: refused by the user", ask.shown));
+        let result = Err(RpcError::new(INTERNAL_ERROR, "write refused by the user"));
+        let request = ask.request;
+        self.fs_answer(ask.generation, InEvent::FileWriteAnswer { request, result });
+    }
+
+    /// A sensitive write that is not going to get a key: answered with an
+    /// error when the connection can still carry it (`answer`), dropped
+    /// otherwise. Never written.
+    pub(crate) fn sensitive_write_dropped(&mut self, ask: Ask, answer: bool) {
+        if !answer {
+            return;
+        }
+        self.agent_log_line(&format!("[fs] write {}: cancelled", ask.shown));
+        let result = Err(RpcError::new(REQUEST_CANCELLED, "write cancelled"));
+        let request = ask.request;
+        self.fs_answer(ask.generation, InEvent::FileWriteAnswer { request, result });
     }
 
     /// The file thread finished a job.
@@ -859,6 +1058,7 @@ mod tests {
             path: file.clone(),
             roots: roots.clone(),
             content: "hi\n".to_owned(),
+            allowed_sensitive: false,
         });
         let FsDone::Written { result, .. } = done else {
             panic!("expected Written");
@@ -878,6 +1078,176 @@ mod tests {
         };
         assert_eq!(checked, Ok(()));
         assert_eq!(bytes.map_err(|e| e.code), Err(RESOURCE_NOT_FOUND));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+}
+
+#[cfg(test)]
+mod sensitive_tests {
+    use super::*;
+
+    #[cfg(windows)]
+    const ROOT: &str = "C:\\proj";
+    #[cfg(not(windows))]
+    const ROOT: &str = "/proj";
+
+    fn at(rel: &str) -> PathBuf {
+        rel.split('/')
+            .fold(PathBuf::from(ROOT), |p, part| p.join(part))
+    }
+
+    fn roots() -> Vec<PathBuf> {
+        vec![PathBuf::from(ROOT)]
+    }
+
+    #[test]
+    fn the_sensitive_list() {
+        for rel in [
+            ".git/hooks/pre-commit",
+            ".git",
+            "sub/.git/config",
+            ".vscode/settings.json",
+            ".idea/a.xml",
+            ".zed/settings.json",
+            ".claude/settings.local.json",
+            ".codex/config.toml",
+            ".gemini/settings.json",
+            ".cursor/rules/x.mdc",
+            ".mcp.json",
+            "a/mcp.json",
+            ".github/workflows/ci.yml",
+            "AGENTS.md",
+            "CLAUDE.md",
+            "deep/er/GEMINI.md",
+            "agent-approvals.toml",
+            "rvim/config.toml",
+            ".husky/pre-commit",
+            ".gitmodules",
+        ] {
+            assert!(is_sensitive(&at(rel), &roots()), "{rel}");
+        }
+        for rel in [
+            "src/main.rs",
+            ".gitignore",
+            ".github/ISSUE_TEMPLATE/bug.md",
+            ".github/dependabot.yml",
+            "config.toml",
+            "docs/CLAUDE.md.txt",
+            "git/hooks/x",
+            "README.md",
+            "mcp.jsonl",
+        ] {
+            assert!(!is_sensitive(&at(rel), &roots()), "{rel}");
+        }
+        // Only the part below the root counts.
+        let root = PathBuf::from(if cfg!(windows) {
+            "C:\\work\\.vscode\\proj"
+        } else {
+            "/work/.vscode/proj"
+        });
+        assert!(!is_sensitive(&root.join("a.rs"), &[root]));
+        // A path outside every root is not this check's business.
+        let elsewhere = if cfg!(windows) {
+            "C:\\other\\.git\\config"
+        } else {
+            "/other/.git/config"
+        };
+        assert!(!is_sensitive(Path::new(elsewhere), &roots()));
+    }
+
+    #[cfg(any(windows, target_os = "macos"))]
+    #[test]
+    fn names_compare_without_case_where_the_file_system_does() {
+        for rel in [
+            ".GIT/hooks/x",
+            ".Github/Workflows/a.yml",
+            "claude.md",
+            "MCP.JSON",
+        ] {
+            assert!(is_sensitive(&at(rel), &roots()), "{rel}");
+        }
+    }
+
+    #[cfg(not(any(windows, target_os = "macos")))]
+    #[test]
+    fn names_compare_exactly_on_case_sensitive_systems() {
+        assert!(!is_sensitive(&at(".GIT/hooks/x"), &roots()));
+        assert!(!is_sensitive(&at("claude.md"), &roots()));
+    }
+
+    #[test]
+    fn rvims_config_files_outside_the_project_are_refused() {
+        let outside = if cfg!(windows) {
+            "C:\\other\\rvim\\config.toml"
+        } else {
+            "/other/rvim/config.toml"
+        };
+        assert_eq!(check_request(outside, &roots()), Err(PathError::RvimConfig));
+        let approvals = if cfg!(windows) {
+            "C:\\other\\agent-approvals.toml"
+        } else {
+            "/other/agent-approvals.toml"
+        };
+        assert_eq!(
+            check_request(approvals, &roots()),
+            Err(PathError::RvimConfig)
+        );
+        // Inside the project it is a sensitive write, not a refusal.
+        assert!(check_request(&at("rvim/config.toml").to_string_lossy(), &roots()).is_ok());
+    }
+
+    fn temp_root(name: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("rvim-agent-fs-s-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        dir
+    }
+
+    #[test]
+    fn the_worker_refuses_a_sensitive_path_that_was_not_approved() {
+        let root = temp_root("worker");
+        let hook = root.join(".git").join("hooks").join("pre-commit");
+        let job = |allowed| FsJob::Write {
+            request: Id::Num(1),
+            path: hook.clone(),
+            roots: vec![root.clone()],
+            content: "x".to_owned(),
+            allowed_sensitive: allowed,
+        };
+        let FsDone::Written { result, .. } = run(job(false)) else {
+            panic!("expected Written");
+        };
+        assert_eq!(result.map_err(|e| e.code), Err(INVALID_PARAMS));
+        assert!(!hook.exists());
+        let FsDone::Written { result, .. } = run(job(true)) else {
+            panic!("expected Written");
+        };
+        assert!(result.is_ok());
+        assert!(hook.exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_link_to_a_sensitive_file_does_not_skip_the_prompt() {
+        let root = temp_root("link");
+        std::fs::create_dir_all(root.join(".git").join("hooks")).expect("dirs");
+        std::os::unix::fs::symlink(root.join(".git").join("hooks"), root.join("innocent"))
+            .expect("symlink");
+        let path = root.join("innocent").join("pre-commit");
+        assert!(!is_sensitive(&path, std::slice::from_ref(&root)));
+        let FsDone::Written { result, .. } = run(FsJob::Write {
+            request: Id::Num(1),
+            path: path.clone(),
+            roots: vec![root.clone()],
+            content: "x".to_owned(),
+            allowed_sensitive: false,
+        }) else {
+            panic!("expected Written");
+        };
+        assert_eq!(result.map_err(|e| e.code), Err(INVALID_PARAMS));
+        assert!(!root.join(".git").join("hooks").join("pre-commit").exists());
         let _ = std::fs::remove_dir_all(&root);
     }
 }

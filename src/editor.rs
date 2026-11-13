@@ -174,7 +174,7 @@ pub struct Editor {
     pub(crate) screen_rows: usize,
     /// The 'scroll' option for CTRL-D and CTRL-U; 0 means half the window.
     pub(crate) scroll_opt: usize,
-    depth: usize,
+    pub(crate) depth: usize,
     pub(crate) cmdline: String,
     pub(crate) cmdpos: usize,
     /// Register being recorded into (`q{reg}`), and the keys typed so far.
@@ -579,6 +579,17 @@ impl Editor {
     }
 
     pub fn handle_key(&mut self, key: Key) {
+        self.handle_key_inner(key);
+        // A queued permission request becomes the prompt when the key left
+        // the editor in plain Normal mode (agent_permission.rs). Keys fed
+        // from inside a command (macros, `:normal`, `.`) run at depth > 0
+        // and never activate it.
+        if self.depth == 0 {
+            self.permission_activate();
+        }
+    }
+
+    fn handle_key_inner(&mut self, key: Key) {
         // The conflict prompt takes every key while it is open (conflict.rs).
         if self.conflict.is_some() {
             return self.conflict_key(key);
@@ -592,7 +603,9 @@ impl Editor {
         if self.agent_consent_key(key) {
             return;
         }
-        // So does the permission prompt (agent_permission.rs), in any mode.
+        // So does the permission prompt (agent_permission.rs), once it is
+        // active: in plain Normal mode only, never in Insert, Replace, Visual
+        // or command-line mode or with a Normal command pending.
         if self.agent_permission_key(key) {
             return;
         }
@@ -606,8 +619,10 @@ impl Editor {
         }
         let key = match key {
             Key::Alt(c) => {
-                self.handle_key(Key::Esc);
-                return self.handle_key(Key::Char(c));
+                // `<Esc>` then the key, as one key: a permission prompt must
+                // not become active between the two.
+                self.handle_key_inner(Key::Esc);
+                return self.handle_key_inner(Key::Char(c));
             }
             Key::Insert
                 if self.mode == Mode::Normal

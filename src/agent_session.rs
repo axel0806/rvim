@@ -145,7 +145,10 @@ impl Editor {
                 Life::Connecting => " connecting".to_owned(),
                 // A turn shows as working; a queued permission request as
                 // PERMISSION n.
-                Life::Idle => match (link.conn.permissions_waiting(), link.conn.state()) {
+                Life::Idle => match (
+                    link.conn.permissions_waiting() + self.permission_writes_waiting(),
+                    link.conn.state(),
+                ) {
                     (n, _) if n > 0 => format!(" PERMISSION {n}"),
                     (_, ConnState::Prompting { .. }) => " working".to_owned(),
                     (_, ConnState::Cancelling { .. }) => " cancelling".to_owned(),
@@ -328,7 +331,9 @@ impl Editor {
         let actions = link.conn.on_event(InEvent::Cancel);
         let sent = actions.iter().any(|a| matches!(a, OutAction::Send(_)));
         self.agent_apply(generation, actions, Instant::now());
-        if !sent {
+        // Sensitive writes that wait for a key are answered with an error.
+        let writes = self.permission_cancel_writes();
+        if !sent && !writes {
             self.info("no turn to cancel");
         }
     }

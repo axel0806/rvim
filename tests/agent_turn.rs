@@ -883,22 +883,262 @@ fn prompt_keys_do_not_reach_normal_or_insert_mode() {
         answers(&ed.take_agent_conn_commands()),
         [(50, "allow_once".to_owned())]
     );
-    // A request that arrives in Insert mode takes the keys too (PLAN.md,
-    // "Permissions, step 6a": a known risk).
-    ed.feed("A");
+    // Insert mode takes its own keys again once the prompt is answered.
+    ed.feed("AZ<Esc>");
+    assert_eq!(text(&ed), "abcZ");
+}
+
+// ---- the prompt takes keys in plain Normal mode only (2026-11-13) ----------
+
+fn request_one(ed: &mut Editor, id: i64) {
     ask(
-        &mut ed,
-        51,
+        ed,
+        id,
         file_tool("edit", "src/a.rs"),
         &["allow_once", "reject_once"],
     );
+}
+
+#[test]
+fn a_request_in_insert_mode_waits_for_normal_mode() {
+    let mut ed = connected_with(1, "abc");
+    let _turn = start_turn(&mut ed, "edit");
+    ed.feed("A");
+    request_one(&mut ed, 50);
+    // Queued, shown by the indicator, and no key is taken.
+    assert!(ed.permission_queued());
+    assert!(!ed.permission_prompt_up());
+    assert!(status(&ed).contains("PERMISSION 1"), "{}", status(&ed));
+    ed.feed("yn");
+    ed.paste("y");
+    assert_eq!(text(&ed), "abcyny");
+    assert!(answers(&ed.take_agent_conn_commands()).is_empty());
+    // A second request in Insert mode only raises the count.
+    request_one(&mut ed, 51);
+    assert!(status(&ed).contains("PERMISSION 2"), "{}", status(&ed));
+    ed.feed("<Esc>");
+    // The `<Esc>` left Insert mode; it did not answer.
+    assert!(answers(&ed.take_agent_conn_commands()).is_empty());
+    assert!(ed.permission_prompt_up());
+    assert!(
+        status(&ed).contains("claude-acp wants to edit src/a.rs. [y]es [n]o (1/2)"),
+        "{}",
+        status(&ed)
+    );
+    ed.feed("y");
+    assert_eq!(
+        answers(&ed.take_agent_conn_commands()),
+        [(50, "allow_once".to_owned())]
+    );
+    assert_eq!(text(&ed), "abcyny");
     ed.feed("n");
     assert_eq!(
         answers(&ed.take_agent_conn_commands()),
         [(51, "reject_once".to_owned())]
     );
-    ed.feed("Z<Esc>");
-    assert_eq!(text(&ed), "abcZ");
+    assert!(!ed.permission_queued());
+}
+
+#[test]
+fn a_request_in_visual_mode_or_with_an_operator_pending_waits() {
+    // Visual mode: `y` yanks; the prompt appears when Visual mode ends.
+    let mut ed = connected_with(1, "abc def");
+    let _turn = start_turn(&mut ed, "edit");
+    ed.feed("v");
+    request_one(&mut ed, 50);
+    assert!(!ed.permission_prompt_up());
+    ed.feed("ly");
+    assert!(answers(&ed.take_agent_conn_commands()).is_empty());
+    assert!(ed.permission_prompt_up());
+    ed.feed("y");
+    assert_eq!(
+        answers(&ed.take_agent_conn_commands()),
+        [(50, "allow_once".to_owned())]
+    );
+    ed.feed("$p");
+    assert_eq!(text(&ed), "abc defab", "the yank was Vim's");
+
+    // An operator pending: `d` then `w` is Vim's `dw`, then the prompt.
+    let mut ed = connected_with(1, "abc def");
+    let _turn = start_turn(&mut ed, "edit");
+    ed.feed("d");
+    request_one(&mut ed, 51);
+    assert!(!ed.permission_prompt_up());
+    assert!(!ed.pending_keys().is_empty());
+    ed.feed("w");
+    assert_eq!(text(&ed), "def");
+    assert!(answers(&ed.take_agent_conn_commands()).is_empty());
+    assert!(ed.permission_prompt_up());
+
+    // `y` after a `d` is not an answer: it ends the operator (Vim beeps).
+    let mut ed = connected_with(1, "abc def");
+    let _turn = start_turn(&mut ed, "edit");
+    ed.feed("d");
+    request_one(&mut ed, 52);
+    ed.feed("y");
+    assert!(answers(&ed.take_agent_conn_commands()).is_empty());
+    assert_eq!(text(&ed), "abc def");
+    assert!(ed.permission_prompt_up(), "active once nothing is pending");
+    ed.feed("n");
+    assert_eq!(
+        answers(&ed.take_agent_conn_commands()),
+        [(52, "reject_once".to_owned())]
+    );
+
+    // A count pending, then `<Esc>`.
+    let mut ed = connected_with(1, "abc def");
+    let _turn = start_turn(&mut ed, "edit");
+    ed.feed("2");
+    request_one(&mut ed, 53);
+    assert!(!ed.permission_prompt_up());
+    ed.feed("<Esc>");
+    assert!(answers(&ed.take_agent_conn_commands()).is_empty());
+    assert!(ed.permission_prompt_up());
+}
+
+#[test]
+fn agent_cancel_can_be_typed_while_a_request_is_queued() {
+    let mut ed = connected_with(1, "abc");
+    let _turn = start_turn(&mut ed, "edit");
+    ed.feed(":AgentCan");
+    request_one(&mut ed, 50);
+    request_one(&mut ed, 51);
+    assert!(ed.permission_queued() && !ed.permission_prompt_up());
+    assert_eq!(ed.cmdline(), "AgentCan", "the command line kept its keys");
+    assert!(answers(&ed.take_agent_conn_commands()).is_empty());
+    ed.feed("cel<CR>");
+    assert_eq!(
+        answers(&ed.take_agent_conn_commands()),
+        [(50, "cancelled".to_owned()), (51, "cancelled".to_owned())]
+    );
+    assert!(!ed.permission_queued());
+    assert!(!status(&ed).contains("PERMISSION"), "{}", status(&ed));
+}
+
+#[test]
+fn esc_in_the_command_line_leaves_it_and_the_next_esc_rejects() {
+    let mut ed = connected_with(1, "abc");
+    let _turn = start_turn(&mut ed, "edit");
+    ed.feed(":");
+    request_one(&mut ed, 50);
+    ed.feed("<Esc>");
+    assert!(answers(&ed.take_agent_conn_commands()).is_empty());
+    assert!(ed.permission_prompt_up());
+    ed.feed("<Esc>");
+    assert_eq!(
+        answers(&ed.take_agent_conn_commands()),
+        [(50, "reject_once".to_owned())]
+    );
+}
+
+#[test]
+fn grants_answer_at_once_in_any_mode() {
+    let mut ed = connected_with(1, "abc");
+    let _turn = start_turn(&mut ed, "edit");
+    ask(&mut ed, 50, file_tool("edit", "src/a.rs"), &ALL);
+    ed.feed("a");
+    assert_eq!(
+        answers(&ed.take_agent_conn_commands()),
+        [(50, "allow_always".to_owned())]
+    );
+    // Insert, Visual, command line and a pending operator.
+    for (i, keys) in ["A", "v", ":", "d"].into_iter().enumerate() {
+        ed.feed(keys);
+        let id = 60 + i as i64;
+        ask(&mut ed, id, file_tool("edit", "src/b.rs"), &ALL);
+        assert_eq!(
+            answers(&ed.take_agent_conn_commands()),
+            [(id, "allow_always".to_owned())],
+            "{keys}"
+        );
+        assert!(!ed.permission_queued(), "{keys}");
+        ed.feed("<Esc><Esc>");
+        assert_eq!(text(&ed), "abc", "{keys}");
+    }
+}
+
+#[test]
+fn the_reminder_works_for_a_queued_request() {
+    let mut ed = connected_with(1, "abc");
+    let _turn = start_turn(&mut ed, "edit");
+    let t0 = Instant::now();
+    ed.feed("v");
+    request_one(&mut ed, 50);
+    let deadline = ed.next_deadline().expect("the reminder is a deadline");
+    assert!(deadline >= t0 + Duration::from_secs(299), "{deadline:?}");
+    ed.agent_timer(deadline);
+    assert!(
+        status(&ed).contains("claude-acp waits for permission; <Esc> to answer"),
+        "{}",
+        status(&ed)
+    );
+    assert!(answers(&ed.take_agent_conn_commands()).is_empty());
+    let next = ed.next_deadline().expect("repeats");
+    assert_eq!(next, deadline + Duration::from_secs(300));
+    ed.feed("<Esc>");
+    assert!(ed.permission_prompt_up());
+    ed.agent_timer(next);
+    assert!(
+        status(&ed).contains("claude-acp still waiting for y or n"),
+        "{}",
+        status(&ed)
+    );
+    assert!(answers(&ed.take_agent_conn_commands()).is_empty());
+}
+
+#[test]
+fn a_queued_request_says_it_waits_on_the_message_line() {
+    let mut ed = connected_with(1, "abc");
+    let _turn = start_turn(&mut ed, "edit");
+    ed.feed("v");
+    request_one(&mut ed, 50);
+    assert!(
+        status(&ed).contains("claude-acp waits for permission; <Esc> to answer"),
+        "{}",
+        status(&ed)
+    );
+    assert!(status(&ed).contains("PERMISSION 1"), "{}", status(&ed));
+}
+
+#[test]
+fn a_paste_is_refused_only_while_the_prompt_is_active() {
+    let mut ed = connected_with(1, "abc");
+    let _turn = start_turn(&mut ed, "edit");
+    ed.feed("A");
+    request_one(&mut ed, 50);
+    ed.paste("y");
+    assert_eq!(text(&ed), "abcy", "typed text, not an answer");
+    ed.feed("<Esc>");
+    ed.paste("y");
+    assert!(ed.permission_prompt_up(), "refused while active");
+    assert_eq!(text(&ed), "abcy");
+    assert!(answers(&ed.take_agent_conn_commands()).is_empty());
+}
+
+#[test]
+fn queued_requests_keep_the_desired_column() {
+    let mut ed = connected_with(1, "abcdef\nab\nabcdef");
+    let _turn = start_turn(&mut ed, "edit");
+    // (Leaving Visual mode resets the desired column in Vim itself, so it is
+    // not one of the states here.)
+    for before in [":", "2", "d"] {
+        ed.feed("gg0llllj");
+        assert_eq!((ed.cursor().line, ed.cursor().col), (1, 1));
+        ed.feed(before);
+        request_one(&mut ed, 50);
+        assert!(!ed.permission_prompt_up(), "{before}");
+        // Leaving that state activates the prompt; the desired column stays.
+        ed.feed("<Esc>");
+        assert!(ed.permission_prompt_up(), "{before}");
+        ed.feed("y");
+        assert_eq!(
+            answers(&ed.take_agent_conn_commands()),
+            [(50, "allow_once".to_owned())],
+            "{before}"
+        );
+        ed.feed("j");
+        assert_eq!((ed.cursor().line, ed.cursor().col), (2, 4), "{before}");
+    }
 }
 
 #[test]
